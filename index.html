@@ -438,9 +438,9 @@
 <div class="filters">
   <div class="filters-toggle" onclick="toggleFilters()">
     <span class="filters-toggle-label">Filters <span id="activeCount" class="active-count"></span></span>
-    <span class="chevron open" id="chevron">▾</span>
+    <span class="chevron" id="chevron">▾</span>
   </div>
-  <div class="filter-panel" id="filterPanel">
+  <div class="filter-panel collapsed" id="filterPanel">
     <div class="filter-label">City</div>
     <div class="filter-row" id="cityFilters"></div>
     <div class="filter-label">Age</div>
@@ -492,7 +492,8 @@ const blazes = {
   library: `<circle cx="11" cy="11" r="8" fill="#2F4C3B"/>`,
   rec:     `<polygon points="11,2 20,19 2,19" fill="#4C7C9B"/>`,
   museum:  `<rect x="3" y="3" width="16" height="16" rx="2" fill="#E0A72E"/>`,
-  outdoor: `<polygon points="11,1 21,11 11,21 1,11" fill="#7A8B6F"/>`
+  outdoor: `<polygon points="11,1 21,11 11,21 1,11" fill="#7A8B6F"/>`,
+  community: `<path d="M11 1l2.6 6.6L21 8.5l-5.2 4.7 1.6 7.3L11 16.9l-6.4 3.6 1.6-7.3L1 8.5l7.4-.9z" fill="#9C6ADE"/>`
 };
 function blazeSvg(cat){
   return `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes[cat]}</svg>`;
@@ -505,60 +506,32 @@ function blazeSvg(cat){
    (day, time, registration) directly with each source before
    publishing anything to real users.
    ============================================================ */
-const events = [
-  {city:"Boulder", day:"Tuesday", startTime:"10:00", title:"Baby & Toddler Storytime", source:"Boulder Public Library — Main Branch", time:"10:00 AM", ageMin:0, ageMax:2, cat:"library", cost:"free", note:"Drop-in, no registration", url:"https://calendar.boulderlibrary.org/"},
-  {city:"Boulder", day:"Tuesday", startTime:"10:30", title:"Mornings at the Museum", source:"CU Museum of Natural History", time:"10:30 AM", ageMin:2, ageMax:5, cat:"museum", cost:"free", note:"Suggested donation · check ahead for exact schedule", url:"https://www.google.com/search?q=CU+Museum+of+Natural+History+Mornings+at+the+Museum"},
-  {city:"Boulder", day:"Wednesday", startTime:"11:00", title:"Toddler Splash Time", source:"North Boulder Rec Center Pool", time:"11:00 AM", ageMin:1, ageMax:4, cat:"rec", cost:"paid", note:"Rec center day-pass or membership", url:"https://www.google.com/search?q=North+Boulder+Rec+Center+pool+schedule"},
-  {city:"Lafayette", day:"Wednesday", startTime:"09:00", title:"Open Play", source:"WOW! Children's Museum, Lafayette", time:"9:00 AM – 4:00 PM", ageMin:0, ageMax:8, cat:"museum", cost:"paid", note:"Drop-in, general admission", url:"https://www.google.com/search?q=WOW+Children%27s+Museum+Lafayette+CO+hours"},
-  {city:"Boulder", day:"Thursday", startTime:"10:15", title:"Preschool Storytime", source:"Boulder Public Library — George Reynolds Branch", time:"10:15 AM", ageMin:3, ageMax:5, cat:"library", cost:"free", note:"Drop-in, no registration", url:"https://calendar.boulderlibrary.org/"},
-  {city:"Boulder", day:"Thursday", startTime:"09:30", title:"Music & Movement", source:"Center for Musical Arts", time:"9:30 AM", ageMin:0, ageMax:5, cat:"rec", cost:"paid", note:"Registration required — class-based, not drop-in", url:"https://www.google.com/search?q=Center+for+Musical+Arts+Boulder+Music+and+Movement"},
-  {city:"Boulder", day:"Friday", startTime:"10:00", title:"Family Fun Friday — Playzeum", source:"Museum of Boulder", time:"10:00 AM – 5:00 PM", ageMin:2, ageMax:7, cat:"museum", cost:"paid", note:"Included with museum admission", url:"https://www.google.com/search?q=Museum+of+Boulder+Playzeum"},
-  {city:"Boulder", day:"Saturday", startTime:"10:00", title:"Weekend Storytime", source:"Boulder Public Library — Meadows Branch", time:"10:00 AM", ageMin:0, ageMax:5, cat:"library", cost:"free", note:"Drop-in, no registration", url:"https://calendar.boulderlibrary.org/"},
-  {city:"Boulder", day:"Saturday", startTime:"09:00", title:"Kids Corner", source:"Boulder County Farmers Market", time:"9:00 AM – 1:00 PM", ageMin:0, ageMax:8, cat:"outdoor", cost:"free", note:"Seasonal — runs while market is open", url:"https://www.google.com/search?q=Boulder+County+Farmers+Market+kids+corner"},
-  {city:"Boulder", day:"Sunday", startTime:"09:00", title:"Toddler Open Gym", source:"ABC Kids Climbing", time:"9:00 AM – 11:00 AM", ageMin:2, ageMax:5, cat:"rec", cost:"paid", note:"Drop-in, ages 2.5–5 room", url:"https://www.google.com/search?q=ABC+Kids+Climbing+Boulder+toddler+open+gym"},
+const API_BASE = "https://test.playroute.workers.dev";
 
-  // --- Erie & Longmont: pulled from real public library calendars (minimal scrape, see notes) ---
-  {city:"Erie", day:"Thursday", startTime:"16:15", title:"Erie Family Storytime", source:"Erie Community Library (High Plains Library District)", time:"4:15 – 4:45 PM", ageMin:0, ageMax:5, cat:"library", cost:"free", note:"Drop-in, first-come first-seated. Weekly Thursdays — confirmed via highplains.libcal.com", url:"https://highplains.libcal.com/event/15698998"},
-  {city:"Erie", day:"Sunday", startTime:"14:00", recurrence:"monthly-last-sunday", title:"Family LEGO Club", source:"Erie Community Library — Erie Storytime Room", time:"2:00 – 3:00 PM", ageMin:3, ageMax:10, cat:"library", cost:"free", note:"Monthly, last Sunday. Adult must stay and supervise — choking hazard under 3", url:"https://highplains.libcal.com/calendar/hpld/ecllego"},
-  {city:"Longmont", day:"Monday", startTime:"10:00", title:"Bilingual Storytime / Cuentos bilingües", source:"Longmont Public Library", time:"10:00 – 10:30 AM", ageMin:0, ageMax:5, cat:"library", cost:"free", note:"English & Spanish stories and songs, drop-in, no registration", url:"https://www.longmontcolorado.gov/departments/departments-e-m/library/just-for-children/children-s-storytimes"},
-  {city:"Longmont", day:"Wednesday", startTime:"10:00", title:"Baby Storytime", source:"Longmont Public Library", time:"10:00 – 10:20 AM", ageMin:0, ageMax:2, cat:"library", cost:"free", note:"Followed by Baby Stay & Play open playtime at 10:30", url:"https://www.longmontcolorado.gov/departments/departments-e-m/library/just-for-children/children-s-storytimes"},
-  {city:"Longmont", day:"Friday", startTime:"10:00", title:"All Ages Storytime", source:"Longmont Public Library", time:"10:00 – 10:30 AM", ageMin:0, ageMax:8, cat:"library", cost:"free", note:"Drop-in, no registration — caregiver must stay in the room", url:"https://www.longmontcolorado.gov/departments/departments-e-m/library/just-for-children/children-s-storytimes"},
+let events = [];
+let playgrounds = [];
+let hikes = [];
+let dataLoadFailed = false;
 
-  // --- Lyons: pulled from Lyons Regional Library's public storytime page & city site (both agree) ---
-  {city:"Lyons", day:"Tuesday", startTime:"10:30", title:"Baby Storytime", source:"Lyons Regional Library", time:"10:30 – 11:00 AM", ageMin:0, ageMax:1.5, cat:"library", cost:"free", note:"Playtime after storytime. Confirmed via lyons.colibraries.org", url:"https://lyons.colibraries.org/storytime-online/"},
-  {city:"Lyons", day:"Wednesday", startTime:"10:30", title:"All Ages Storytime + Crafts", source:"Lyons Regional Library", time:"10:30 – 11:00 AM", ageMin:0, ageMax:8, cat:"library", cost:"free", note:"For walkers and up, craft follows. Confirmed via cityoflyons.org", url:"https://lyons.colibraries.org/storytime-online/"},
+async function loadData(){
+  try{
+    const [eventsRes, pgRes, hikesRes] = await Promise.all([
+      fetch(`${API_BASE}/api/events`),
+      fetch(`${API_BASE}/api/playgrounds`),
+      fetch(`${API_BASE}/api/hikes`)
+    ]);
+    if(!eventsRes.ok || !pgRes.ok || !hikesRes.ok) throw new Error("API returned a non-OK status");
 
-  // --- Broomfield: program exists per library's own program list, exact day/time not confirmed — illustrative, verify before publishing ---
-  {city:"Broomfield", day:"Tuesday", startTime:"10:00", title:"Toddler Storytime", source:"Mamie Doud Eisenhower Public Library", time:"[verify time]", ageMin:2, ageMax:3, cat:"library", cost:"free", note:"Best for ages 2–3. Day/time not confirmed — check compass.broomfield.org", url:"https://compass.broomfield.org/event/toddler-storytime-0"},
-  {city:"Broomfield", day:"Wednesday", startTime:"10:00", title:"Baby Storytime", source:"Mamie Doud Eisenhower Public Library", time:"[verify time]", ageMin:0, ageMax:1.5, cat:"library", cost:"free", note:"Day/time not confirmed — check compass.broomfield.org", url:"https://www.broomfield.org/276/Library-Home"},
-
-  // --- Storytime in the park, museum free days, gymnastics drop-in, rec center classes ---
-  {city:"Boulder", day:"Thursday", startTime:"10:15", title:"Storytime in the Great Outdoors", source:"Boulder Public Library, at Bill Bower Park", time:"10:15 – 10:45 AM", ageMin:0, ageMax:5, cat:"outdoor", cost:"free", note:"Park storytime that swaps in for the regular Reynolds Branch storytime on select summer weeks. Bring a blanket. Confirmed via calendar.boulderlibrary.org", url:"https://calendar.boulderlibrary.org/event/13547479"},
-  {city:"Lafayette", day:"Monday", startTime:"09:00", title:"Free Day", source:"WOW! Children's Museum, Lafayette", time:"check hours", ageMin:0, ageMax:8, cat:"museum", cost:"free", note:"Occasional sponsor-funded free admission day, not weekly — confirm the next date on WOW's own calendar before planning around it", url:"https://wowchildrensmuseum.org/"},
-  {city:"Boulder", day:"Friday", startTime:"09:30", title:"Tot Obstacle Mountain (Drop-In)", source:"CATS Gym", time:"9:30 – 11:00 AM", ageMin:1, ageMax:5, cat:"rec", cost:"paid", note:"Also offered Sundays same time. New obstacle course weekly, parents stay and play. Confirmed via catsgym.com", url:"https://www.catsgym.com/preschool-classes"},
-  {city:"Boulder", day:"Saturday", startTime:"10:00", title:"Open Gymnastics (Drop-In)", source:"City of Boulder Recreation Center", time:"[verify time]", ageMin:0, ageMax:8, cat:"rec", cost:"paid", note:"Punch-pass drop-in gym time; kids 5 & under must be supervised by an adult. Day/time not confirmed — check bouldercolorado.gov/open-gymnastics", url:"https://bouldercolorado.gov/open-gymnastics"},
-  {city:"Boulder", day:"Saturday", startTime:"09:00", title:"Preschool Gymnastics (Registered Class)", source:"City of Boulder Recreation Center", time:"[verify time]", ageMin:2, ageMax:5, cat:"rec", cost:"paid", note:"Registration-based session class, not drop-in — sessions run in blocks. Day/time not confirmed — check bouldercolorado.gov/services/gymnastics", url:"https://bouldercolorado.gov/services/gymnastics"}
-];
-
-const playgrounds = [
-  {city:"Boulder", name:"Scott Carpenter Park", detail:"Astronaut-themed play structure, big-kid + smaller-kid areas, splash pad in summer.", tips:["Fenced (partial)","Splash pad","Some shade"], shape:"outdoor", color:"#7A8B6F"},
-  {city:"Boulder", name:"Central Park, Boulder", detail:"Toddler-friendly structures with stroller-friendly paths through downtown.", tips:["Stroller ok","Central location"], shape:"outdoor", color:"#4C7C9B"},
-  {city:"Lafayette", name:"Waneka Lake Park, Lafayette", detail:"Lakeside playground with open space for running, near WOW! Children's Museum.", tips:["Near museum","Open space"], shape:"outdoor", color:"#E0A72E"},
-  {city:"Longmont", name:"Sandstone Ranch Park, Longmont", detail:"Large play area plus trails and open fields — good for a longer outing.", tips:["Big open space","Trails nearby"], shape:"outdoor", color:"#2F4C3B"},
-
-  // --- Erie community parks ---
-  {city:"Erie", name:"Erie Community Park", detail:"40-acre hub next to Erie Community Center — train-themed playground near Mitchell Field, pump track, skate park, sledding hill.", tips:["Multiple playgrounds","Restrooms","Big open space"], shape:"outdoor", color:"#7A8B6F"},
-  {city:"Erie", name:"Lehigh Park", detail:"Erie's only splash pad, plus a playground with ramps, a climbing boulder, and rubber surfacing that's easier for early walkers.", tips:["Splash pad","Early-walker friendly"], shape:"outdoor", color:"#4C7C9B"},
-  {city:"Erie", name:"Serene Park", detail:"Treehouse-style structure built for ages 2–5, wooden bumblebee bouncer, hillside slide — plus an outdoor fitness area for adults.", tips:["Ages 2–5 structure","Adult fitness area"], shape:"outdoor", color:"#E0A72E"},
-  {city:"Erie", name:"Crescent Park", detail:"Inclusive playground in the Kenosha Farms neighborhood — adaptive swing, toddler swing, and an infinity bowl for independent sensory play.", tips:["Adaptive/inclusive equipment","Toddler swings"], shape:"outdoor", color:"#2F4C3B"}
-];
-
-const hikes = [
-  {city:"Boulder", name:"Chautauqua – Flatiron Loop", stats:"2.1 mi · easy", detail:"Family-friendly loop starting at Chautauqua Park, good Flatirons views. Can get busy — consider the shuttle from Pearl Street on weekends.", stroller:"Carrier recommended, not stroller-friendly"},
-  {city:"Boulder", name:"Boulder Creek Path (short segment)", stats:"pick your distance · flat", detail:"Paved path along the creek through downtown — walk as much or as little as you want, playgrounds along the way.", stroller:"Fully stroller-friendly"},
-  {city:"Boulder", name:"Valmont Bike Park – Toddler Pump Track", stats:"short loop · very easy", detail:"Small bumps and jumps sized for little ones on strider bikes, plus bigger trails for the rest of the family.", stroller:"Stroller-friendly to the toddler course"},
-  {city:"Boulder", name:"Realization Point (Flagstaff)", stats:"~1 mi · easy", detail:"Easy, mostly flat trail with mountain views — a good first real 'hike' for a preschooler.", stroller:"Carrier recommended"}
-];
+    events = await eventsRes.json();
+    playgrounds = await pgRes.json();
+    hikes = await hikesRes.json();
+    dataLoadFailed = false;
+  } catch(err){
+    console.error("Failed to load live data:", err);
+    dataLoadFailed = true;
+  }
+  renderAll();
+}
 
 /* ============================================================ */
 
@@ -571,7 +544,8 @@ function cityOptions(){ return [
   {id:"Longmont", label:"Longmont"},
   {id:"Lafayette", label:"Lafayette"},
   {id:"Lyons", label:"Lyons"},
-  {id:"Broomfield", label:"Broomfield"}
+  {id:"Broomfield", label:"Broomfield"},
+  {id:"Louisville", label:"Louisville"}
 ];}
 function ageOptions(){ return [
   {id:"all", label:"All ages"},
@@ -584,7 +558,8 @@ function catOptions(){ return [
   {id:"library", label:"● Library"},
   {id:"rec", label:"▲ Rec / swim / gym"},
   {id:"museum", label:"■ Museum"},
-  {id:"outdoor", label:"◆ Outdoor"}
+  {id:"outdoor", label:"◆ Outdoor"},
+  {id:"community", label:"★ Community"}
 ];}
 function costOptions(){ return [
   {id:"all", label:"Any"},
@@ -606,74 +581,43 @@ function renderChips(containerId, options, activeVal, onClick){
 function ageMatches(ev){
   if(activeAge==="all") return true;
   const [lo,hi] = activeAge.split("-").map(Number);
-  return ev.ageMax >= lo && ev.ageMin <= hi;
+  return ev.age_max >= lo && ev.age_min <= hi;
 }
 function passesFilters(ev){
   if(activeCity!=="all" && ev.city!==activeCity) return false;
-  if(activeCat!=="all" && ev.cat!==activeCat) return false;
+  if(activeCat!=="all" && ev.category!==activeCat) return false;
   if(activeCost==="free" && ev.cost!=="free") return false;
   if(!ageMatches(ev)) return false;
   return true;
-}
-
-const DAY_INDEX = {Sunday:0, Monday:1, Tuesday:2, Wednesday:3, Thursday:4, Friday:5, Saturday:6};
-
-function lastSundayOfMonth(year, month){
-  const d = new Date(year, month+1, 0); // last day of month
-  d.setDate(d.getDate() - d.getDay());
-  return d;
-}
-function getNextMonthlyLastSunday(startTime){
-  const [hh,mm] = startTime.split(":").map(Number);
-  const now = new Date();
-  let year = now.getFullYear(), month = now.getMonth();
-  let candidate = lastSundayOfMonth(year, month);
-  candidate.setHours(hh, mm, 0, 0);
-  if(candidate < now){
-    month++;
-    if(month>11){ month=0; year++; }
-    candidate = lastSundayOfMonth(year, month);
-    candidate.setHours(hh, mm, 0, 0);
-  }
-  return candidate;
-}
-function getNextWeeklyOccurrence(dayName, startTime){
-  const [hh,mm] = startTime.split(":").map(Number);
-  const now = new Date();
-  const targetIdx = DAY_INDEX[dayName];
-  let diff = (targetIdx - now.getDay() + 7) % 7;
-  const candidate = new Date(now);
-  candidate.setDate(now.getDate() + diff);
-  candidate.setHours(hh, mm, 0, 0);
-  if(diff===0 && candidate < now){
-    candidate.setDate(candidate.getDate() + 7); // today's slot already passed — roll to next week
-  }
-  return candidate;
-}
-function getOccurrence(ev){
-  if(ev.recurrence === "monthly-last-sunday") return getNextMonthlyLastSunday(ev.startTime);
-  return getNextWeeklyOccurrence(ev.day, ev.startTime);
-}
-function formatOccurrenceHeading(date){
-  const weekday = date.toLocaleDateString('en-US', {weekday:'long'});
-  const md = date.toLocaleDateString('en-US', {month:'short', day:'numeric'});
-  return `${weekday} · ${md}`;
 }
 
 function renderFeed(){
   const feed = document.getElementById("weekFeed");
   feed.innerHTML = "";
 
+  if(dataLoadFailed){
+    feed.innerHTML = `<div class="empty-state">
+      <div class="blaze-lg">${blazeSvg("outdoor")}</div>
+      Couldn't reach the live data right now. Check your connection and reload.
+    </div>`;
+    document.getElementById("resultCount").textContent = "";
+    return;
+  }
+
+  // The API already computes each event's next real occurrence (accounting
+  // for weekly/monthly recurrence and excluding anything already passed) —
+  // just sort and group what it sends back.
   const upcoming = events
     .filter(passesFilters)
-    .map(ev => ({ ev, occ: getOccurrence(ev) }))
-    .sort((a,b) => a.occ - b.occ);
+    .filter(ev => ev.occurrence) // defensive: drop anything with no computable date
+    .slice()
+    .sort((a,b) => new Date(a.occurrence) - new Date(b.occurrence));
 
   let shown = 0;
   let lastHeading = null;
 
-  upcoming.forEach(({ev, occ})=>{
-    const heading = formatOccurrenceHeading(occ);
+  upcoming.forEach(ev=>{
+    const heading = ev.occurrence_label;
     if(heading !== lastHeading){
       const h = document.createElement("div");
       h.className = "day-heading";
@@ -686,17 +630,17 @@ function renderFeed(){
     const card = document.createElement("div");
     card.className = "event-card";
     card.innerHTML = `
-      <div class="blaze">${blazeSvg(ev.cat)}</div>
+      <div class="blaze">${blazeSvg(ev.category)}</div>
       <div class="event-main">
         <div class="event-title">${ev.title}</div>
-        <div class="event-meta"><span class="event-time">${ev.time}</span> · ${ev.source}</div>
+        <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
         <div>
           <span class="tag ${ev.cost}">${ev.cost==="free" ? "Free" : "Paid"}</span>
-          <span class="tag age">Ages ${ev.ageMin}–${ev.ageMax}</span>
+          <span class="tag age">Ages ${ev.age_min}–${ev.age_max}</span>
         </div>
-        <div class="event-meta" style="margin-top:6px;">${ev.note}</div>
+        <div class="event-meta" style="margin-top:6px;">${ev.note || ""}</div>
       </div>
-      <a class="source-link" href="${ev.url}" target="_blank" rel="noopener noreferrer" aria-label="View source for ${ev.title}" title="View source" onclick='return handleSourceLinkClick(event, this, ${JSON.stringify(ev.url)});'>
+      <a class="source-link" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" aria-label="View source for ${ev.title}" title="View source" onclick='return handleSourceLinkClick(event, this, ${JSON.stringify(ev.source_url)});'>
         <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7 17L17 7M17 7H9M17 7V15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
     `;
@@ -716,22 +660,31 @@ function renderFeed(){
 function renderPlaygrounds(){
   const grid = document.getElementById("pgGrid");
   grid.innerHTML = "";
+
+  if(dataLoadFailed){
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">Couldn't load playgrounds — check your connection.</div>`;
+    return;
+  }
+
   const filtered = playgrounds.filter(pg => activeCity==="all" || pg.city===activeCity);
   if(filtered.length===0){
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">No playgrounds curated for this city yet.</div>`;
     return;
   }
-  filtered.forEach(pg=>{
+  const palette = ["#7A8B6F", "#4C7C9B", "#E0A72E", "#2F4C3B"];
+  filtered.forEach((pg, i)=>{
+    const color = palette[i % palette.length];
+    const tips = (pg.tags || "").split(",").map(t=>t.trim()).filter(Boolean);
     const card = document.createElement("div");
     card.className = "pg-card";
     card.innerHTML = `
-      <div class="pg-photo" style="background:${pg.color}22;">
-        <svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes[pg.shape]}</svg>
+      <div class="pg-photo" style="background:${color}22;">
+        <svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes.outdoor}</svg>
       </div>
       <div class="pg-body">
         <div class="pg-name">${pg.name}</div>
-        <div class="pg-detail">${pg.detail}</div>
-        <div class="pg-tips">${pg.tips.map(t=>`<span class="pg-tip">${t}</span>`).join("")}</div>
+        <div class="pg-detail">${pg.detail || ""}</div>
+        <div class="pg-tips">${tips.map(t=>`<span class="pg-tip">${t}</span>`).join("")}</div>
       </div>
     `;
     grid.appendChild(card);
@@ -741,6 +694,12 @@ function renderPlaygrounds(){
 function renderHikes(){
   const list = document.getElementById("hikeList");
   list.innerHTML = "";
+
+  if(dataLoadFailed){
+    list.innerHTML = `<div class="empty-state">Couldn't load hikes — check your connection.</div>`;
+    return;
+  }
+
   const filtered = hikes.filter(h => activeCity==="all" || h.city===activeCity);
   if(filtered.length===0){
     list.innerHTML = `<div class="empty-state">No hikes curated for this city yet.</div>`;
@@ -752,10 +711,10 @@ function renderHikes(){
     card.innerHTML = `
       <div class="hike-top">
         <div class="hike-name">${h.name}</div>
-        <div class="hike-stats">${h.stats}</div>
+        <div class="hike-stats">${h.distance_stats || ""}</div>
       </div>
-      <div class="hike-detail">${h.detail}</div>
-      <div class="hike-detail" style="color:var(--sky); margin-top:4px;">🚼 ${h.stroller}</div>
+      <div class="hike-detail">${h.detail || ""}</div>
+      <div class="hike-detail" style="color:var(--sky); margin-top:4px;">🚼 ${h.stroller_note || ""}</div>
     `;
     list.appendChild(card);
   });
@@ -774,7 +733,7 @@ function handleSignup(){
   input.value = "";
 }
 
-let filtersOpen = true;
+let filtersOpen = false;
 
 function toggleFilters(){
   filtersOpen = !filtersOpen;
@@ -873,7 +832,10 @@ function renderAll(){
   renderPlaygrounds();
   renderHikes();
 }
-renderAll();
+
+// Show something immediately instead of a blank page while the first fetch is in flight.
+document.getElementById("weekFeed").innerHTML = `<div class="empty-state">Loading this week's events…</div>`;
+loadData();
 </script>
 
 </body>
