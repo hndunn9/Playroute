@@ -1,4 +1,4 @@
-// ===== playroute-worker: single-file bundle for Cloudflare dashboard's Quick Edit =====
+// ===== playroute-worker: single-file bundle for Cloudflare dashboard's Quick Edit / Git deploy =====
 // Generated from occurrence.js + libcal.js + index.js — same code, no wrangler/CLI needed.
 
 // --- occurrence.js ---
@@ -413,6 +413,39 @@ async function handleSources(env) {
 }
 
 /**
+ * POST /api/track-click
+ * Body: { event_id?, event_title, city?, category?, source_url }
+ *
+ * Minimal, anonymous click logging — just enough to see which listings
+ * people actually follow through on. No cookies, no IP logging beyond
+ * whatever Cloudflare does at the edge by default (which this code never
+ * touches), no user identifiers of any kind. Intentionally open (no auth)
+ * since it's a low-stakes counter, not a place sensitive data lives —
+ * worth revisiting if it ever gets spammed.
+ */
+async function handleTrackClick(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!body.source_url || !body.event_title) {
+    return json({ error: "event_title and source_url are required" }, 400);
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO link_clicks (event_id, event_title, city, category, source_url)
+     VALUES (?, ?, ?, ?, ?)`
+  )
+    .bind(body.event_id ?? null, body.event_title, body.city ?? null, body.category ?? null, body.source_url)
+    .run();
+
+  return json({ ok: true });
+}
+
+/**
  * POST /api/ingest
  * Authorization: Bearer <INGEST_SECRET>
  * Body: { events: [ { title, source, city, category, cost, age_min, age_max,
@@ -490,6 +523,7 @@ export default {
       if (url.pathname === "/api/playgrounds") return await handlePlaygrounds(env, url);
       if (url.pathname === "/api/hikes") return await handleHikes(env, url);
       if (url.pathname === "/api/sources") return await handleSources(env);
+      if (url.pathname === "/api/track-click" && request.method === "POST") return await handleTrackClick(request, env);
 
       // Manual trigger for testing the scraper without waiting for the cron.
       if (url.pathname === "/api/scrape-now" && request.method === "POST") {
@@ -511,3 +545,5 @@ export default {
     );
   },
 };
+
+  
