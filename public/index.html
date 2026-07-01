@@ -613,7 +613,8 @@ const blazes = {
   rec:     `<polygon points="11,2 20,19 2,19" fill="#6E8B8A"/>`,
   museum:  `<rect x="3" y="3" width="16" height="16" rx="2" fill="#C79A4B"/>`,
   outdoor: `<polygon points="11,1 21,11 11,21 1,11" fill="#B4805A"/>`,
-  community: `<path d="M11 1l2.6 6.6L21 8.5l-5.2 4.7 1.6 7.3L11 16.9l-6.4 3.6 1.6-7.3L1 8.5l7.4-.9z" fill="#9B8AAE"/>`
+  community: `<path d="M11 1l2.6 6.6L21 8.5l-5.2 4.7 1.6 7.3L11 16.9l-6.4 3.6 1.6-7.3L1 8.5l7.4-.9z" fill="#9B8AAE"/>`,
+  farmers_market: `<polygon points="20,11 15.5,3.2 6.5,3.2 2,11 6.5,18.8 15.5,18.8" fill="#B85C4A"/>`
 };
 function blazeSvg(cat){
   return `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes[cat]}</svg>`;
@@ -681,7 +682,13 @@ function renderFreshnessNote(){
 
 /* ============================================================ */
 
-let activeCity = "all", activeAge = "all", activeCat = "all", activeCost = "all";
+// Multi-select filters use Sets — an empty set means "no filter applied"
+// (equivalent to the old "all" state). Cost stays single-select since it's
+// just a two-state toggle (any / free-only), not really a multi-pick list.
+let activeCities = new Set();
+let activeAges = new Set();
+let activeCats = new Set();
+let activeCost = "all";
 
 function cityOptions(){ return [
   {id:"all", label:"All cities"},
@@ -705,19 +712,38 @@ function catOptions(){ return [
   {id:"rec", label:"▲ Rec / swim / gym"},
   {id:"museum", label:"■ Museum"},
   {id:"outdoor", label:"◆ Outdoor"},
-  {id:"community", label:"★ Community"}
+  {id:"community", label:"★ Community"},
+  {id:"farmers_market", label:"⬡ Farmers Market"}
 ];}
 function costOptions(){ return [
   {id:"all", label:"Any"},
   {id:"free", label:"Free only"}
 ];}
 
-function renderChips(containerId, options, activeVal, onClick){
+/**
+ * Toggles a filter option in/out of a Set. Picking "all" clears the whole
+ * set (back to "no filter"). Picking a specific option removes "all"'s
+ * active state implicitly, since the set is no longer empty.
+ */
+function toggleFilterValue(set, id){
+  if(id === "all"){
+    set.clear();
+    return;
+  }
+  if(set.has(id)) set.delete(id);
+  else set.add(id);
+}
+
+function renderChips(containerId, options, activeValue, onClick){
   const el = document.getElementById(containerId);
   el.innerHTML = "";
+  const isMulti = activeValue instanceof Set;
   options.forEach(o=>{
+    const isActive = isMulti
+      ? (o.id === "all" ? activeValue.size === 0 : activeValue.has(o.id))
+      : (o.id === activeValue);
     const chip = document.createElement("div");
-    chip.className = "chip" + (o.id===activeVal ? " active" : "") + (o.id==="free" ? " free":"");
+    chip.className = "chip" + (isActive ? " active" : "") + (o.id==="free" ? " free":"");
     chip.textContent = o.label;
     chip.onclick = ()=> onClick(o.id);
     el.appendChild(chip);
@@ -755,13 +781,18 @@ function formatAgeRange(min, max){
 }
 
 function ageMatches(ev){
-  if(activeAge==="all") return true;
-  const [lo,hi] = activeAge.split("-").map(Number);
-  return ev.age_max >= lo && ev.age_min <= hi;
+  if(activeAges.size === 0) return true;
+  // OR logic: event matches if its range overlaps ANY selected bucket —
+  // useful for households with kids in more than one age bracket.
+  for(const bucket of activeAges){
+    const [lo,hi] = bucket.split("-").map(Number);
+    if(ev.age_max >= lo && ev.age_min <= hi) return true;
+  }
+  return false;
 }
 function passesFilters(ev){
-  if(activeCity!=="all" && ev.city!==activeCity) return false;
-  if(activeCat!=="all" && ev.category!==activeCat) return false;
+  if(activeCities.size > 0 && !activeCities.has(ev.city)) return false;
+  if(activeCats.size > 0 && !activeCats.has(ev.category)) return false;
   if(activeCost==="free" && ev.cost!=="free") return false;
   if(!ageMatches(ev)) return false;
   return true;
@@ -843,7 +874,7 @@ function renderPlaygrounds(){
     return;
   }
 
-  const filtered = playgrounds.filter(pg => activeCity==="all" || pg.city===activeCity);
+  const filtered = playgrounds.filter(pg => activeCities.size===0 || activeCities.has(pg.city));
   if(filtered.length===0){
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">No playgrounds curated for this city yet.</div>`;
     return;
@@ -879,7 +910,7 @@ function renderHikes(){
     return;
   }
 
-  const filtered = hikes.filter(h => activeCity==="all" || h.city===activeCity);
+  const filtered = hikes.filter(h => activeCities.size===0 || activeCities.has(h.city));
   if(filtered.length===0){
     list.innerHTML = `<div class="empty-state">No hikes curated for this city yet.</div>`;
     return;
@@ -933,10 +964,7 @@ function toggleReleaseNotes(){
 }
 
 function updateActiveCount(){
-  let count = 0;
-  if(activeCity!=="all") count++;
-  if(activeAge!=="all") count++;
-  if(activeCat!=="all") count++;
+  let count = activeCities.size + activeAges.size + activeCats.size;
   if(activeCost!=="all") count++;
   const badge = document.getElementById("activeCount");
   if(count>0){
@@ -1029,11 +1057,47 @@ function copyLinkPopover(url, btn){
   }
 }
 
+const FILTER_STORAGE_KEY = "playroute-filters-v1";
+
+/**
+ * Persists filter selections across visits (not just within a session) —
+ * that requires localStorage specifically, since in-memory state doesn't
+ * survive closing the tab. Wrapped defensively: if storage is unavailable
+ * or blocked (e.g. a restrictive preview context), this fails silently
+ * rather than breaking the app — filters just won't persist that time.
+ */
+function saveFilterPrefs(){
+  try{
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
+      cities: [...activeCities],
+      ages: [...activeAges],
+      cats: [...activeCats],
+      cost: activeCost
+    }));
+  } catch(err){
+    // Storage unavailable — filters simply won't be remembered this time.
+  }
+}
+
+function loadFilterPrefs(){
+  try{
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+    if(!raw) return;
+    const parsed = JSON.parse(raw);
+    activeCities = new Set(parsed.cities || []);
+    activeAges = new Set(parsed.ages || []);
+    activeCats = new Set(parsed.cats || []);
+    activeCost = parsed.cost || "all";
+  } catch(err){
+    // Corrupt or unavailable data — just start fresh.
+  }
+}
+
 function init(){
-  renderChips("cityFilters", cityOptions(), activeCity, (v)=>{activeCity=v; renderAll();});
-  renderChips("ageFilters", ageOptions(), activeAge, (v)=>{activeAge=v; renderAll();});
-  renderChips("catFilters", catOptions(), activeCat, (v)=>{activeCat=v; renderAll();});
-  renderChips("costFilters", costOptions(), activeCost, (v)=>{activeCost=v; renderAll();});
+  renderChips("cityFilters", cityOptions(), activeCities, (v)=>{toggleFilterValue(activeCities, v); saveFilterPrefs(); renderAll();});
+  renderChips("ageFilters", ageOptions(), activeAges, (v)=>{toggleFilterValue(activeAges, v); saveFilterPrefs(); renderAll();});
+  renderChips("catFilters", catOptions(), activeCats, (v)=>{toggleFilterValue(activeCats, v); saveFilterPrefs(); renderAll();});
+  renderChips("costFilters", costOptions(), activeCost, (v)=>{activeCost=v; saveFilterPrefs(); renderAll();});
 }
 function renderAll(){
   init();
@@ -1042,6 +1106,10 @@ function renderAll(){
   renderPlaygrounds();
   renderHikes();
 }
+
+// Restore any saved filters BEFORE the first render/fetch, so the very
+// first thing the user sees already reflects their last visit.
+loadFilterPrefs();
 
 // Show something immediately instead of a blank page while the first fetch is in flight.
 document.getElementById("weekFeed").innerHTML = `<div class="empty-state">Loading this week's events…</div>`;
