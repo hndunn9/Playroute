@@ -5,19 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Playroute — your week, mapped out</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
 
   :root{
-    --canvas:#F5F0E4;
-    --canvas-raised:#FFFDF8;
-    --ink:#2B2A25;
-    --ink-soft:#5C5A4E;
-    --pine:#2F4C3B;
-    --pine-dark:#213A2C;
-    --marigold:#E0A72E;
-    --sky:#4C7C9B;
-    --sage:#7A8B6F;
-    --line:#E2DACB;
+    --canvas:#FDF6EC;
+    --canvas-raised:#FFFFFF;
+    --ink:#2B2826;
+    --ink-soft:#7C7670;
+    --pine:#7A5568;
+    --pine-dark:#5A3F4D;
+    --marigold:#C79A4B;
+    --sky:#6E8B8A;
+    --sage:#B4805A;
+    --community:#9B8AAE;
+    --line:#EDE0D3;
     --radius:14px;
   }
 
@@ -31,7 +32,7 @@
     padding-bottom:64px;
   }
   h1,h2,h3{
-    font-family:'Fraunces', serif;
+    font-family:'Space Grotesk', sans-serif;
     margin:0;
     color:var(--pine-dark);
   }
@@ -76,17 +77,18 @@
     color:#CFE0D2;
     max-width:36ch;
   }
-  .phase-note{
-    margin-top:16px;
-    background:rgba(255,255,255,0.08);
-    border:1px solid rgba(255,255,255,0.18);
-    border-radius:10px;
-    padding:10px 12px;
-    font-size:12.5px;
-    line-height:1.5;
-    color:#E7EEE4;
+  .beta-pill{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10.5px;
+    font-weight:500;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:#CFE0D2;
+    border:1px solid rgba(255,255,255,0.3);
+    border-radius:100px;
+    padding:2px 9px;
+    transform:translateY(-2px);
   }
-  .phase-note strong{color:var(--marigold);}
 
   /* ---------- filters ---------- */
   .filters{
@@ -221,7 +223,7 @@
     display:flex;
     gap:12px;
     align-items:flex-start;
-    box-shadow:0 1px 0 rgba(43,42,37,0.02);
+    box-shadow:0 2px 8px rgba(58,46,44,0.07);
     position:relative;
   }
   .source-link{
@@ -324,6 +326,7 @@
     margin-top:6px;
     margin-right:5px;
   }
+  .tag.city{background:var(--pine); color:#fff; font-weight:600;}
   .tag.free{background:#FBEACB; color:#8C6300;}
   .tag.paid{background:#E7EEF2; color:#3E6178;}
   .tag.age{background:#EAEEE4; color:#516144;}
@@ -350,6 +353,7 @@
     border:1px solid var(--line);
     border-radius:var(--radius);
     overflow:hidden;
+    box-shadow:0 2px 8px rgba(58,46,44,0.07);
   }
   .pg-photo{
     height:96px;
@@ -359,6 +363,16 @@
   .pg-photo svg{width:60%; height:60%;}
   .pg-body{padding:10px 11px 12px;}
   .pg-name{font-weight:600; font-size:13.5px; line-height:1.25;}
+  .pg-city{
+    display:inline-block;
+    font-size:10px;
+    font-weight:600;
+    color:#fff;
+    background:var(--pine);
+    padding:1px 7px;
+    border-radius:100px;
+    margin-top:4px;
+  }
   .pg-detail{font-size:11.5px; color:var(--ink-soft); margin-top:4px; line-height:1.45;}
   .pg-tips{margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;}
   .pg-tip{
@@ -374,9 +388,20 @@
     border-radius:var(--radius);
     padding:13px 14px;
     margin-bottom:10px;
+    box-shadow:0 2px 8px rgba(58,46,44,0.07);
   }
-  .hike-top{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
+  .hike-top{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
   .hike-name{font-weight:600; font-size:14.5px;}
+  .hike-city{
+    display:inline-block;
+    font-size:10px;
+    font-weight:600;
+    color:#fff;
+    background:var(--pine);
+    padding:1px 7px;
+    border-radius:100px;
+    margin-top:4px;
+  }
   .hike-stats{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--sky); white-space:nowrap;}
   .hike-detail{font-size:12.5px; color:var(--ink-soft); margin-top:5px; line-height:1.5;}
 
@@ -413,6 +438,54 @@
   .signup-form button:active{transform:scale(0.97);}
   .signup-note{font-size:11px; color:#9FB6A5; margin-top:10px;}
 
+  /* ---------- release notes: tucked away, low visual weight ---------- */
+  .release-notes{
+    margin-top:28px;
+    padding-top:14px;
+    border-top:1px solid var(--line);
+  }
+  .release-notes-toggle{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    font-size:12px;
+    color:var(--ink-soft);
+    cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;
+  }
+  .release-notes-toggle .chevron{font-size:10px;}
+  .release-notes-panel{
+    max-height:600px;
+    overflow:hidden;
+    transition:max-height .25s ease, opacity .2s ease;
+    opacity:1;
+    margin-top:12px;
+  }
+  .release-notes-panel.collapsed{
+    max-height:0;
+    opacity:0;
+    margin-top:0;
+  }
+  .release-entry{margin-bottom:14px;}
+  .release-entry:last-child{margin-bottom:0;}
+  .release-date{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10.5px;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    color:var(--sage);
+    margin-bottom:4px;
+  }
+  .release-entry ul{
+    margin:0;
+    padding-left:16px;
+    font-size:12px;
+    color:var(--ink-soft);
+    line-height:1.6;
+  }
+
   footer{
     text-align:center;
     padding:22px 20px 10px;
@@ -428,11 +501,9 @@
   <div class="wordmark">
     <h1>Playroute</h1>
     <span class="badge"></span>
+    <span class="beta-pill">Beta</span>
   </div>
   <p>Your kid's week, mapped out — libraries, rec centers, museums, parks, and trails, all in one place.</p>
-  <div class="phase-note">
-    <strong>Phase 0 preview.</strong> Hand-curated sample across Boulder, Erie, Longmont, Lafayette, Lyons, and Broomfield. Now includes park storytimes, museum free days, gymnastics drop-ins, and rec center classes alongside library storytimes. <strong>Already-passed events are hidden automatically</strong> — the feed always shows each listing's next upcoming occurrence. Erie, Longmont, Lyons, and one Boulder park-storytime entry were pulled from real public calendars; everything else is illustrative — verify before you go.
-  </div>
 </header>
 
 <div class="filters">
@@ -480,20 +551,46 @@
     </div>
     <div class="signup-note" id="signupNote">This button doesn't send anything yet — wire it to a Google Form or Mailchimp embed once you're ready to actually capture emails.</div>
   </div>
+
+  <div class="release-notes">
+    <div class="release-notes-toggle" onclick="toggleReleaseNotes()">
+      <span>What's new</span>
+      <span class="chevron" id="releaseChevron">▾</span>
+    </div>
+    <div class="release-notes-panel collapsed" id="releaseNotesPanel">
+      <div class="release-entry">
+        <div class="release-date">Jul 2026</div>
+        <ul>
+          <li>Connected to live data — the app now updates automatically instead of showing a fixed snapshot</li>
+          <li>Fixed an incorrect Boulder library event that shouldn't have appeared</li>
+          <li>Ages under 18 months now show in months (e.g. "10 mo") instead of a decimal</li>
+        </ul>
+      </div>
+      <div class="release-entry">
+        <div class="release-date">Jun 2026</div>
+        <ul>
+          <li>Added real library schedules for Boulder, Erie, Longmont, Louisville, and Lyons</li>
+          <li>Added Raising Parents (Lafayette) drop-in and class listings</li>
+          <li>Added kid-friendly hikes and local playgrounds</li>
+          <li>Filters can now be collapsed to save space on smaller screens</li>
+        </ul>
+      </div>
+    </div>
+  </div>
 </main>
 
-<footer>PLAYROUTE · PHASE 0 · BOULDER COUNTY + BROOMFIELD PILOT</footer>
+<footer>PLAYROUTE · BOULDER COUNTY + BROOMFIELD PILOT</footer>
 
 <script>
 /* ============================================================
    BLAZE ICONS — one shape per category, echoing real trail blazes
    ============================================================ */
 const blazes = {
-  library: `<circle cx="11" cy="11" r="8" fill="#2F4C3B"/>`,
-  rec:     `<polygon points="11,2 20,19 2,19" fill="#4C7C9B"/>`,
-  museum:  `<rect x="3" y="3" width="16" height="16" rx="2" fill="#E0A72E"/>`,
-  outdoor: `<polygon points="11,1 21,11 11,21 1,11" fill="#7A8B6F"/>`,
-  community: `<path d="M11 1l2.6 6.6L21 8.5l-5.2 4.7 1.6 7.3L11 16.9l-6.4 3.6 1.6-7.3L1 8.5l7.4-.9z" fill="#9C6ADE"/>`
+  library: `<circle cx="11" cy="11" r="8" fill="#7A5568"/>`,
+  rec:     `<polygon points="11,2 20,19 2,19" fill="#6E8B8A"/>`,
+  museum:  `<rect x="3" y="3" width="16" height="16" rx="2" fill="#C79A4B"/>`,
+  outdoor: `<polygon points="11,1 21,11 11,21 1,11" fill="#B4805A"/>`,
+  community: `<path d="M11 1l2.6 6.6L21 8.5l-5.2 4.7 1.6 7.3L11 16.9l-6.4 3.6 1.6-7.3L1 8.5l7.4-.9z" fill="#9B8AAE"/>`
 };
 function blazeSvg(cat){
   return `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes[cat]}</svg>`;
@@ -580,6 +677,36 @@ function renderChips(containerId, options, activeVal, onClick){
   });
 }
 
+/**
+ * Ages are stored in decimal years (e.g. 0.83 for 10 months) so the
+ * age-bucket filter math stays simple. For display, anything genuinely
+ * FRACTIONAL and under 18 months should read as whole months (e.g. "10
+ * mo" instead of "0.83") — but a clean whole number like 0 or 1 isn't a
+ * fraction in the first place, so it stays as a plain year value rather
+ * than becoming an odd "0mo".
+ */
+function ageBoundParts(v){
+  if(v === 0) return { value: 0, unit: null }; // zero reads the same in months or years
+  if(v < 1.5 && !Number.isInteger(v)){
+    return { value: Math.round(v * 12), unit: "mo" };
+  }
+  return { value: Number.isInteger(v) ? v : v.toFixed(1), unit: "yr" };
+}
+
+function formatAgeRange(min, max){
+  if(min === 0 && max === 0) return "Prenatal";
+
+  const a = ageBoundParts(min);
+  const b = ageBoundParts(max);
+  if(a.unit === null) a.unit = b.unit;
+  if(b.unit === null) b.unit = a.unit;
+
+  if(a.unit === b.unit){
+    return `${a.value}–${b.value} ${a.unit}`;
+  }
+  return `${a.value}${a.unit}–${b.value}${b.unit}`;
+}
+
 function ageMatches(ev){
   if(activeAge==="all") return true;
   const [lo,hi] = activeAge.split("-").map(Number);
@@ -637,8 +764,9 @@ function renderFeed(){
         <div class="event-title">${ev.title}</div>
         <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
         <div>
+          <span class="tag city">${ev.city}</span>
           <span class="tag ${ev.cost}">${ev.cost==="free" ? "Free" : "Paid"}</span>
-          <span class="tag age">Ages ${ev.age_min}–${ev.age_max}</span>
+          <span class="tag age">Ages ${formatAgeRange(ev.age_min, ev.age_max)}</span>
         </div>
         <div class="event-meta" style="margin-top:6px;">${ev.note || ""}</div>
       </div>
@@ -673,7 +801,7 @@ function renderPlaygrounds(){
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">No playgrounds curated for this city yet.</div>`;
     return;
   }
-  const palette = ["#7A8B6F", "#4C7C9B", "#E0A72E", "#2F4C3B"];
+  const palette = ["#B4805A", "#6E8B8A", "#C79A4B", "#7A5568"];
   filtered.forEach((pg, i)=>{
     const color = palette[i % palette.length];
     const tips = (pg.tags || "").split(",").map(t=>t.trim()).filter(Boolean);
@@ -685,6 +813,7 @@ function renderPlaygrounds(){
       </div>
       <div class="pg-body">
         <div class="pg-name">${pg.name}</div>
+        <div class="pg-city">${pg.city}</div>
         <div class="pg-detail">${pg.detail || ""}</div>
         <div class="pg-tips">${tips.map(t=>`<span class="pg-tip">${t}</span>`).join("")}</div>
       </div>
@@ -712,7 +841,10 @@ function renderHikes(){
     card.className = "hike-card";
     card.innerHTML = `
       <div class="hike-top">
-        <div class="hike-name">${h.name}</div>
+        <div>
+          <div class="hike-name">${h.name}</div>
+          <div class="hike-city">${h.city}</div>
+        </div>
         <div class="hike-stats">${h.distance_stats || ""}</div>
       </div>
       <div class="hike-detail">${h.detail || ""}</div>
@@ -727,7 +859,7 @@ function handleSignup(){
   const note = document.getElementById("signupNote");
   if(!input.value || !input.value.includes("@")){
     note.textContent = "Enter a real-looking email to test the flow (nothing is sent — see note below).";
-    note.style.color = "#E0A72E";
+    note.style.color = "#C79A4B";
     return;
   }
   note.textContent = `Got it — in a real version, "${input.value}" would now be on the list. Wire this to a Google Form or Mailchimp embed to make it real.`;
@@ -741,6 +873,14 @@ function toggleFilters(){
   filtersOpen = !filtersOpen;
   document.getElementById("filterPanel").classList.toggle("collapsed", !filtersOpen);
   document.getElementById("chevron").classList.toggle("open", filtersOpen);
+}
+
+let releaseNotesOpen = false;
+
+function toggleReleaseNotes(){
+  releaseNotesOpen = !releaseNotesOpen;
+  document.getElementById("releaseNotesPanel").classList.toggle("collapsed", !releaseNotesOpen);
+  document.getElementById("releaseChevron").classList.toggle("open", releaseNotesOpen);
 }
 
 function updateActiveCount(){
