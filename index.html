@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playroute — your week, mapped out</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+
+  :root{
+    --canvas:#F5F0E4;
+    --canvas-raised:#FFFDF8;
+    --ink:#2B2A25;
+    --ink-soft:#5C5A4E;
+    --pine:#2F4C3B;
+    --pine-dark:#213A2C;
+    --marigold:#E0A72E;
+    --sky:#4C7C9B;
+    --sage:#7A8B6F;
+    --line:#E2DACB;
+    --radius:14px;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--canvas);
+    color:var(--ink);
+    font-family:'IBM Plex Sans', sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding-bottom:64px;
+  }
+  h1,h2,h3{
+    font-family:'Fraunces', serif;
+    margin:0;
+    color:var(--pine-dark);
+  }
+  .mono{font-family:'IBM Plex Mono', monospace; letter-spacing:0.02em;}
+
+  a{color:inherit;}
+
+  /* ---------- header ---------- */
+  header.top{
+    background:var(--pine);
+    color:var(--canvas-raised);
+    padding:22px 20px 26px;
+    position:relative;
+    overflow:hidden;
+  }
+  header.top::after{
+    content:"";
+    position:absolute;
+    left:0; right:0; bottom:0;
+    height:6px;
+    background:repeating-linear-gradient(90deg, var(--marigold) 0 18px, transparent 18px 30px);
+  }
+  .wordmark{
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+  }
+  .wordmark h1{
+    color:#FDF8ED;
+    font-size:28px;
+    font-weight:700;
+  }
+  .wordmark .badge{
+    width:10px;height:10px;border-radius:50%;
+    background:var(--marigold);
+    display:inline-block;
+    transform:translateY(-2px);
+  }
+  header.top p{
+    margin:6px 0 0;
+    font-size:14px;
+    color:#CFE0D2;
+    max-width:36ch;
+  }
+  .phase-note{
+    margin-top:16px;
+    background:rgba(255,255,255,0.08);
+    border:1px solid rgba(255,255,255,0.18);
+    border-radius:10px;
+    padding:10px 12px;
+    font-size:12.5px;
+    line-height:1.5;
+    color:#E7EEE4;
+  }
+  .phase-note strong{color:var(--marigold);}
+
+  /* ---------- filters ---------- */
+  .filters{
+    padding:0 20px;
+    position:sticky;
+    top:0;
+    background:var(--canvas);
+    z-index:5;
+    border-bottom:1px solid var(--line);
+  }
+  .filters-toggle{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 0;
+    cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;
+  }
+  .filters-toggle-label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--ink);
+    font-weight:500;
+    display:flex;
+    align-items:center;
+    gap:7px;
+  }
+  .active-count{
+    background:var(--marigold);
+    color:var(--ink);
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:11px;
+    font-weight:600;
+    padding:1px 7px;
+    border-radius:100px;
+    min-width:16px;
+    text-align:center;
+    display:none;
+  }
+  .active-count.show{display:inline-block;}
+  .chevron{
+    color:var(--ink-soft);
+    font-size:12px;
+    transition:transform .2s ease;
+  }
+  .chevron.open{transform:rotate(180deg);}
+  .filter-panel{
+    max-height:400px;
+    overflow:hidden;
+    transition:max-height .25s ease, opacity .2s ease;
+    opacity:1;
+  }
+  .filter-panel.collapsed{
+    max-height:0;
+    opacity:0;
+  }
+  .filter-row{
+    display:flex;
+    gap:8px;
+    overflow-x:auto;
+    padding-bottom:12px;
+    scrollbar-width:none;
+  }
+  .filter-row::-webkit-scrollbar{display:none;}
+  .filter-label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:10.5px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--ink-soft);
+    margin:10px 0 4px;
+  }
+  .chip{
+    flex:0 0 auto;
+    padding:7px 13px;
+    border-radius:100px;
+    border:1.5px solid var(--line);
+    background:var(--canvas-raised);
+    font-size:13px;
+    font-weight:500;
+    color:var(--ink);
+    cursor:pointer;
+    white-space:nowrap;
+    transition:all .15s ease;
+  }
+  .chip:active{transform:scale(0.96);}
+  .chip.active{
+    background:var(--pine);
+    border-color:var(--pine);
+    color:#fff;
+  }
+  .chip.active.free{background:var(--marigold); border-color:var(--marigold); color:var(--ink);}
+
+  /* ---------- sections ---------- */
+  main{padding:6px 20px 0;}
+  .section-title{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    margin:28px 0 12px;
+  }
+  .section-title h2{font-size:19px;}
+  .section-sub{font-size:12px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace;}
+
+  .day-heading{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11.5px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--sage);
+    margin:22px 0 8px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .day-heading::after{
+    content:"";
+    flex:1;
+    height:1px;
+    background:var(--line);
+  }
+
+  .event-card{
+    background:var(--canvas-raised);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:14px 14px 14px 12px;
+    margin-bottom:10px;
+    display:flex;
+    gap:12px;
+    align-items:flex-start;
+    box-shadow:0 1px 0 rgba(43,42,37,0.02);
+    position:relative;
+  }
+  .source-link{
+    position:absolute;
+    top:12px;
+    right:12px;
+    width:22px;
+    height:22px;
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--ink-soft);
+    text-decoration:none;
+    transition:background .15s ease, color .15s ease;
+    flex:0 0 auto;
+  }
+  .source-link:hover, .source-link:active{
+    background:var(--line);
+    color:var(--pine-dark);
+  }
+  .source-link svg{width:12px; height:12px; display:block;}
+
+  .link-popover{
+    position:absolute;
+    z-index:50;
+    background:var(--canvas-raised);
+    border:1px solid var(--line);
+    border-radius:10px;
+    box-shadow:0 8px 24px rgba(43,42,37,0.18);
+    padding:10px;
+    width:240px;
+    font-family:'IBM Plex Sans', sans-serif;
+  }
+  .link-popover-label{
+    font-size:11px;
+    color:var(--ink-soft);
+    margin-bottom:6px;
+    line-height:1.4;
+  }
+  .link-popover input{
+    width:100%;
+    font-size:11px;
+    font-family:'IBM Plex Mono', monospace;
+    padding:6px 7px;
+    border-radius:6px;
+    border:1px solid var(--line);
+    background:var(--canvas);
+    color:var(--ink);
+    box-sizing:border-box;
+  }
+  .link-popover-actions{
+    display:flex;
+    gap:6px;
+    margin-top:8px;
+  }
+  .link-popover-actions button, .link-popover-actions a{
+    flex:1;
+    text-align:center;
+    font-size:11.5px;
+    font-weight:500;
+    padding:6px 0;
+    border-radius:6px;
+    border:1px solid var(--line);
+    background:var(--canvas);
+    color:var(--ink);
+    cursor:pointer;
+    text-decoration:none;
+  }
+  .link-popover-actions a{background:var(--pine); color:#fff; border-color:var(--pine);}
+  .blaze{
+    flex:0 0 auto;
+    width:22px;height:22px;
+    margin-top:2px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .blaze svg{width:100%; height:100%;}
+
+  .event-main{flex:1; min-width:0; padding-right:26px;}
+  .event-title{font-weight:600; font-size:15px; line-height:1.3;}
+  .event-meta{
+    font-size:12.5px;
+    color:var(--ink-soft);
+    margin-top:3px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:4px 8px;
+  }
+  .event-time{
+    font-family:'IBM Plex Mono', monospace;
+    font-weight:500;
+    color:var(--pine-dark);
+  }
+  .tag{
+    display:inline-block;
+    font-size:11px;
+    font-weight:500;
+    padding:2px 7px;
+    border-radius:6px;
+    margin-top:6px;
+    margin-right:5px;
+  }
+  .tag.free{background:#FBEACB; color:#8C6300;}
+  .tag.paid{background:#E7EEF2; color:#3E6178;}
+  .tag.age{background:#EAEEE4; color:#516144;}
+
+  .empty-state{
+    text-align:center;
+    padding:36px 20px;
+    color:var(--ink-soft);
+    font-size:14px;
+  }
+  .empty-state .blaze-lg{
+    width:34px;height:34px;
+    margin:0 auto 10px;
+  }
+
+  /* ---------- playgrounds ---------- */
+  .pg-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:10px;
+  }
+  .pg-card{
+    background:var(--canvas-raised);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    overflow:hidden;
+  }
+  .pg-photo{
+    height:96px;
+    display:flex; align-items:center; justify-content:center;
+    position:relative;
+  }
+  .pg-photo svg{width:60%; height:60%;}
+  .pg-body{padding:10px 11px 12px;}
+  .pg-name{font-weight:600; font-size:13.5px; line-height:1.25;}
+  .pg-detail{font-size:11.5px; color:var(--ink-soft); margin-top:4px; line-height:1.45;}
+  .pg-tips{margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;}
+  .pg-tip{
+    font-size:10px; font-family:'IBM Plex Mono',monospace;
+    background:#EDE7D8; color:var(--ink-soft);
+    padding:2px 6px; border-radius:5px;
+  }
+
+  /* ---------- hikes ---------- */
+  .hike-card{
+    background:var(--canvas-raised);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:13px 14px;
+    margin-bottom:10px;
+  }
+  .hike-top{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
+  .hike-name{font-weight:600; font-size:14.5px;}
+  .hike-stats{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--sky); white-space:nowrap;}
+  .hike-detail{font-size:12.5px; color:var(--ink-soft); margin-top:5px; line-height:1.5;}
+
+  /* ---------- signup ---------- */
+  .signup{
+    margin-top:36px;
+    background:var(--pine);
+    color:#EFE9D8;
+    border-radius:var(--radius);
+    padding:20px 18px;
+    text-align:center;
+  }
+  .signup h3{color:#FDF8ED; font-size:18px; margin-bottom:6px;}
+  .signup p{font-size:13px; color:#CFE0D2; margin:0 0 14px; line-height:1.5;}
+  .signup-form{display:flex; gap:8px; max-width:340px; margin:0 auto;}
+  .signup-form input{
+    flex:1;
+    padding:11px 12px;
+    border-radius:9px;
+    border:none;
+    font-size:14px;
+    font-family:'IBM Plex Sans',sans-serif;
+  }
+  .signup-form button{
+    padding:11px 16px;
+    border-radius:9px;
+    border:none;
+    background:var(--marigold);
+    color:var(--ink);
+    font-weight:600;
+    font-size:14px;
+    cursor:pointer;
+  }
+  .signup-form button:active{transform:scale(0.97);}
+  .signup-note{font-size:11px; color:#9FB6A5; margin-top:10px;}
+
+  footer{
+    text-align:center;
+    padding:22px 20px 10px;
+    font-size:11px;
+    color:var(--ink-soft);
+    font-family:'IBM Plex Mono',monospace;
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wordmark">
+    <h1>Playroute</h1>
+    <span class="badge"></span>
+  </div>
+  <p>Your kid's week, mapped out — libraries, rec centers, museums, parks, and trails, all in one place.</p>
+  <div class="phase-note">
+    <strong>Phase 0 preview.</strong> Hand-curated sample across Boulder, Erie, Longmont, Lafayette, Lyons, and Broomfield. Now includes park storytimes, museum free days, gymnastics drop-ins, and rec center classes alongside library storytimes. <strong>Already-passed events are hidden automatically</strong> — the feed always shows each listing's next upcoming occurrence. Erie, Longmont, Lyons, and one Boulder park-storytime entry were pulled from real public calendars; everything else is illustrative — verify before you go.
+  </div>
+</header>
+
+<div class="filters">
+  <div class="filters-toggle" onclick="toggleFilters()">
+    <span class="filters-toggle-label">Filters <span id="activeCount" class="active-count"></span></span>
+    <span class="chevron open" id="chevron">▾</span>
+  </div>
+  <div class="filter-panel" id="filterPanel">
+    <div class="filter-label">City</div>
+    <div class="filter-row" id="cityFilters"></div>
+    <div class="filter-label">Age</div>
+    <div class="filter-row" id="ageFilters"></div>
+    <div class="filter-label">Category</div>
+    <div class="filter-row" id="catFilters"></div>
+    <div class="filter-label">Cost</div>
+    <div class="filter-row" id="costFilters"></div>
+  </div>
+</div>
+
+<main>
+  <div class="section-title">
+    <h2>Coming up</h2>
+    <span class="section-sub" id="resultCount"></span>
+  </div>
+  <div id="weekFeed"></div>
+
+  <div class="section-title">
+    <h2>Playgrounds nearby</h2>
+    <span class="section-sub">not date-bound — browse anytime</span>
+  </div>
+  <div class="pg-grid" id="pgGrid"></div>
+
+  <div class="section-title">
+    <h2>Kid-friendly hikes</h2>
+    <span class="section-sub">stroller notes included</span>
+  </div>
+  <div id="hikeList"></div>
+
+  <div class="signup">
+    <h3>Want this in your inbox?</h3>
+    <p>If enough people say yes, this becomes a real weekly digest instead of a one-off page.</p>
+    <div class="signup-form">
+      <input type="email" id="emailInput" placeholder="you@email.com">
+      <button onclick="handleSignup()">Notify me</button>
+    </div>
+    <div class="signup-note" id="signupNote">This button doesn't send anything yet — wire it to a Google Form or Mailchimp embed once you're ready to actually capture emails.</div>
+  </div>
+</main>
+
+<footer>PLAYROUTE · PHASE 0 · BOULDER COUNTY + BROOMFIELD PILOT</footer>
+
+<script>
+/* ============================================================
+   BLAZE ICONS — one shape per category, echoing real trail blazes
+   ============================================================ */
+const blazes = {
+  library: `<circle cx="11" cy="11" r="8" fill="#2F4C3B"/>`,
+  rec:     `<polygon points="11,2 20,19 2,19" fill="#4C7C9B"/>`,
+  museum:  `<rect x="3" y="3" width="16" height="16" rx="2" fill="#E0A72E"/>`,
+  outdoor: `<polygon points="11,1 21,11 11,21 1,11" fill="#7A8B6F"/>`
+};
+function blazeSvg(cat){
+  return `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes[cat]}</svg>`;
+}
+
+/* ============================================================
+   SAMPLE DATA — replace this block with real curated listings.
+   Times/details below are illustrative placeholders based on
+   general knowledge of these institutions — CONFIRM live details
+   (day, time, registration) directly with each source before
+   publishing anything to real users.
+   ============================================================ */
+const events = [
+  {city:"Boulder", day:"Tuesday", startTime:"10:00", title:"Baby & Toddler Storytime", source:"Boulder Public Library — Main Branch", time:"10:00 AM", ageMin:0, ageMax:2, cat:"library", cost:"free", note:"Drop-in, no registration", url:"https://calendar.boulderlibrary.org/"},
+  {city:"Boulder", day:"Tuesday", startTime:"10:30", title:"Mornings at the Museum", source:"CU Museum of Natural History", time:"10:30 AM", ageMin:2, ageMax:5, cat:"museum", cost:"free", note:"Suggested donation · check ahead for exact schedule", url:"https://www.google.com/search?q=CU+Museum+of+Natural+History+Mornings+at+the+Museum"},
+  {city:"Boulder", day:"Wednesday", startTime:"11:00", title:"Toddler Splash Time", source:"North Boulder Rec Center Pool", time:"11:00 AM", ageMin:1, ageMax:4, cat:"rec", cost:"paid", note:"Rec center day-pass or membership", url:"https://www.google.com/search?q=North+Boulder+Rec+Center+pool+schedule"},
+  {city:"Lafayette", day:"Wednesday", startTime:"09:00", title:"Open Play", source:"WOW! Children's Museum, Lafayette", time:"9:00 AM – 4:00 PM", ageMin:0, ageMax:8, cat:"museum", cost:"paid", note:"Drop-in, general admission", url:"https://www.google.com/search?q=WOW+Children%27s+Museum+Lafayette+CO+hours"},
+  {city:"Boulder", day:"Thursday", startTime:"10:15", title:"Preschool Storytime", source:"Boulder Public Library — George Reynolds Branch", time:"10:15 AM", ageMin:3, ageMax:5, cat:"library", cost:"free", note:"Drop-in, no registration", url:"https://calendar.boulderlibrary.org/"},
+  {city:"Boulder", day:"Thursday", startTime:"09:30", title:"Music & Movement", source:"Center for Musical Arts", time:"9:30 AM", ageMin:0, ageMax:5, cat:"rec", cost:"paid", note:"Registration required — class-based, not drop-in", url:"https://www.google.com/search?q=Center+for+Musical+Arts+Boulder+Music+and+Movement"},
+  {city:"Boulder", day:"Friday", startTime:"10:00", title:"Family Fun Friday — Playzeum", source:"Museum of Boulder", time:"10:00 AM – 5:00 PM", ageMin:2, ageMax:7, cat:"museum", cost:"paid", note:"Included with museum admission", url:"https://www.google.com/search?q=Museum+of+Boulder+Playzeum"},
+  {city:"Boulder", day:"Saturday", startTime:"10:00", title:"Weekend Storytime", source:"Boulder Public Library — Meadows Branch", time:"10:00 AM", ageMin:0, ageMax:5, cat:"library", cost:"free", note:"Drop-in, no registration", url:"https://calendar.boulderlibrary.org/"},
+  {city:"Boulder", day:"Saturday", startTime:"09:00", title:"Kids Corner", source:"Boulder County Farmers Market", time:"9:00 AM – 1:00 PM", ageMin:0, ageMax:8, cat:"outdoor", cost:"free", note:"Seasonal — runs while market is open", url:"https://www.google.com/search?q=Boulder+County+Farmers+Market+kids+corner"},
+  {city:"Boulder", day:"Sunday", startTime:"09:00", title:"Toddler Open Gym", source:"ABC Kids Climbing", time:"9:00 AM – 11:00 AM", ageMin:2, ageMax:5, cat:"rec", cost:"paid", note:"Drop-in, ages 2.5–5 room", url:"https://www.google.com/search?q=ABC+Kids+Climbing+Boulder+toddler+open+gym"},
+
+  // --- Erie & Longmont: pulled from real public library calendars (minimal scrape, see notes) ---
+  {city:"Erie", day:"Thursday", startTime:"16:15", title:"Erie Family Storytime", source:"Erie Community Library (High Plains Library District)", time:"4:15 – 4:45 PM", ageMin:0, ageMax:5, cat:"library", cost:"free", note:"Drop-in, first-come first-seated. Weekly Thursdays — confirmed via highplains.libcal.com", url:"https://highplains.libcal.com/event/15698998"},
+  {city:"Erie", day:"Sunday", startTime:"14:00", recurrence:"monthly-last-sunday", title:"Family LEGO Club", source:"Erie Community Library — Erie Storytime Room", time:"2:00 – 3:00 PM", ageMin:3, ageMax:10, cat:"library", cost:"free", note:"Monthly, last Sunday. Adult must stay and supervise — choking hazard under 3", url:"https://highplains.libcal.com/calendar/hpld/ecllego"},
+  {city:"Longmont", day:"Monday", startTime:"10:00", title:"Bilingual Storytime / Cuentos bilingües", source:"Longmont Public Library", time:"10:00 – 10:30 AM", ageMin:0, ageMax:5, cat:"library", cost:"free", note:"English & Spanish stories and songs, drop-in, no registration", url:"https://www.longmontcolorado.gov/departments/departments-e-m/library/just-for-children/children-s-storytimes"},
+  {city:"Longmont", day:"Wednesday", startTime:"10:00", title:"Baby Storytime", source:"Longmont Public Library", time:"10:00 – 10:20 AM", ageMin:0, ageMax:2, cat:"library", cost:"free", note:"Followed by Baby Stay & Play open playtime at 10:30", url:"https://www.longmontcolorado.gov/departments/departments-e-m/library/just-for-children/children-s-storytimes"},
+  {city:"Longmont", day:"Friday", startTime:"10:00", title:"All Ages Storytime", source:"Longmont Public Library", time:"10:00 – 10:30 AM", ageMin:0, ageMax:8, cat:"library", cost:"free", note:"Drop-in, no registration — caregiver must stay in the room", url:"https://www.longmontcolorado.gov/departments/departments-e-m/library/just-for-children/children-s-storytimes"},
+
+  // --- Lyons: pulled from Lyons Regional Library's public storytime page & city site (both agree) ---
+  {city:"Lyons", day:"Tuesday", startTime:"10:30", title:"Baby Storytime", source:"Lyons Regional Library", time:"10:30 – 11:00 AM", ageMin:0, ageMax:1.5, cat:"library", cost:"free", note:"Playtime after storytime. Confirmed via lyons.colibraries.org", url:"https://lyons.colibraries.org/storytime-online/"},
+  {city:"Lyons", day:"Wednesday", startTime:"10:30", title:"All Ages Storytime + Crafts", source:"Lyons Regional Library", time:"10:30 – 11:00 AM", ageMin:0, ageMax:8, cat:"library", cost:"free", note:"For walkers and up, craft follows. Confirmed via cityoflyons.org", url:"https://lyons.colibraries.org/storytime-online/"},
+
+  // --- Broomfield: program exists per library's own program list, exact day/time not confirmed — illustrative, verify before publishing ---
+  {city:"Broomfield", day:"Tuesday", startTime:"10:00", title:"Toddler Storytime", source:"Mamie Doud Eisenhower Public Library", time:"[verify time]", ageMin:2, ageMax:3, cat:"library", cost:"free", note:"Best for ages 2–3. Day/time not confirmed — check compass.broomfield.org", url:"https://compass.broomfield.org/event/toddler-storytime-0"},
+  {city:"Broomfield", day:"Wednesday", startTime:"10:00", title:"Baby Storytime", source:"Mamie Doud Eisenhower Public Library", time:"[verify time]", ageMin:0, ageMax:1.5, cat:"library", cost:"free", note:"Day/time not confirmed — check compass.broomfield.org", url:"https://www.broomfield.org/276/Library-Home"},
+
+  // --- Storytime in the park, museum free days, gymnastics drop-in, rec center classes ---
+  {city:"Boulder", day:"Thursday", startTime:"10:15", title:"Storytime in the Great Outdoors", source:"Boulder Public Library, at Bill Bower Park", time:"10:15 – 10:45 AM", ageMin:0, ageMax:5, cat:"outdoor", cost:"free", note:"Park storytime that swaps in for the regular Reynolds Branch storytime on select summer weeks. Bring a blanket. Confirmed via calendar.boulderlibrary.org", url:"https://calendar.boulderlibrary.org/event/13547479"},
+  {city:"Lafayette", day:"Monday", startTime:"09:00", title:"Free Day", source:"WOW! Children's Museum, Lafayette", time:"check hours", ageMin:0, ageMax:8, cat:"museum", cost:"free", note:"Occasional sponsor-funded free admission day, not weekly — confirm the next date on WOW's own calendar before planning around it", url:"https://wowchildrensmuseum.org/"},
+  {city:"Boulder", day:"Friday", startTime:"09:30", title:"Tot Obstacle Mountain (Drop-In)", source:"CATS Gym", time:"9:30 – 11:00 AM", ageMin:1, ageMax:5, cat:"rec", cost:"paid", note:"Also offered Sundays same time. New obstacle course weekly, parents stay and play. Confirmed via catsgym.com", url:"https://www.catsgym.com/preschool-classes"},
+  {city:"Boulder", day:"Saturday", startTime:"10:00", title:"Open Gymnastics (Drop-In)", source:"City of Boulder Recreation Center", time:"[verify time]", ageMin:0, ageMax:8, cat:"rec", cost:"paid", note:"Punch-pass drop-in gym time; kids 5 & under must be supervised by an adult. Day/time not confirmed — check bouldercolorado.gov/open-gymnastics", url:"https://bouldercolorado.gov/open-gymnastics"},
+  {city:"Boulder", day:"Saturday", startTime:"09:00", title:"Preschool Gymnastics (Registered Class)", source:"City of Boulder Recreation Center", time:"[verify time]", ageMin:2, ageMax:5, cat:"rec", cost:"paid", note:"Registration-based session class, not drop-in — sessions run in blocks. Day/time not confirmed — check bouldercolorado.gov/services/gymnastics", url:"https://bouldercolorado.gov/services/gymnastics"}
+];
+
+const playgrounds = [
+  {city:"Boulder", name:"Scott Carpenter Park", detail:"Astronaut-themed play structure, big-kid + smaller-kid areas, splash pad in summer.", tips:["Fenced (partial)","Splash pad","Some shade"], shape:"outdoor", color:"#7A8B6F"},
+  {city:"Boulder", name:"Central Park, Boulder", detail:"Toddler-friendly structures with stroller-friendly paths through downtown.", tips:["Stroller ok","Central location"], shape:"outdoor", color:"#4C7C9B"},
+  {city:"Lafayette", name:"Waneka Lake Park, Lafayette", detail:"Lakeside playground with open space for running, near WOW! Children's Museum.", tips:["Near museum","Open space"], shape:"outdoor", color:"#E0A72E"},
+  {city:"Longmont", name:"Sandstone Ranch Park, Longmont", detail:"Large play area plus trails and open fields — good for a longer outing.", tips:["Big open space","Trails nearby"], shape:"outdoor", color:"#2F4C3B"},
+
+  // --- Erie community parks ---
+  {city:"Erie", name:"Erie Community Park", detail:"40-acre hub next to Erie Community Center — train-themed playground near Mitchell Field, pump track, skate park, sledding hill.", tips:["Multiple playgrounds","Restrooms","Big open space"], shape:"outdoor", color:"#7A8B6F"},
+  {city:"Erie", name:"Lehigh Park", detail:"Erie's only splash pad, plus a playground with ramps, a climbing boulder, and rubber surfacing that's easier for early walkers.", tips:["Splash pad","Early-walker friendly"], shape:"outdoor", color:"#4C7C9B"},
+  {city:"Erie", name:"Serene Park", detail:"Treehouse-style structure built for ages 2–5, wooden bumblebee bouncer, hillside slide — plus an outdoor fitness area for adults.", tips:["Ages 2–5 structure","Adult fitness area"], shape:"outdoor", color:"#E0A72E"},
+  {city:"Erie", name:"Crescent Park", detail:"Inclusive playground in the Kenosha Farms neighborhood — adaptive swing, toddler swing, and an infinity bowl for independent sensory play.", tips:["Adaptive/inclusive equipment","Toddler swings"], shape:"outdoor", color:"#2F4C3B"}
+];
+
+const hikes = [
+  {city:"Boulder", name:"Chautauqua – Flatiron Loop", stats:"2.1 mi · easy", detail:"Family-friendly loop starting at Chautauqua Park, good Flatirons views. Can get busy — consider the shuttle from Pearl Street on weekends.", stroller:"Carrier recommended, not stroller-friendly"},
+  {city:"Boulder", name:"Boulder Creek Path (short segment)", stats:"pick your distance · flat", detail:"Paved path along the creek through downtown — walk as much or as little as you want, playgrounds along the way.", stroller:"Fully stroller-friendly"},
+  {city:"Boulder", name:"Valmont Bike Park – Toddler Pump Track", stats:"short loop · very easy", detail:"Small bumps and jumps sized for little ones on strider bikes, plus bigger trails for the rest of the family.", stroller:"Stroller-friendly to the toddler course"},
+  {city:"Boulder", name:"Realization Point (Flagstaff)", stats:"~1 mi · easy", detail:"Easy, mostly flat trail with mountain views — a good first real 'hike' for a preschooler.", stroller:"Carrier recommended"}
+];
+
+/* ============================================================ */
+
+let activeCity = "all", activeAge = "all", activeCat = "all", activeCost = "all";
+
+function cityOptions(){ return [
+  {id:"all", label:"All cities"},
+  {id:"Boulder", label:"Boulder"},
+  {id:"Erie", label:"Erie"},
+  {id:"Longmont", label:"Longmont"},
+  {id:"Lafayette", label:"Lafayette"},
+  {id:"Lyons", label:"Lyons"},
+  {id:"Broomfield", label:"Broomfield"}
+];}
+function ageOptions(){ return [
+  {id:"all", label:"All ages"},
+  {id:"0-1.5", label:"0–18mo"},
+  {id:"2-4", label:"2–4"},
+  {id:"5-8", label:"5–8"}
+];}
+function catOptions(){ return [
+  {id:"all", label:"All"},
+  {id:"library", label:"● Library"},
+  {id:"rec", label:"▲ Rec / swim / gym"},
+  {id:"museum", label:"■ Museum"},
+  {id:"outdoor", label:"◆ Outdoor"}
+];}
+function costOptions(){ return [
+  {id:"all", label:"Any"},
+  {id:"free", label:"Free only"}
+];}
+
+function renderChips(containerId, options, activeVal, onClick){
+  const el = document.getElementById(containerId);
+  el.innerHTML = "";
+  options.forEach(o=>{
+    const chip = document.createElement("div");
+    chip.className = "chip" + (o.id===activeVal ? " active" : "") + (o.id==="free" ? " free":"");
+    chip.textContent = o.label;
+    chip.onclick = ()=> onClick(o.id);
+    el.appendChild(chip);
+  });
+}
+
+function ageMatches(ev){
+  if(activeAge==="all") return true;
+  const [lo,hi] = activeAge.split("-").map(Number);
+  return ev.ageMax >= lo && ev.ageMin <= hi;
+}
+function passesFilters(ev){
+  if(activeCity!=="all" && ev.city!==activeCity) return false;
+  if(activeCat!=="all" && ev.cat!==activeCat) return false;
+  if(activeCost==="free" && ev.cost!=="free") return false;
+  if(!ageMatches(ev)) return false;
+  return true;
+}
+
+const DAY_INDEX = {Sunday:0, Monday:1, Tuesday:2, Wednesday:3, Thursday:4, Friday:5, Saturday:6};
+
+function lastSundayOfMonth(year, month){
+  const d = new Date(year, month+1, 0); // last day of month
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+function getNextMonthlyLastSunday(startTime){
+  const [hh,mm] = startTime.split(":").map(Number);
+  const now = new Date();
+  let year = now.getFullYear(), month = now.getMonth();
+  let candidate = lastSundayOfMonth(year, month);
+  candidate.setHours(hh, mm, 0, 0);
+  if(candidate < now){
+    month++;
+    if(month>11){ month=0; year++; }
+    candidate = lastSundayOfMonth(year, month);
+    candidate.setHours(hh, mm, 0, 0);
+  }
+  return candidate;
+}
+function getNextWeeklyOccurrence(dayName, startTime){
+  const [hh,mm] = startTime.split(":").map(Number);
+  const now = new Date();
+  const targetIdx = DAY_INDEX[dayName];
+  let diff = (targetIdx - now.getDay() + 7) % 7;
+  const candidate = new Date(now);
+  candidate.setDate(now.getDate() + diff);
+  candidate.setHours(hh, mm, 0, 0);
+  if(diff===0 && candidate < now){
+    candidate.setDate(candidate.getDate() + 7); // today's slot already passed — roll to next week
+  }
+  return candidate;
+}
+function getOccurrence(ev){
+  if(ev.recurrence === "monthly-last-sunday") return getNextMonthlyLastSunday(ev.startTime);
+  return getNextWeeklyOccurrence(ev.day, ev.startTime);
+}
+function formatOccurrenceHeading(date){
+  const weekday = date.toLocaleDateString('en-US', {weekday:'long'});
+  const md = date.toLocaleDateString('en-US', {month:'short', day:'numeric'});
+  return `${weekday} · ${md}`;
+}
+
+function renderFeed(){
+  const feed = document.getElementById("weekFeed");
+  feed.innerHTML = "";
+
+  const upcoming = events
+    .filter(passesFilters)
+    .map(ev => ({ ev, occ: getOccurrence(ev) }))
+    .sort((a,b) => a.occ - b.occ);
+
+  let shown = 0;
+  let lastHeading = null;
+
+  upcoming.forEach(({ev, occ})=>{
+    const heading = formatOccurrenceHeading(occ);
+    if(heading !== lastHeading){
+      const h = document.createElement("div");
+      h.className = "day-heading";
+      h.textContent = heading;
+      feed.appendChild(h);
+      lastHeading = heading;
+    }
+
+    shown++;
+    const card = document.createElement("div");
+    card.className = "event-card";
+    card.innerHTML = `
+      <div class="blaze">${blazeSvg(ev.cat)}</div>
+      <div class="event-main">
+        <div class="event-title">${ev.title}</div>
+        <div class="event-meta"><span class="event-time">${ev.time}</span> · ${ev.source}</div>
+        <div>
+          <span class="tag ${ev.cost}">${ev.cost==="free" ? "Free" : "Paid"}</span>
+          <span class="tag age">Ages ${ev.ageMin}–${ev.ageMax}</span>
+        </div>
+        <div class="event-meta" style="margin-top:6px;">${ev.note}</div>
+      </div>
+      <a class="source-link" href="${ev.url}" target="_blank" rel="noopener noreferrer" aria-label="View source for ${ev.title}" title="View source" onclick='return handleSourceLinkClick(event, this, ${JSON.stringify(ev.url)});'>
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7 17L17 7M17 7H9M17 7V15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+    `;
+    feed.appendChild(card);
+  });
+
+  document.getElementById("resultCount").textContent = `${shown} upcoming`;
+
+  if(shown===0){
+    feed.innerHTML = `<div class="empty-state">
+      <div class="blaze-lg">${blazeSvg("outdoor")}</div>
+      Nothing matches those filters — try widening the age range or category.
+    </div>`;
+  }
+}
+
+function renderPlaygrounds(){
+  const grid = document.getElementById("pgGrid");
+  grid.innerHTML = "";
+  const filtered = playgrounds.filter(pg => activeCity==="all" || pg.city===activeCity);
+  if(filtered.length===0){
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">No playgrounds curated for this city yet.</div>`;
+    return;
+  }
+  filtered.forEach(pg=>{
+    const card = document.createElement("div");
+    card.className = "pg-card";
+    card.innerHTML = `
+      <div class="pg-photo" style="background:${pg.color}22;">
+        <svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes[pg.shape]}</svg>
+      </div>
+      <div class="pg-body">
+        <div class="pg-name">${pg.name}</div>
+        <div class="pg-detail">${pg.detail}</div>
+        <div class="pg-tips">${pg.tips.map(t=>`<span class="pg-tip">${t}</span>`).join("")}</div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function renderHikes(){
+  const list = document.getElementById("hikeList");
+  list.innerHTML = "";
+  const filtered = hikes.filter(h => activeCity==="all" || h.city===activeCity);
+  if(filtered.length===0){
+    list.innerHTML = `<div class="empty-state">No hikes curated for this city yet.</div>`;
+    return;
+  }
+  filtered.forEach(h=>{
+    const card = document.createElement("div");
+    card.className = "hike-card";
+    card.innerHTML = `
+      <div class="hike-top">
+        <div class="hike-name">${h.name}</div>
+        <div class="hike-stats">${h.stats}</div>
+      </div>
+      <div class="hike-detail">${h.detail}</div>
+      <div class="hike-detail" style="color:var(--sky); margin-top:4px;">🚼 ${h.stroller}</div>
+    `;
+    list.appendChild(card);
+  });
+}
+
+function handleSignup(){
+  const input = document.getElementById("emailInput");
+  const note = document.getElementById("signupNote");
+  if(!input.value || !input.value.includes("@")){
+    note.textContent = "Enter a real-looking email to test the flow (nothing is sent — see note below).";
+    note.style.color = "#E0A72E";
+    return;
+  }
+  note.textContent = `Got it — in a real version, "${input.value}" would now be on the list. Wire this to a Google Form or Mailchimp embed to make it real.`;
+  note.style.color = "#CFE0D2";
+  input.value = "";
+}
+
+let filtersOpen = true;
+
+function toggleFilters(){
+  filtersOpen = !filtersOpen;
+  document.getElementById("filterPanel").classList.toggle("collapsed", !filtersOpen);
+  document.getElementById("chevron").classList.toggle("open", filtersOpen);
+}
+
+function updateActiveCount(){
+  let count = 0;
+  if(activeCity!=="all") count++;
+  if(activeAge!=="all") count++;
+  if(activeCat!=="all") count++;
+  if(activeCost!=="all") count++;
+  const badge = document.getElementById("activeCount");
+  if(count>0){
+    badge.textContent = count;
+    badge.classList.add("show");
+  } else {
+    badge.classList.remove("show");
+  }
+}
+
+function handleSourceLinkClick(e, iconEl, url){
+  e.preventDefault();
+  let opened = null;
+  try{
+    opened = window.open(url, '_blank', 'noopener,noreferrer');
+  } catch(err){
+    opened = null;
+  }
+  // If the popup was blocked (common in sandboxed previews), fall back to a copyable link.
+  if(!opened || opened.closed){
+    showLinkPopover(iconEl, url);
+  }
+  return false;
+}
+
+function closeLinkPopover(){
+  const existing = document.getElementById('linkPopover');
+  if(existing) existing.remove();
+  document.removeEventListener('click', outsideLinkPopoverClick, true);
+}
+
+function outsideLinkPopoverClick(e){
+  const pop = document.getElementById('linkPopover');
+  if(pop && !pop.contains(e.target)){
+    closeLinkPopover();
+  }
+}
+
+function showLinkPopover(anchorEl, url){
+  closeLinkPopover();
+  const pop = document.createElement('div');
+  pop.className = 'link-popover';
+  pop.id = 'linkPopover';
+  pop.innerHTML = `
+    <div class="link-popover-label">Couldn't open a new tab from here — copy the link instead:</div>
+    <input type="text" readonly value="${url}" onclick="this.select()">
+    <div class="link-popover-actions">
+      <button type="button" onclick="copyLinkPopover(${JSON.stringify(url)}, this)">Copy</button>
+      <a href="${url}" target="_blank" rel="noopener noreferrer">Try open</a>
+    </div>
+  `;
+  document.body.appendChild(pop);
+  const rect = anchorEl.getBoundingClientRect();
+  const top = window.scrollY + rect.bottom + 6;
+  let left = window.scrollX + rect.right - 240;
+  if(left < 12) left = 12;
+  pop.style.top = top + "px";
+  pop.style.left = left + "px";
+  setTimeout(()=> document.addEventListener('click', outsideLinkPopoverClick, true), 0);
+}
+
+function copyLinkPopover(url, btn){
+  const finish = (ok)=>{
+    if(!btn) return;
+    btn.textContent = ok ? "Copied!" : "Select & copy";
+  };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(()=>finish(true)).catch(()=>finish(false));
+  } else {
+    finish(false);
+  }
+}
+
+function init(){
+  renderChips("cityFilters", cityOptions(), activeCity, (v)=>{activeCity=v; renderAll();});
+  renderChips("ageFilters", ageOptions(), activeAge, (v)=>{activeAge=v; renderAll();});
+  renderChips("catFilters", catOptions(), activeCat, (v)=>{activeCat=v; renderAll();});
+  renderChips("costFilters", costOptions(), activeCost, (v)=>{activeCost=v; renderAll();});
+}
+function renderAll(){
+  init();
+  updateActiveCount();
+  renderFeed();
+  renderPlaygrounds();
+  renderHikes();
+}
+renderAll();
+</script>
+
+</body>
+</html>
