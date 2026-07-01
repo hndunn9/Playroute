@@ -1,0 +1,25 @@
+{
+  "name": "playroute-worker",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-01",
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "playroute-db",
+      "database_id": "f5da3542-a8fa-449a-9827-37d1104dd940"
+    }
+  ],
+
+  // Optional but recommended: caches LibCal OAuth tokens so every scrape
+  // run doesn't re-authenticate. Create with:
+  //   npx wrangler kv namespace create TOKEN_CACHE
+  // then paste the returned id below and uncomment.
+  // "kv_namespaces": [
+  //   { "binding": "TOKEN_CACHE", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }
+  // ],
+
+  "triggers": {
+    "crons": ["0 9 * * *"]
+  }
+}
