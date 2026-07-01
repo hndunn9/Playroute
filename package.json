@@ -1,0 +1,13 @@
+{
+  "name": "playroute-boulder-scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scrape": "node scrape.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0",
+    "cheerio": "^1.0.0"
+  }
+}
