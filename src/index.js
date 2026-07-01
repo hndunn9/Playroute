@@ -63,25 +63,53 @@ function getDatedOccurrence(eventDate, startTime) {
 }
 
 /**
+ * Seasonal check for recurring events that only run part of the year
+ * (e.g. a farmers market April-November). Stored as MM-DD (not full
+ * dates) so this recurs correctly every year without needing a manual
+ * update — no "season_start: '2026-04-04'" to remember to bump each
+ * January. Handles a season that wraps the year boundary (e.g. a
+ * Nov-Feb winter market) via the startMD > endMD branch, though nothing
+ * in the current data needs that yet.
+ */
+function isInSeason(seasonStart, seasonEnd, date) {
+  if (!seasonStart || !seasonEnd) return true; // no seasonal restriction
+  const toMD = (d) => (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+  const [sm, sd] = seasonStart.split("-").map(Number);
+  const [em, ed] = seasonEnd.split("-").map(Number);
+  const startMD = sm * 100 + sd;
+  const endMD = em * 100 + ed;
+  const dateMD = toMD(date);
+  if (startMD <= endMD) {
+    return dateMD >= startMD && dateMD <= endMD;
+  }
+  return dateMD >= startMD || dateMD <= endMD; // wraps around year-end
+}
+
+/**
  * Returns a Date for the event's next occurrence, or null if it's a
  * one-off dated event that has already passed (and therefore shouldn't
- * be shown), or if recurrence is "irregular" (no computable schedule —
- * e.g. a sponsor-funded museum free day with no fixed cadence).
+ * be shown), if recurrence is "irregular" (no computable schedule — e.g.
+ * a sponsor-funded museum free day with no fixed cadence), or if the
+ * computed occurrence falls outside the event's season (e.g. a farmers
+ * market's Saturday slot in January, before it opens for the year).
  */
 function getOccurrence(ev, now = new Date()) {
+  let occ;
   if (ev.recurrence === "dated") {
-    const occ = getDatedOccurrence(ev.event_date, ev.start_time);
+    occ = getDatedOccurrence(ev.event_date, ev.start_time);
     if (!occ || occ < now) return null; // one-off, already happened
-    return occ;
-  }
-  if (ev.recurrence === "monthly-last-sunday") {
-    return getNextMonthlyLastSunday(ev.start_time, now);
-  }
-  if (ev.recurrence === "irregular") {
+  } else if (ev.recurrence === "monthly-last-sunday") {
+    occ = getNextMonthlyLastSunday(ev.start_time, now);
+  } else if (ev.recurrence === "irregular") {
     return null; // no fixed schedule — caller decides how to surface these
+  } else {
+    occ = getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, now); // default: weekly
   }
-  // default: weekly
-  return getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, now);
+
+  if (occ && !isInSeason(ev.season_start, ev.season_end, occ)) {
+    return null; // computed date is real, but outside this event's season
+  }
+  return occ;
 }
 
 function formatOccurrenceLabel(date) {
@@ -278,8 +306,8 @@ async function upsertEvent(env, ev) {
     `INSERT INTO events
       (title, source, city, category, cost, age_min, age_max, day_of_week,
        start_time, display_time, recurrence, event_date, note, source_url,
-       verified, libcal_event_id, last_scraped_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       verified, libcal_event_id, season_start, season_end, last_scraped_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(libcal_event_id) DO UPDATE SET
        title=excluded.title,
        source=excluded.source,
@@ -294,12 +322,15 @@ async function upsertEvent(env, ev) {
        note=excluded.note,
        source_url=excluded.source_url,
        verified=excluded.verified,
+       season_start=excluded.season_start,
+       season_end=excluded.season_end,
        last_scraped_at=CURRENT_TIMESTAMP`
   )
     .bind(
       ev.title, ev.source, ev.city, ev.category, ev.cost, ev.age_min, ev.age_max,
       ev.day_of_week ?? null, ev.start_time, ev.display_time, ev.recurrence,
-      ev.event_date ?? null, ev.note, ev.source_url, ev.verified, ev.libcal_event_id
+      ev.event_date ?? null, ev.note, ev.source_url, ev.verified, ev.libcal_event_id,
+      ev.season_start ?? null, ev.season_end ?? null
     )
     .run();
 }
@@ -545,5 +576,3 @@ export default {
     );
   },
 };
-
-  
