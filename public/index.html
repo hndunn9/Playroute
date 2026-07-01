@@ -375,6 +375,15 @@
   }
   .pg-detail{font-size:11.5px; color:var(--ink-soft); margin-top:4px; line-height:1.45;}
   .pg-tips{margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;}
+  .pg-maps-link{
+    display:inline-block;
+    margin-top:8px;
+    font-size:11px;
+    font-weight:600;
+    color:var(--pine);
+    text-decoration:none;
+  }
+  .pg-maps-link:active{opacity:0.7;}
   .pg-tip{
     font-size:10px; font-family:'IBM Plex Mono',monospace;
     background:#EDE7D8; color:var(--ink-soft);
@@ -854,6 +863,7 @@ function renderPlaygrounds(){
         <div class="pg-city">${pg.city}</div>
         <div class="pg-detail">${pg.detail || ""}</div>
         <div class="pg-tips">${tips.map(t=>`<span class="pg-tip">${t}</span>`).join("")}</div>
+        ${pg.source_url ? `<a class="pg-maps-link" href="${pg.source_url}" target="_blank" rel="noopener noreferrer" onclick='return handleSourceLinkClick(event, this, ${JSON.stringify(pg.source_url)}, ${JSON.stringify({title: pg.name, city: pg.city, category: "playground"})});'>📍 Open in Maps</a>` : ""}
       </div>
     `;
     grid.appendChild(card);
@@ -887,6 +897,7 @@ function renderHikes(){
       </div>
       <div class="hike-detail">${h.detail || ""}</div>
       <div class="hike-detail" style="color:var(--sky); margin-top:4px;">🚼 ${h.stroller_note || ""}</div>
+      ${h.source_url ? `<a class="pg-maps-link" href="${h.source_url}" target="_blank" rel="noopener noreferrer" onclick='return handleSourceLinkClick(event, this, ${JSON.stringify(h.source_url)}, ${JSON.stringify({title: h.name, city: h.city, category: "hike"})});'>📍 Open in Maps</a>` : ""}
     `;
     list.appendChild(card);
   });
