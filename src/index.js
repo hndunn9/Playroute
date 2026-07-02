@@ -964,7 +964,7 @@ async function handleUnsubscribe(request, env, url) {
 export default {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
-    if (event.cron === "0 18,19 * * 0") {
+    if (event.cron === "0 18 * * 0" || event.cron === "0 19 * * 0") {
       if (isNearNoonMountain(new Date())) {
         ctx.waitUntil(runWeeklyDigest(env));
       }
