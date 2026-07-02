@@ -1,5 +1,5 @@
 // ===== playroute-worker: single-file bundle for Cloudflare dashboard's Quick Edit / Git deploy =====
-// Generated from occurrence.js + libcal.js + index.js — same code, no wrangler/CLI needed.
+// Generated from occurrence.js + libcal.js + ical.js + index.js — same code, no wrangler/CLI needed.
 
 // --- occurrence.js ---
 /**
@@ -270,6 +270,213 @@ function normalizeEvent(raw, cityName, timeZone = "America/Denver") {
 }
 
 
+// --- ical.js ---
+/**
+ * Parses LibCal's public iCal subscribe feed (ical_subscribe.php) — a
+ * static, unauthenticated .ics file. No API key, no headless browser,
+ * just a plain fetch(). Confirmed working against Erie's real feed:
+ * https://highplains.libcal.com/ical_subscribe.php?src=p&cid=8181&cam=4556
+ *
+ * This is a better automation path than either the OAuth API (declined)
+ * or the Playwright scraper (needs a real browser) — it can run natively
+ * inside the Worker's cron trigger, no separate infrastructure at all.
+ */
+
+/** RFC 5545 line unfolding: continuation lines start with a space/tab. */
+function unfoldICal(text) {
+  return text.replace(/\r\n/g, "\n").replace(/\n[ \t]/g, "");
+}
+
+function unescapeICalText(s) {
+  if (!s) return s;
+  return s
+    .replace(/\\n/g, "\n")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\");
+}
+
+/** Parses "20260601T153000Z" into a UTC Date. */
+function parseICalDate(raw) {
+  const m = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?$/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m;
+  return new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +s));
+}
+
+/** Splits a "KEY;PARAM=X:value" line into { key, value }, params ignored. */
+function parseICalLine(line) {
+  const colonIdx = line.indexOf(":");
+  if (colonIdx === -1) return null;
+  const keyPart = line.slice(0, colonIdx);
+  const value = line.slice(colonIdx + 1);
+  const key = keyPart.split(";")[0].trim().toUpperCase();
+  return { key, value };
+}
+
+/**
+ * Parses the full .ics text into an array of raw event objects. Ignores
+ * anything outside BEGIN:VEVENT/END:VEVENT blocks (calendar metadata).
+ */
+function parseICalFeed(icsText) {
+  const unfolded = unfoldICal(icsText);
+  const lines = unfolded.split("\n").map((l) => l.trim()).filter(Boolean);
+
+  const events = [];
+  let current = null;
+
+  for (const line of lines) {
+    if (line === "BEGIN:VEVENT") {
+      current = {};
+      continue;
+    }
+    if (line === "END:VEVENT") {
+      if (current) events.push(current);
+      current = null;
+      continue;
+    }
+    if (!current) continue;
+
+    const parsed = parseICalLine(line);
+    if (!parsed) continue;
+    const { key, value } = parsed;
+
+    if (key === "DTSTART") current.dtstart = parseICalDate(value);
+    else if (key === "DTEND") current.dtend = parseICalDate(value);
+    else if (key === "SUMMARY") current.summary = unescapeICalText(value);
+    else if (key === "DESCRIPTION") current.description = unescapeICalText(value);
+    else if (key === "LOCATION") current.location = unescapeICalText(value);
+    else if (key === "CATEGORIES") current.categories = unescapeICalText(value);
+    else if (key === "UID") current.uid = value;
+    else if (key === "URL") current.url = value;
+  }
+
+  return events;
+}
+
+/**
+ * Filters to events actually relevant to young kids (0-8). Precision
+ * over recall here deliberately — the LibCal CATEGORIES field reliably
+ * tags "Storytime" for the core programs we already trust (Twinkle
+ * Babies, Family Storytime, Tales for Tots, Music & Movement, Adaptive
+ * Storytime, Baby Open Play, Saturday Family Storytime), plus a couple
+ * explicit title matches for known-good non-Storytime-tagged programs
+ * we already have in the database (Family LEGO Club). Broader kid STEM/
+ * craft programs (Dino-Mite Dioramas, Junior Geologists, etc.) are
+ * intentionally NOT auto-included yet — better to miss some real
+ * programs than accidentally import teen D&D nights or adult book clubs
+ * because a keyword heuristic guessed wrong.
+ */
+function isKidRelevant(ev) {
+  const categories = (ev.categories || "").toLowerCase();
+  const summary = (ev.summary || "").toLowerCase();
+
+  if (categories.includes("storytime")) return true;
+  if (summary.includes("family lego club")) return true;
+  if (summary.includes("baby open play")) return true;
+
+  return false;
+}
+
+function to24Hour(date) {
+  return `${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`;
+}
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function formatDisplayTime(start, end) {
+  const fmt = (d) =>
+    d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+  return end ? `${fmt(start)} – ${fmt(end)}` : fmt(start);
+}
+
+/** Same age-inference approach already validated in the Boulder scraper. */
+function ageFromText(description) {
+  const d = (description || "").toLowerCase();
+
+  let m = d.match(/up to (\d+) months?/);
+  if (m) return { age_min: 0, age_max: +m[1] / 12 };
+
+  m = d.match(/birth\s*[-–]\s*(\d+)\s*months?/);
+  if (m) return { age_min: 0, age_max: +m[1] / 12 };
+
+  m = d.match(/(\d+)\s*months?\s*to\s*(\d+)\s*years?/);
+  if (m) return { age_min: +m[1] / 12, age_max: +m[2] };
+
+  m = d.match(/(\d+)\s*[-–]\s*(\d+)\s*months?/);
+  if (m) return { age_min: +m[1] / 12, age_max: +m[2] / 12 };
+
+  m = d.match(/ages?\s*(\d+)\s*[-–]\s*(\d+)/);
+  if (m) return { age_min: +m[1], age_max: +m[2] };
+
+  return { age_min: 0, age_max: 5 }; // fallback: these are all Storytime-tagged, so "birth to 5" is a safe default
+}
+
+/**
+ * Normalizes a raw parsed iCal event into the playroute schema. Uses the
+ * iCal UID as libcal_event_id for dedup — re-running this won't create
+ * duplicates, it'll just update existing rows (same ON CONFLICT pattern
+ * as the OAuth-API scraper would have used).
+ */
+function normalizeICalEvent(ev, city) {
+  if (!ev.summary || !ev.dtstart) return null;
+
+  const { age_min, age_max } = ageFromText(ev.description);
+
+  return {
+    title: ev.summary,
+    source: `${city} Public Library${ev.location ? " — " + ev.location : ""}`,
+    city,
+    category: "library",
+    cost: "free",
+    age_min,
+    age_max,
+    day_of_week: DAY_NAMES[ev.dtstart.getUTCDay()],
+    start_time: to24Hour(ev.dtstart),
+    display_time: formatDisplayTime(ev.dtstart, ev.dtend),
+    recurrence: "dated",
+    event_date: ev.dtstart.toISOString().slice(0, 10),
+    note: (ev.description || "").replace(/<[^>]+>/g, "").slice(0, 300) || `Pulled from ${city} library's public iCal feed.`,
+    source_url: ev.url || "",
+    verified: 1,
+    libcal_event_id: ev.uid,
+  };
+}
+
+/**
+ * Fetches and fully processes one library's iCal feed into
+ * ready-to-ingest normalized events, filtered to kid-relevant programs
+ * within a forward window (avoids importing months of data past what's
+ * useful to show).
+ *
+ * trustSourceFilter: set true when the feed URL itself is already scoped
+ * to the right age group by the library's own system (e.g. Boulder's
+ * ?aud=6405 parameter, confirmed to return exactly the birth-5 programs
+ * from the validated PDF export, plus events like "Toddler Explorers"
+ * that our own Storytime-category check would incorrectly exclude since
+ * they're tagged "Make & Create" instead). When true, skips isKidRelevant
+ * and just filters out cancelled events. Erie's feed has no equivalent
+ * source-side filter, so it needs isKidRelevant to do the real work.
+ */
+async function fetchAndNormalizeICalFeed(icalUrl, city, { daysAhead = 60, trustSourceFilter = false } = {}) {
+  const res = await fetch(icalUrl);
+  if (!res.ok) throw new Error(`iCal fetch failed for ${city}: ${res.status}`);
+
+  const icsText = await res.text();
+  const rawEvents = parseICalFeed(icsText);
+
+  const now = new Date();
+  const cutoff = new Date(now.getTime() + daysAhead * 86400000);
+
+  return rawEvents
+    .filter((ev) => trustSourceFilter || isKidRelevant(ev))
+    .filter((ev) => !/^CANCEL/i.test(ev.summary || ""))
+    .filter((ev) => ev.dtstart && ev.dtstart >= now && ev.dtstart <= cutoff)
+    .map((ev) => normalizeICalEvent(ev, city))
+    .filter(Boolean);
+}
+
+
 // --- index.js ---
 
 /**
@@ -284,6 +491,35 @@ function normalizeEvent(raw, cityName, timeZone = "America/Denver") {
 const LIBCAL_LIBRARIES = [
   { key: "boulder", city: "Boulder", base: "https://calendar.boulderlibrary.org", calId: "12892" },
   { key: "erie", city: "Erie", base: "https://highplains.libcal.com", calId: "8181" },
+];
+
+/**
+ * Public iCal subscribe feeds — no API key, no headless browser, just a
+ * plain fetch(). This is now the PRIMARY automation path (LibCal declined
+ * API access for both libraries; this needs nothing from them at all).
+ * Erie's URL is confirmed real and working. Boulder's calendar has the
+ * same "Add to a Calendar using iCal" feature, but the actual subscribe
+ * URL is generated by JavaScript on click, not visible in the static
+ * page — add it here once someone grabs it from the site directly.
+ */
+const ICAL_LIBRARIES = [
+  {
+    city: "Boulder",
+    url: "https://calendar.boulderlibrary.org/ical_subscribe.php?src=p&cid=12892&aud=6405",
+    // Confirmed this exact URL returns exactly the birth-5 programs
+    // validated against the real PDF export, plus a few "Make & Create"
+    // tagged events (Toddler Explorers, etc.) our own Storytime-category
+    // filter would wrongly exclude — trust Boulder's own audience filter
+    // instead of re-filtering.
+    trustSourceFilter: true,
+  },
+  {
+    city: "Erie",
+    url: "https://highplains.libcal.com/ical_subscribe.php?src=p&cid=8181&cam=4556",
+    // No source-side age filter confirmed for Erie — this pulls
+    // everything, so isKidRelevant needs to do the real filtering work.
+    trustSourceFilter: false,
+  },
 ];
 
 const CORS_HEADERS = {
@@ -361,6 +597,31 @@ async function runScrape(env) {
       results.push({ library: lib.key, status: "ok", eventsUpserted: count });
     } catch (err) {
       results.push({ library: lib.key, status: "error", error: String(err) });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * The new primary automation path — no credentials needed at all. Runs
+ * alongside (not instead of) runScrape, since runScrape gracefully
+ * no-ops for libraries without API credentials anyway.
+ */
+async function runICalScrape(env) {
+  const results = [];
+
+  for (const lib of ICAL_LIBRARIES) {
+    try {
+      const events = await fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
+      let count = 0;
+      for (const ev of events) {
+        await upsertEvent(env, ev);
+        count++;
+      }
+      results.push({ library: lib.city, status: "ok", eventsUpserted: count });
+    } catch (err) {
+      results.push({ library: lib.city, status: "error", error: String(err) });
     }
   }
 
@@ -537,7 +798,8 @@ async function handleIngest(request, env) {
 export default {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runScrape(env));
+    ctx.waitUntil(runScrape(env)); // OAuth API path — no-ops gracefully without credentials
+    ctx.waitUntil(runICalScrape(env)); // iCal path — the one that actually runs right now
   },
 
   // HTTP entry point — this is what the frontend fetches from instead of
@@ -556,10 +818,10 @@ export default {
       if (url.pathname === "/api/sources") return await handleSources(env);
       if (url.pathname === "/api/track-click" && request.method === "POST") return await handleTrackClick(request, env);
 
-      // Manual trigger for testing the scraper without waiting for the cron.
+      // Manual trigger for testing the scrapers without waiting for the cron.
       if (url.pathname === "/api/scrape-now" && request.method === "POST") {
-        const results = await runScrape(env);
-        return json({ ranAt: new Date().toISOString(), results });
+        const [apiResults, icalResults] = await Promise.all([runScrape(env), runICalScrape(env)]);
+        return json({ ranAt: new Date().toISOString(), apiResults, icalResults });
       }
 
       if (url.pathname === "/api/ingest" && request.method === "POST") {
