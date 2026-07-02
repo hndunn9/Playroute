@@ -200,6 +200,8 @@ main{
   font-family:'DM Mono',monospace;font-size:10.5px;
   text-transform:uppercase;letter-spacing:0.1em;color:var(--wheat);
   display:flex;align-items:center;gap:8px;margin:22px 0 8px;
+  position:sticky;top:0;z-index:5;
+  background:var(--cream);padding:10px 0 8px;
 }
 .day-heading::after{content:"";flex:1;height:1px;background:var(--fog);}
 
@@ -556,10 +558,7 @@ footer{
     </div>
   </div>
 
-  <!-- Day-jump nav -->
-  <div class="daynav-wrap" id="dayNavWrap">
-    <div class="daynav" id="dayNav"></div>
-  </div>
+
 </header>
 
 <!-- ── MAIN ── -->
@@ -900,24 +899,6 @@ function renderFeed(){
   if(shown===0){
     feed.innerHTML=`<div class="empty-state"><div class="blaze-lg">${blazeSvg("outdoor")}</div>Nothing matches those filters — try widening the date range, age, or category.</div>`;
   }
-  renderDayNav(upcoming);
-}
-
-function renderDayNav(upcomingEvents){
-  const nav=document.getElementById("dayNav");
-  nav.innerHTML="";
-  if(upcomingEvents.length===0){ nav.innerHTML=`<div class="daynav-empty">No days to jump to yet</div>`; return; }
-  const seen=new Set();
-  upcomingEvents.forEach(ev=>{
-    if(seen.has(ev.occurrence_label)) return;
-    seen.add(ev.occurrence_label);
-    const anchorId="day-"+ev.occurrence_label.replace(/[^a-z0-9]/gi,"-");
-    const pill=document.createElement("div");
-    pill.className="daynav-pill";
-    pill.textContent=ev.occurrence_label.replace(" · "," ");
-    pill.onclick=()=>{ const t=document.getElementById(anchorId); if(t) t.scrollIntoView({behavior:"smooth",block:"start"}); };
-    nav.appendChild(pill);
-  });
 }
 
 function renderPlaygrounds(){
