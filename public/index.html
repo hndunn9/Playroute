@@ -156,6 +156,41 @@
     scrollbar-width:none;
   }
   .filter-row::-webkit-scrollbar{display:none;}
+
+  /* ---------- jump-to-day nav: quick strip below filters ---------- */
+  .daynav-wrap{
+    background:var(--canvas);
+    border-bottom:1px solid var(--line);
+    padding:0 20px;
+  }
+  .daynav{
+    display:flex;
+    gap:6px;
+    overflow-x:auto;
+    padding:10px 0;
+    scrollbar-width:none;
+  }
+  .daynav::-webkit-scrollbar{display:none;}
+  .daynav-pill{
+    flex:0 0 auto;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    font-weight:500;
+    padding:5px 11px;
+    border-radius:100px;
+    background:var(--canvas-raised);
+    border:1px solid var(--line);
+    color:var(--ink-soft);
+    white-space:nowrap;
+    cursor:pointer;
+  }
+  .daynav-pill:active{transform:scale(0.96);}
+  .daynav-empty{
+    font-size:11.5px;
+    color:var(--ink-soft);
+    padding:10px 0;
+  }
+
   .filter-label{
     font-family:'IBM Plex Mono', monospace;
     font-size:10.5px;
@@ -533,6 +568,8 @@
     <span class="chevron" id="chevron">▾</span>
   </div>
   <div class="filter-panel collapsed" id="filterPanel">
+    <div class="filter-label">When</div>
+    <div class="filter-row" id="whenFilters"></div>
     <div class="filter-label">City</div>
     <div class="filter-row" id="cityFilters"></div>
     <div class="filter-label">Age</div>
@@ -542,6 +579,10 @@
     <div class="filter-label">Cost</div>
     <div class="filter-row" id="costFilters"></div>
   </div>
+</div>
+
+<div class="daynav-wrap" id="dayNavWrap">
+  <div class="daynav" id="dayNav"></div>
 </div>
 
 <main>
@@ -689,6 +730,40 @@ let activeCities = new Set();
 let activeAges = new Set();
 let activeCats = new Set();
 let activeCost = "all";
+let activeWhen = "all"; // date-range filter — single-select, like Cost
+
+function dateRangeOptions(){ return [
+  {id:"all", label:"Anytime"},
+  {id:"today", label:"Today"},
+  {id:"tomorrow", label:"Tomorrow"},
+  {id:"weekend", label:"This weekend"},
+  {id:"week", label:"Next 7 days"},
+  {id:"twoweeks", label:"Next 2 weeks"}
+];}
+
+/**
+ * Returns true if an occurrence Date falls within the selected quick
+ * range, computed fresh against "now" every time this runs — so "Today"
+ * always means today, not some date baked in at page-load time.
+ */
+function inDateRange(occurrenceISO, rangeId){
+  if(rangeId === "all" || !occurrenceISO) return true;
+  const occ = new Date(occurrenceISO);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysFromToday = Math.floor((occ - startOfToday) / 86400000);
+
+  if(rangeId === "today") return daysFromToday === 0;
+  if(rangeId === "tomorrow") return daysFromToday === 1;
+  if(rangeId === "week") return daysFromToday >= 0 && daysFromToday <= 7;
+  if(rangeId === "twoweeks") return daysFromToday >= 0 && daysFromToday <= 14;
+  if(rangeId === "weekend"){
+    // "This weekend" = the next upcoming Saturday/Sunday, within the next 7 days
+    const dow = occ.getDay(); // 0=Sun, 6=Sat
+    return (dow === 0 || dow === 6) && daysFromToday >= 0 && daysFromToday <= 7;
+  }
+  return true;
+}
 
 function cityOptions(){ return [
   {id:"all", label:"All cities"},
@@ -817,6 +892,7 @@ function renderFeed(){
   const upcoming = events
     .filter(passesFilters)
     .filter(ev => ev.occurrence) // defensive: drop anything with no computable date
+    .filter(ev => inDateRange(ev.occurrence, activeWhen))
     .slice()
     .sort((a,b) => new Date(a.occurrence) - new Date(b.occurrence));
 
@@ -828,6 +904,7 @@ function renderFeed(){
     if(heading !== lastHeading){
       const h = document.createElement("div");
       h.className = "day-heading";
+      h.id = "day-" + heading.replace(/[^a-z0-9]/gi, "-");
       h.textContent = heading;
       feed.appendChild(h);
       lastHeading = heading;
@@ -860,9 +937,43 @@ function renderFeed(){
   if(shown===0){
     feed.innerHTML = `<div class="empty-state">
       <div class="blaze-lg">${blazeSvg("outdoor")}</div>
-      Nothing matches those filters — try widening the age range or category.
+      Nothing matches those filters — try widening the age range, category, or date range.
     </div>`;
   }
+
+  renderDayNav(upcoming);
+}
+
+/**
+ * Horizontal strip of tappable day pills reflecting whatever's actually
+ * in the current filtered list — tapping one scrolls straight to that
+ * day's section instead of scrolling through everything above it.
+ */
+function renderDayNav(upcomingEvents){
+  const nav = document.getElementById("dayNav");
+  nav.innerHTML = "";
+
+  if(upcomingEvents.length === 0){
+    nav.innerHTML = `<div class="daynav-empty">No days to jump to yet</div>`;
+    return;
+  }
+
+  const seen = new Set();
+  upcomingEvents.forEach(ev=>{
+    if(seen.has(ev.occurrence_label)) return;
+    seen.add(ev.occurrence_label);
+
+    const anchorId = "day-" + ev.occurrence_label.replace(/[^a-z0-9]/gi, "-");
+    const pill = document.createElement("div");
+    pill.className = "daynav-pill";
+    // Short label (just the weekday + date, dropping the " · " separator) keeps these compact
+    pill.textContent = ev.occurrence_label.replace(" · ", " ");
+    pill.onclick = () => {
+      const target = document.getElementById(anchorId);
+      if(target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    nav.appendChild(pill);
+  });
 }
 
 function renderPlaygrounds(){
@@ -966,6 +1077,7 @@ function toggleReleaseNotes(){
 function updateActiveCount(){
   let count = activeCities.size + activeAges.size + activeCats.size;
   if(activeCost!=="all") count++;
+  if(activeWhen!=="all") count++;
   const badge = document.getElementById("activeCount");
   if(count>0){
     badge.textContent = count;
@@ -1072,7 +1184,8 @@ function saveFilterPrefs(){
       cities: [...activeCities],
       ages: [...activeAges],
       cats: [...activeCats],
-      cost: activeCost
+      cost: activeCost,
+      when: activeWhen
     }));
   } catch(err){
     // Storage unavailable — filters simply won't be remembered this time.
@@ -1088,12 +1201,14 @@ function loadFilterPrefs(){
     activeAges = new Set(parsed.ages || []);
     activeCats = new Set(parsed.cats || []);
     activeCost = parsed.cost || "all";
+    activeWhen = parsed.when || "all";
   } catch(err){
     // Corrupt or unavailable data — just start fresh.
   }
 }
 
 function init(){
+  renderChips("whenFilters", dateRangeOptions(), activeWhen, (v)=>{activeWhen=v; saveFilterPrefs(); renderAll();});
   renderChips("cityFilters", cityOptions(), activeCities, (v)=>{toggleFilterValue(activeCities, v); saveFilterPrefs(); renderAll();});
   renderChips("ageFilters", ageOptions(), activeAges, (v)=>{toggleFilterValue(activeAges, v); saveFilterPrefs(); renderAll();});
   renderChips("catFilters", catOptions(), activeCats, (v)=>{toggleFilterValue(activeCats, v); saveFilterPrefs(); renderAll();});
