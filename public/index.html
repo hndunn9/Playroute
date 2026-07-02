@@ -595,12 +595,12 @@ footer{
 
   <div class="signup">
     <h3>Want this in your inbox?</h3>
-    <p>If enough people say yes, this becomes a weekly digest.</p>
+    <p>A quick weekly digest of what's coming up, every Sunday.</p>
     <div class="signup-form">
       <input type="email" id="emailInput" placeholder="you@email.com">
       <button onclick="handleSignup()">Notify me</button>
     </div>
-    <div class="signup-note" id="signupNote">This button doesn't send anything yet — wire it to a Google Form or Mailchimp embed once you're ready to actually capture emails.</div>
+    <div class="signup-note" id="signupNote"></div>
   </div>
 
   <div class="freshness-note" id="freshnessNote"></div>
@@ -963,9 +963,14 @@ function renderHikes(){
 function handleSignup(){
   const input=document.getElementById("emailInput");
   const note=document.getElementById("signupNote");
-  if(!input.value||!input.value.includes("@")){ note.textContent="Enter a real-looking email."; note.style.color="#C79A4B"; return; }
-  note.textContent=`Got it — wire this to a Google Form or Mailchimp embed to make it real.`;
-  note.style.color="#9FB6A5"; input.value="";
+  const email=input.value.trim();
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ note.textContent="Enter a real-looking email."; note.style.color="#C79A4B"; return; }
+  note.textContent="Signing you up...";
+  note.style.color="#8a7a63";
+  fetch(`${API_BASE}/api/subscribe`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})})
+    .then(r=>{ if(!r.ok) throw new Error(); return r.json(); })
+    .then(()=>{ note.textContent="You're in! One email a week, every Sunday."; note.style.color="#9FB6A5"; input.value=""; })
+    .catch(()=>{ note.textContent="Something went wrong — try again in a bit."; note.style.color="#C79A4B"; });
 }
 
 let filtersOpen=false;
