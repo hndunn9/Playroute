@@ -356,6 +356,34 @@ main{
 }
 
 /* ── RELEASE NOTES ── */
+/* ── RECENTLY PASSED ── */
+.recently-passed-toggle{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 0 8px;cursor:pointer;
+  -webkit-tap-highlight-color:transparent;user-select:none;
+  border-top:1px solid var(--fog);margin-top:8px;
+}
+.rp-label{
+  font-family:'DM Mono',monospace;font-size:11px;
+  text-transform:uppercase;letter-spacing:0.07em;color:var(--ink-soft);
+  display:flex;align-items:center;gap:7px;
+}
+.rp-count{
+  background:var(--fog);color:var(--ink-soft);
+  font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:600;
+  padding:1px 7px;border-radius:100px;
+}
+.recently-passed-panel{
+  max-height:800px;overflow:hidden;
+  transition:max-height .3s ease,opacity .2s ease;opacity:1;
+}
+.recently-passed-panel.collapsed{max-height:0;opacity:0;}
+/* Passed event cards — desaturated, visually quieter than upcoming */
+.recently-passed-panel .event-card{
+  opacity:0.65;filter:grayscale(20%);
+}
+.recently-passed-panel .event-card.expanded{opacity:0.85;filter:none;}
+
 .release-notes{
   margin-top:28px;padding-top:14px;border-top:1px solid var(--fog);
 }
@@ -541,6 +569,17 @@ footer{
     <span class="section-sub" id="resultCount"></span>
   </div>
   <div id="weekFeed"></div>
+
+  <!-- Recently passed — hidden until toggled, only shown when content exists -->
+  <div id="recentlyPassedWrap" style="display:none;">
+    <div class="recently-passed-toggle" onclick="toggleRecentlyPassed()">
+      <span class="rp-label">Recently passed <span id="recentlyPassedCount" class="rp-count"></span></span>
+      <span class="chevron" id="recentlyPassedChevron">▾</span>
+    </div>
+    <div class="recently-passed-panel collapsed" id="recentlyPassedPanel">
+      <div id="recentlyPassedFeed"></div>
+    </div>
+  </div>
 
   <div class="section-title" id="section-playgrounds">
     <h2>Playgrounds &amp; farms</h2>
@@ -949,6 +988,79 @@ function handleSignup(){
 }
 
 let filtersOpen=false;
+let recentlyPassedOpen=false;
+
+function toggleRecentlyPassed(){
+  recentlyPassedOpen=!recentlyPassedOpen;
+  document.getElementById("recentlyPassedPanel").classList.toggle("collapsed",!recentlyPassedOpen);
+  document.getElementById("recentlyPassedChevron").classList.toggle("open",recentlyPassedOpen);
+}
+
+function renderRecentlyPassed(){
+  const wrap=document.getElementById("recentlyPassedWrap");
+  const feed=document.getElementById("recentlyPassedFeed");
+  feed.innerHTML="";
+
+  if(dataLoadFailed){ wrap.style.display="none"; return; }
+
+  const now=new Date();
+  const threeDaysAgo=new Date(now.getTime()-3*86400000);
+
+  // One-off dated events that already passed within the last 3 days
+  const recentlyPassed=events
+    .filter(ev=>{
+      if(!passesFilters(ev)) return false;
+      if(ev.recurrence!=="dated"||!ev.event_date) return false;
+      const occ=new Date(`${ev.event_date}T${ev.start_time||"00:00"}:00`);
+      return occ<now && occ>=threeDaysAgo;
+    })
+    .sort((a,b)=>new Date(b.event_date)-new Date(a.event_date));
+
+  if(recentlyPassed.length===0){ wrap.style.display="none"; return; }
+
+  wrap.style.display="block";
+  document.getElementById("recentlyPassedCount").textContent=recentlyPassed.length;
+
+  recentlyPassed.forEach(ev=>{
+    const label=new Date(`${ev.event_date}T12:00:00Z`).toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric",timeZone:"America/Denver"});
+    const h=document.createElement("div");
+    h.className="day-heading";
+    h.style.opacity="0.6";
+    h.textContent=`${label} · passed`;
+    feed.appendChild(h);
+
+    const card=document.createElement("div");
+    card.className="event-card";
+    card.onclick=function(){ toggleCard(this); };
+    card.innerHTML=`
+      <div class="card-summary">
+        <div class="blaze">${blazeSvg(ev.category)}</div>
+        <div class="event-main">
+          <div class="event-title">${ev.title}</div>
+          <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
+          <div class="tag-row">
+            <span class="tag city">${ev.city}</span>
+            <span class="tag ${ev.cost}">${ev.cost==="free"?"Free":"Paid"}</span>
+            <span class="tag age">Ages ${formatAgeRange(ev.age_min,ev.age_max)}</span>
+          </div>
+        </div>
+        <div class="expand-chevron"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg></div>
+      </div>
+      <div class="card-detail">
+        <div class="card-detail-inner">
+          <div class="card-detail-note">${ev.note||""}</div>
+          <div class="card-detail-actions">
+            <button class="detail-btn-primary" onclick="event.stopPropagation();openDrawer(${JSON.stringify(ev).replace(/"/g,'&quot;')})">See full details</button>
+            <a class="detail-btn-icon" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" title="Open source page" onclick="event.stopPropagation()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M7 17L17 7M17 7H9M17 7V15"/></svg>
+            </a>
+          </div>
+        </div>
+      </div>
+    `;
+    feed.appendChild(card);
+  });
+}
 function scrollToSection(anchorId){
   if(filtersOpen) toggleFilters();
   const target=document.getElementById(anchorId);
@@ -1009,7 +1121,7 @@ function init(){
   renderChips("catFilters",catOptions(),activeCats,(v)=>{toggleFilterValue(activeCats,v);saveFilterPrefs();renderAll();});
   renderChips("costFilters",costOptions(),activeCost,(v)=>{activeCost=v;saveFilterPrefs();renderAll();});
 }
-function renderAll(){ init(); updateActiveCount(); renderFeed(); renderPlaygrounds(); renderHikes(); }
+function renderAll(){ init(); updateActiveCount(); renderFeed(); renderRecentlyPassed(); renderPlaygrounds(); renderHikes(); }
 
 loadFilterPrefs();
 document.getElementById("weekFeed").innerHTML=`<div class="empty-state">Loading this week's events…</div>`;
