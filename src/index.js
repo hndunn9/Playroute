@@ -796,9 +796,180 @@ async function handleIngest(request, env) {
   return json({ upserted, errors });
 }
 
+// ---------------------------------------------------------------------
+// WEEKLY DIGEST EMAIL — Sunday ~12pm Mountain, snapshot of the week ahead
+// plus a link back to Playroute. Sent via Resend (https://resend.com);
+// requires RESEND_API_KEY and DIGEST_FROM secrets (see README). MVP
+// scope: text/HTML summary of top upcoming events, no screenshot —
+// fastest path to something useful; a real screenshot via Cloudflare
+// Browser Rendering is a reasonable fast-follow if this gets used.
+// ---------------------------------------------------------------------
+
+const DIGEST_SITE_URL = "https://test.playroute.workers.dev";
+const DIGEST_MAX_PER_DAY = 6;
+const DIGEST_MAX_DAYS = 7;
+
+function escapeHtml(s) {
+  return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+async function getWeekAheadEvents(env) {
+  const { results } = await env.DB.prepare("SELECT * FROM events").all();
+  const now = new Date();
+  const cutoff = new Date(now.getTime() + DIGEST_MAX_DAYS * 864e5);
+  const withOccurrence = [];
+  for (const ev of results) {
+    if (ev.recurrence === "irregular") continue;
+    const occ = getOccurrence(ev, now);
+    if (!occ || occ > cutoff) continue;
+    withOccurrence.push({ ...ev, occurrence: occ, occurrence_label: formatOccurrenceLabel(occ) });
+  }
+  withOccurrence.sort((a, b) => a.occurrence - b.occurrence);
+
+  // Group by day, capping how many show per day so the email stays skimmable.
+  const byDay = new Map();
+  for (const ev of withOccurrence) {
+    const list = byDay.get(ev.occurrence_label) || [];
+    if (list.length < DIGEST_MAX_PER_DAY) list.push(ev);
+    byDay.set(ev.occurrence_label, list);
+  }
+  return byDay;
+}
+
+function buildDigestHtml(byDay, unsubscribeUrl) {
+  const days = [...byDay.entries()];
+  const dayBlocks = days.map(([label, evs]) => {
+    const rows = evs.map((ev) => `
+      <tr>
+        <td style="padding:6px 0;font-family:sans-serif;font-size:14px;color:#2c1f14;">
+          <strong>${escapeHtml(ev.title)}</strong> \u2014 ${escapeHtml(ev.display_time)}
+          <span style="color:#8a7a63;">\u00B7 ${escapeHtml(ev.city)} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}</span>
+        </td>
+      </tr>`).join("");
+    return `
+      <tr><td style="padding:18px 0 4px;font-family:sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#a68a5b;border-bottom:1px solid #eee;">${escapeHtml(label)}</td></tr>
+      ${rows}`;
+  }).join("");
+
+  const bodyContent = days.length
+    ? `<table width="100%" cellpadding="0" cellspacing="0">${dayBlocks}</table>`
+    : `<p style="font-family:sans-serif;color:#8a7a63;">No events loaded for this week yet \u2014 check the app directly.</p>`;
+
+  return `
+  <div style="max-width:520px;margin:0 auto;font-family:sans-serif;">
+    <h1 style="font-family:serif;font-size:22px;color:#2c1f14;margin-bottom:4px;">This week on Playroute</h1>
+    <p style="color:#8a7a63;font-size:13px;margin-top:0;">A quick look at what's coming up for the kids this week.</p>
+    ${bodyContent}
+    <div style="margin:28px 0;">
+      <a href="${DIGEST_SITE_URL}" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:14px;">Open Playroute \u2192</a>
+    </div>
+    <p style="font-size:11px;color:#b5a88f;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
+  </div>`;
+}
+
+function buildDigestText(byDay) {
+  const lines = ["This week on Playroute", ""];
+  for (const [label, evs] of byDay.entries()) {
+    lines.push(label.toUpperCase());
+    for (const ev of evs) {
+      lines.push(`- ${ev.title} \u2014 ${ev.display_time} \u00B7 ${ev.city} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}`);
+    }
+    lines.push("");
+  }
+  lines.push(`Open Playroute: ${DIGEST_SITE_URL}`);
+  return lines.join("\n");
+}
+
+async function sendDigestEmail(env, toEmail, html, text) {
+  if (!env.RESEND_API_KEY || !env.DIGEST_FROM) {
+    throw new Error("RESEND_API_KEY / DIGEST_FROM not configured \u2014 see README");
+  }
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      from: env.DIGEST_FROM,
+      to: [toEmail],
+      subject: "This week on Playroute \uD83C\uDF33",
+      html,
+      text
+    })
+  });
+  if (!res.ok) {
+    throw new Error(`Resend send failed for ${toEmail}: ${res.status} ${await res.text()}`);
+  }
+}
+
+async function runWeeklyDigest(env) {
+  const byDay = await getWeekAheadEvents(env);
+  const { results: subs } = await env.DB.prepare(
+    "SELECT email FROM subscribers WHERE active = 1"
+  ).all();
+  const results = [];
+  for (const { email } of subs) {
+    const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}`;
+    const html = buildDigestHtml(byDay, unsubscribeUrl);
+    const text = buildDigestText(byDay);
+    try {
+      await sendDigestEmail(env, email, html, text);
+      results.push({ email, status: "sent" });
+    } catch (err) {
+      results.push({ email, status: "error", error: String(err) });
+    }
+  }
+  return results;
+}
+
+// Cron triggers at both 18:00 and 19:00 UTC on Sundays (see wrangler.jsonc)
+// so the digest self-corrects across the MST/MDT switch without needing a
+// manual cron edit twice a year — whichever firing lands closest to noon
+// Mountain time is the one that actually sends.
+function isNearNoonMountain(now) {
+  const hourMT = +now.toLocaleString("en-US", { timeZone: TZ, hour: "2-digit", hour12: false });
+  return hourMT === 12;
+}
+
+async function handleSubscribe(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+  const email = (body.email || "").trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: "Valid email required" }, 400);
+  }
+  await env.DB.prepare(
+    `INSERT INTO subscribers (email, active) VALUES (?, 1)
+     ON CONFLICT(email) DO UPDATE SET active = 1, unsubscribed_at = NULL`
+  ).bind(email).run();
+  return json({ ok: true });
+}
+
+async function handleUnsubscribe(request, env, url) {
+  const email = (url.searchParams.get("email") || "").trim().toLowerCase();
+  if (!email) return json({ error: "email query param required" }, 400);
+  await env.DB.prepare(
+    `UPDATE subscribers SET active = 0, unsubscribed_at = CURRENT_TIMESTAMP WHERE email = ?`
+  ).bind(email).run();
+  return new Response("You're unsubscribed from the Playroute weekly digest. Sorry to see you go!", {
+    headers: { "Content-Type": "text/plain", ...CORS_HEADERS }
+  });
+}
+
 export default {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
+    if (event.cron === "0 18,19 * * 0") {
+      if (isNearNoonMountain(new Date())) {
+        ctx.waitUntil(runWeeklyDigest(env));
+      }
+      return;
+    }
     ctx.waitUntil(runScrape(env));
     ctx.waitUntil(runICalScrape(env));
     ctx.waitUntil(runHtmlScrape(env));
@@ -826,6 +997,16 @@ export default {
       }
       if (url.pathname === "/api/ingest" && request.method === "POST") {
         return await handleIngest(request, env);
+      }
+      if (url.pathname === "/api/subscribe" && request.method === "POST") {
+        return await handleSubscribe(request, env);
+      }
+      if (url.pathname === "/api/unsubscribe") {
+        return await handleUnsubscribe(request, env, url);
+      }
+      if (url.pathname === "/api/digest-now" && request.method === "POST") {
+        const results = await runWeeklyDigest(env);
+        return json({ ranAt: new Date().toISOString(), results });
       }
     } catch (err) {
       return errorResponse(err);
