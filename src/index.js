@@ -1,17 +1,50 @@
-// ===== playroute-worker: single-file bundle for Cloudflare dashboard's Quick Edit / Git deploy =====
-// Generated from occurrence.js + libcal.js + ical.js + index.js — same code, no wrangler/CLI needed.
+// ===== playroute-worker bundle — includes Mountain Time timezone fix Jul 2 2026 =====
 
 // --- occurrence.js ---
 /**
  * Computes each event's next real occurrence so the API can filter out
- * anything already passed and sort everything chronologically, instead of
- * handing the frontend raw day-of-week strings to figure out itself.
+ * anything already passed and sort everything chronologically.
  *
- * Mirrors the logic originally built into the static Phase 0 site — kept
- * here so the API and any future client agree on what "upcoming" means.
+ * TIMEZONE FIX (Jul 2 2026): all stored times are Mountain Time. The
+ * original code treated them as UTC, which caused events to drop from
+ * the feed 6 hours early (MDT=UTC-6) — e.g. a 10:15 AM Mountain event
+ * was considered expired at 4:15 AM Mountain time. Fixed by resolving
+ * stored times as America/Denver wall-clock time before comparing to now.
  */
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
+const TZ = "America/Denver";
+
+/** Convert a stored date string + hh/mm into the correct UTC timestamp
+ *  for that wall-clock time in Mountain Time (handles DST automatically). */
+function toMountainDate(dateStr, hh, mm) {
+  try {
+    const ref = new Date(`${dateStr}T12:00:00Z`);
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: TZ, year:"numeric", month:"2-digit", day:"2-digit",
+      hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false
+    }).formatToParts(ref);
+    const p = Object.fromEntries(parts.filter(x=>x.type!=="literal").map(x=>[x.type,+x.value]));
+    const utcOffsetMs = ref.getTime() - Date.UTC(p.year, p.month-1, p.day, p.hour%24, p.minute, p.second);
+    return new Date(
+      Date.UTC(+dateStr.slice(0,4), +dateStr.slice(5,7)-1, +dateStr.slice(8,10), hh, mm, 0)
+      + utcOffsetMs
+    );
+  } catch {
+    // Fallback: assume MDT (UTC-6), correct for summer season
+    return new Date(Date.UTC(
+      +dateStr.slice(0,4), +dateStr.slice(5,7)-1, +dateStr.slice(8,10),
+      hh + 6, mm, 0
+    ));
+  }
+}
+
+/** Get the date string for a UTC Date in Mountain Time. */
+function toMountainDateStr(date) {
+  return date.toLocaleDateString("en-US", {
+    timeZone: TZ, year:"numeric", month:"2-digit", day:"2-digit"
+  }).replace(/(\d+)\/(\d+)\/(\d+)/, "$3-$1-$2");
+}
 
 function lastSundayOfMonth(year, month) {
   const d = new Date(Date.UTC(year, month + 1, 0));
@@ -21,18 +54,16 @@ function lastSundayOfMonth(year, month) {
 
 function getNextMonthlyLastSunday(startTime, now) {
   const [hh, mm] = startTime.split(":").map(Number);
-  let year = now.getUTCFullYear();
-  let month = now.getUTCMonth();
-  let candidate = lastSundayOfMonth(year, month);
-  candidate.setUTCHours(hh, mm, 0, 0);
+  // Work in Mountain Time to find the right month
+  const nowMT = new Date(now.toLocaleString("en-US", { timeZone: TZ }));
+  let year = nowMT.getFullYear(), month = nowMT.getMonth();
+  let sunday = lastSundayOfMonth(year, month);
+  let candidate = toMountainDate(sunday.toISOString().slice(0,10), hh, mm);
   if (candidate < now) {
     month++;
-    if (month > 11) {
-      month = 0;
-      year++;
-    }
-    candidate = lastSundayOfMonth(year, month);
-    candidate.setUTCHours(hh, mm, 0, 0);
+    if (month > 11) { month = 0; year++; }
+    sunday = lastSundayOfMonth(year, month);
+    candidate = toMountainDate(sunday.toISOString().slice(0,10), hh, mm);
   }
   return candidate;
 }
@@ -42,13 +73,19 @@ function getNextWeeklyOccurrence(dayName, startTime, now) {
   const targetIdx = DAY_INDEX[dayName];
   if (targetIdx === undefined) return null;
 
-  let diff = (targetIdx - now.getUTCDay() + 7) % 7;
-  const candidate = new Date(now);
-  candidate.setUTCDate(now.getUTCDate() + diff);
-  candidate.setUTCHours(hh, mm, 0, 0);
+  // Find current day-of-week in Mountain Time
+  const nowDowMT = new Date(now.toLocaleString("en-US", { timeZone: TZ })).getDay();
+  let diff = (targetIdx - nowDowMT + 7) % 7;
+
+  // Build today's date string in Mountain Time
+  const todayMT = toMountainDateStr(now);
+  const todayMs = new Date(todayMT + "T12:00:00Z").getTime();
+  const candidateDateStr = new Date(todayMs + diff * 86400000).toISOString().slice(0,10);
+  let candidate = toMountainDate(candidateDateStr, hh, mm);
 
   if (diff === 0 && candidate < now) {
-    candidate.setUTCDate(candidate.getUTCDate() + 7);
+    const nextDateStr = new Date(todayMs + 7 * 86400000).toISOString().slice(0,10);
+    candidate = toMountainDate(nextDateStr, hh, mm);
   }
   return candidate;
 }
@@ -56,73 +93,44 @@ function getNextWeeklyOccurrence(dayName, startTime, now) {
 function getDatedOccurrence(eventDate, startTime) {
   if (!eventDate) return null;
   const [hh, mm] = (startTime || "00:00").split(":").map(Number);
-  const d = new Date(`${eventDate}T00:00:00Z`);
-  if (isNaN(d.getTime())) return null;
-  d.setUTCHours(hh, mm, 0, 0);
-  return d;
+  const result = toMountainDate(eventDate, hh, mm);
+  return isNaN(result.getTime()) ? null : result;
 }
 
-/**
- * Seasonal check for recurring events that only run part of the year
- * (e.g. a farmers market April-November). Stored as MM-DD (not full
- * dates) so this recurs correctly every year without needing a manual
- * update — no "season_start: '2026-04-04'" to remember to bump each
- * January. Handles a season that wraps the year boundary (e.g. a
- * Nov-Feb winter market) via the startMD > endMD branch, though nothing
- * in the current data needs that yet.
- */
 function isInSeason(seasonStart, seasonEnd, date) {
-  if (!seasonStart || !seasonEnd) return true; // no seasonal restriction
-  const toMD = (d) => (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+  if (!seasonStart || !seasonEnd) return true;
+  const dateMT = new Date(date.toLocaleString("en-US", { timeZone: TZ }));
+  const dateMD = (dateMT.getMonth() + 1) * 100 + dateMT.getDate();
   const [sm, sd] = seasonStart.split("-").map(Number);
   const [em, ed] = seasonEnd.split("-").map(Number);
-  const startMD = sm * 100 + sd;
-  const endMD = em * 100 + ed;
-  const dateMD = toMD(date);
-  if (startMD <= endMD) {
-    return dateMD >= startMD && dateMD <= endMD;
-  }
-  return dateMD >= startMD || dateMD <= endMD; // wraps around year-end
+  const startMD = sm * 100 + sd, endMD = em * 100 + ed;
+  if (startMD <= endMD) return dateMD >= startMD && dateMD <= endMD;
+  return dateMD >= startMD || dateMD <= endMD;
 }
 
-/**
- * Returns a Date for the event's next occurrence, or null if it's a
- * one-off dated event that has already passed (and therefore shouldn't
- * be shown), if recurrence is "irregular" (no computable schedule — e.g.
- * a sponsor-funded museum free day with no fixed cadence), or if the
- * computed occurrence falls outside the event's season (e.g. a farmers
- * market's Saturday slot in January, before it opens for the year).
- */
 function getOccurrence(ev, now = new Date()) {
   let occ;
   if (ev.recurrence === "dated") {
     occ = getDatedOccurrence(ev.event_date, ev.start_time);
-    if (!occ || occ < now) return null; // one-off, already happened
+    if (!occ || occ < now) return null;
   } else if (ev.recurrence === "monthly-last-sunday") {
     occ = getNextMonthlyLastSunday(ev.start_time, now);
   } else if (ev.recurrence === "irregular") {
-    return null; // no fixed schedule — caller decides how to surface these
+    return null;
   } else {
-    occ = getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, now); // default: weekly
+    occ = getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, now);
   }
-
-  if (occ && !isInSeason(ev.season_start, ev.season_end, occ)) {
-    return null; // computed date is real, but outside this event's season
-  }
+  if (occ && !isInSeason(ev.season_start, ev.season_end, occ)) return null;
   return occ;
 }
 
 function formatOccurrenceLabel(date) {
   if (!date) return null;
-  const weekday = date.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
-  const md = date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  const weekday = date.toLocaleDateString("en-US", { weekday: "long", timeZone: TZ });
+  const md = date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
   return `${weekday} · ${md}`;
 }
 
-/**
- * Age-bucket overlap check, matching the site's filter buckets:
- * "0-1.5" (0–18mo), "2-4", "5-8".
- */
 function ageMatchesBucket(ev, bucketId) {
   if (!bucketId || bucketId === "all") return true;
   const [lo, hi] = bucketId.split("-").map(Number);
