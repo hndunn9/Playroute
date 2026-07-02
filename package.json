@@ -1,13 +1,14 @@
 {
-  "name": "playroute-boulder-scraper",
+  "name": "playroute-worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "scrape": "node scrape.js"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
   },
-  "dependencies": {
-    "playwright": "^1.47.0",
-    "cheerio": "^1.0.0"
+  "devDependencies": {
+    "wrangler": "^4.0.0"
   }
 }
