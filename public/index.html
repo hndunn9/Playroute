@@ -191,6 +191,27 @@
     padding:10px 0;
   }
 
+  .section-nav{
+    display:flex;
+    gap:6px;
+    padding:0 0 12px;
+    overflow-x:auto;
+    scrollbar-width:none;
+  }
+  .section-nav::-webkit-scrollbar{display:none;}
+  .section-nav-pill{
+    flex:0 0 auto;
+    font-size:12px;
+    font-weight:600;
+    padding:6px 13px;
+    border-radius:100px;
+    background:var(--pine);
+    color:#fff;
+    white-space:nowrap;
+    cursor:pointer;
+  }
+  .section-nav-pill:active{transform:scale(0.96);}
+
   .filter-label{
     font-family:'IBM Plex Mono', monospace;
     font-size:10.5px;
@@ -579,6 +600,11 @@
     <div class="filter-label">Cost</div>
     <div class="filter-row" id="costFilters"></div>
   </div>
+  <div class="section-nav">
+    <div class="section-nav-pill" onclick="scrollToSection('section-events')">Coming up</div>
+    <div class="section-nav-pill" onclick="scrollToSection('section-playgrounds')">Playgrounds</div>
+    <div class="section-nav-pill" onclick="scrollToSection('section-hikes')">Hikes</div>
+  </div>
 </div>
 
 <div class="daynav-wrap" id="dayNavWrap">
@@ -586,19 +612,20 @@
 </div>
 
 <main>
-  <div class="section-title">
+  <div class="section-title" id="section-events">
     <h2>Coming up</h2>
     <span class="section-sub" id="resultCount"></span>
   </div>
   <div id="weekFeed"></div>
 
-  <div class="section-title">
+  <div class="section-title" id="section-playgrounds">
     <h2>Playgrounds nearby</h2>
     <span class="section-sub">not date-bound — browse anytime</span>
   </div>
+  <div id="pgCityNavWrap"></div>
   <div class="pg-grid" id="pgGrid"></div>
 
-  <div class="section-title">
+  <div class="section-title" id="section-hikes">
     <h2>Kid-friendly hikes</h2>
     <span class="section-sub">stroller notes included</span>
   </div>
@@ -978,24 +1005,48 @@ function renderDayNav(upcomingEvents){
 
 function renderPlaygrounds(){
   const grid = document.getElementById("pgGrid");
+  const navWrap = document.getElementById("pgCityNavWrap");
   grid.innerHTML = "";
 
   if(dataLoadFailed){
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">Couldn't load playgrounds — check your connection.</div>`;
+    navWrap.innerHTML = "";
     return;
   }
 
-  const filtered = playgrounds.filter(pg => activeCities.size===0 || activeCities.has(pg.city));
+  const filtered = playgrounds
+    .filter(pg => activeCities.size===0 || activeCities.has(pg.city))
+    .slice()
+    .sort((a,b) => a.city.localeCompare(b.city)); // group same-city cards together so the jump nav is meaningful
+
   if(filtered.length===0){
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;">No playgrounds curated for this city yet.</div>`;
+    navWrap.innerHTML = "";
     return;
   }
+
+  // Only bother with the jump strip when there's enough content to actually
+  // need it — with just a couple of cards it's just visual clutter.
+  const distinctCities = [...new Set(filtered.map(pg => pg.city))];
+  if(distinctCities.length > 1 && filtered.length > 4){
+    navWrap.innerHTML = `<div class="daynav-wrap" style="border-top:none;"><div class="daynav">${
+      distinctCities.map(c => `<div class="daynav-pill" onclick="document.getElementById('pg-city-${c}').scrollIntoView({behavior:'smooth', block:'start'})">${c}</div>`).join("")
+    }</div></div>`;
+  } else {
+    navWrap.innerHTML = "";
+  }
+
   const palette = ["#B4805A", "#6E8B8A", "#C79A4B", "#7A5568"];
+  const seenCities = new Set();
   filtered.forEach((pg, i)=>{
     const color = palette[i % palette.length];
     const tips = (pg.tags || "").split(",").map(t=>t.trim()).filter(Boolean);
+    const isFirstOfCity = !seenCities.has(pg.city);
+    seenCities.add(pg.city);
+
     const card = document.createElement("div");
     card.className = "pg-card";
+    if(isFirstOfCity) card.id = "pg-city-" + pg.city;
     card.innerHTML = `
       <div class="pg-photo" style="background:${color}22;">
         <svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes.outdoor}</svg>
@@ -1059,6 +1110,14 @@ function handleSignup(){
 }
 
 let filtersOpen = false;
+
+function scrollToSection(anchorId){
+  // Collapse the filter panel first if it's open, so it doesn't push the
+  // target section out of view right after jumping to it.
+  if(filtersOpen) toggleFilters();
+  const target = document.getElementById(anchorId);
+  if(target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 
 function toggleFilters(){
   filtersOpen = !filtersOpen;
