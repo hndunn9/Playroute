@@ -677,12 +677,12 @@
    BLAZE ICONS — one shape per category, echoing real trail blazes
    ============================================================ */
 const blazes = {
-  library: `<circle cx="11" cy="11" r="8" fill="#7A5568"/>`,
-  rec:     `<polygon points="11,2 20,19 2,19" fill="#6E8B8A"/>`,
-  museum:  `<rect x="3" y="3" width="16" height="16" rx="2" fill="#C79A4B"/>`,
-  outdoor: `<polygon points="11,1 21,11 11,21 1,11" fill="#B4805A"/>`,
-  community: `<path d="M11 1l2.6 6.6L21 8.5l-5.2 4.7 1.6 7.3L11 16.9l-6.4 3.6 1.6-7.3L1 8.5l7.4-.9z" fill="#9B8AAE"/>`,
-  farmers_market: `<polygon points="20,11 15.5,3.2 6.5,3.2 2,11 6.5,18.8 15.5,18.8" fill="#B85C4A"/>`
+  library: `<path d="M11 4 C8 2.3 4 1.8 2 2.3 L2 17.3 C4 16.8 8 17.3 11 19 C14 17.3 18 16.8 20 17.3 L20 2.3 C18 1.8 14 2.3 11 4 Z" fill="#7A5568"/>`,
+  rec:     `<path d="M14.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm2.8 3.1l-2.1-1.8c-.3-.3-.7-.4-1.1-.3l-3.2 1c-.5.2-.8.6-.8 1.1v3.4c0 .6.4 1 1 1s1-.4 1-1V9.8l1.1-.3-1.7 3.3c-.2.4-.1.9.3 1.2l2.5 1.9-.9 4c-.1.5.2 1 .7 1.1.5.1 1-.2 1.1-.7l1-4.5c.1-.4-.1-.8-.4-1.1l-1.8-1.4 1.4-2.7 1 .9c.2.2.5.3.7.3h2.1c.6 0 1-.4 1-1s-.4-1-1-1h-1.7z" fill="#6E8B8A"/>`,
+  museum:  `<polygon points="11,2 20,8 2,8" fill="#C79A4B"/><rect x="3" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="9.5" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="16" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="2" y="18" width="18" height="2" fill="#C79A4B"/>`,
+  outdoor: `<polygon points="11,2 17,11 13.5,11 18,18 4,18 8.5,11 5,11" fill="#B4805A"/>`,
+  community: `<path d="M11 19 C11 19 2 13 2 7.5 C2 4.5 4.5 2 7.5 2 C9.5 2 11 3.5 11 3.5 C11 3.5 12.5 2 14.5 2 C17.5 2 20 4.5 20 7.5 C20 13 11 19 11 19 Z" fill="#9B8AAE"/>`,
+  farmers_market: `<path d="M11 6 C7 5 4 8 4 12 C4 16 7 19 10 19 C10.5 19 11 18.5 11 18.5 C11 18.5 11.5 19 12 19 C15 19 18 16 18 12 C18 8 15 5 11 6 Z" fill="#B85C4A"/><path d="M11 6 C11 4 12 2.5 13.5 2" stroke="#B85C4A" stroke-width="1.5" fill="none" stroke-linecap="round"/>`
 };
 function blazeSvg(cat){
   return `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes[cat]}</svg>`;
