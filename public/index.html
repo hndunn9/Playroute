@@ -422,7 +422,7 @@ main{
 
 /* ── LINK POPOVER ── */
 .link-popover{
-  position:fixed;z-index:50;
+  position:fixed;z-index:150;
   background:var(--parchment);border:1px solid var(--fog);
   border-radius:10px;box-shadow:0 8px 24px rgba(44,31,20,0.18);
   padding:10px;width:240px;font-family:'DM Sans',sans-serif;
@@ -910,8 +910,8 @@ function showCalendarChoice(anchorEl, ev){
   pop.innerHTML=`<div class="link-popover-label">Add to calendar:</div><div class="link-popover-actions"><a href="${gcalUrl}" target="_blank" rel="noopener noreferrer">Google Calendar</a><a href="${icsUrl}" download="${safeName}.ics">Apple / Outlook</a></div>`;
   document.body.appendChild(pop);
   const rect=anchorEl.getBoundingClientRect();
-  pop.style.top=(window.scrollY+rect.bottom+6)+"px";
-  pop.style.left=Math.max(12,window.scrollX+rect.right-240)+"px";
+  pop.style.top=(rect.bottom+6)+"px";
+  pop.style.left=Math.max(12,rect.right-240)+"px";
   setTimeout(()=>document.addEventListener('click',function h(e){ if(!pop.contains(e.target)){pop.remove();document.removeEventListener('click',h,true);} },true),0);
 }
 
@@ -1196,8 +1196,8 @@ function showLinkPopover(anchorEl,url){
   pop.innerHTML=`<div class="link-popover-label">Couldn't open a new tab — copy the link:</div><input type="text" readonly value="${url}" onclick="this.select()"><div class="link-popover-actions"><button type="button" onclick="navigator.clipboard&&navigator.clipboard.writeText('${url}').then(()=>this.textContent='Copied!')">Copy</button><a href="${url}" target="_blank" rel="noopener noreferrer">Try open</a></div>`;
   document.body.appendChild(pop);
   const rect=anchorEl.getBoundingClientRect();
-  pop.style.top=(window.scrollY+rect.bottom+6)+"px";
-  pop.style.left=Math.max(12,window.scrollX+rect.right-240)+"px";
+  pop.style.top=(rect.bottom+6)+"px";
+  pop.style.left=Math.max(12,rect.right-240)+"px";
   setTimeout(()=>document.addEventListener('click',function h(e){ if(!pop.contains(e.target)){pop.remove();document.removeEventListener('click',h,true);} },true),0);
 }
 
