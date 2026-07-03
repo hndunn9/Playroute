@@ -54,6 +54,13 @@ body{
   background:radial-gradient(circle,#FFF8E6 40%,#F5D98A 100%);
   box-shadow:0 0 20px rgba(255,240,180,0.6);
 }
+.about-btn{
+  flex-shrink:0;align-self:center;
+  width:26px;height:26px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Playfair Display',serif;font-size:14px;font-weight:700;
+  color:var(--ink-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;
+}
 .mtn-far{height:55px;background:#8B7050;clip-path:polygon(0 80%,8% 45%,18% 60%,28% 35%,40% 55%,52% 28%,62% 48%,72% 30%,82% 50%,92% 38%,100% 55%,100% 100%,0 100%);}
 .mtn-mid{height:60px;background:#6B5A3E;clip-path:polygon(0 70%,10% 40%,20% 55%,32% 25%,44% 50%,58% 20%,68% 42%,80% 28%,90% 45%,100% 35%,100% 100%,0 100%);}
 .mtn-near{height:48px;background:#4A3828;clip-path:polygon(0 60%,15% 30%,30% 50%,45% 20%,60% 45%,75% 25%,88% 40%,100% 30%,100% 100%,0 100%);}
@@ -536,6 +543,7 @@ footer{
       <div class="tab-icon">🥾</div>
       <div class="tab-label">Hikes</div>
     </div>
+    <div class="about-btn" onclick="openAboutDrawer()" aria-label="About and feedback">ⓘ</div>
   </div>
 
   <!-- Filters -->
@@ -606,18 +614,6 @@ footer{
   <div class="freshness-note" id="freshnessNote"></div>
 
   <div class="release-notes">
-    <div class="release-notes-toggle" onclick="toggleAbout()">
-      <span>About Playroute</span>
-      <span class="chevron" id="aboutChevron">▾</span>
-    </div>
-    <div class="release-notes-panel collapsed" id="aboutPanel" style="text-align:center;font-size:12.5px;color:var(--ink-soft);line-height:1.6;">
-      Built by a mom of two in Boulder County who works in tech — married to the person who actually does the work of finding stuff to do with the kids every week. Playroute exists so she can get some of that mental load (and her evenings) back.
-      <br><br>
-      <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;">☕ Buy my wife a coffee (she's earned it)</a>
-    </div>
-  </div>
-
-  <div class="release-notes">
     <div class="release-notes-toggle" onclick="toggleReleaseNotes()">
       <span>What's new</span>
       <span class="chevron" id="releaseChevron">▾</span>
@@ -663,6 +659,22 @@ footer{
   </div>
 </div>
 
+<div class="drawer-overlay" id="aboutDrawerOverlay" onclick="closeAboutDrawer()">
+  <div class="drawer" id="aboutDrawer" onclick="event.stopPropagation()">
+    <div class="drawer-handle"></div>
+    <div class="drawer-header">
+      <div class="drawer-title">About &amp; Feedback</div>
+    </div>
+    <div class="drawer-body" style="text-align:center;font-size:13px;color:var(--ink-soft);line-height:1.6;">
+      Built by a mom of two in Boulder County who works in tech — married to the person who actually does the work of finding stuff to do with the kids every week. Playroute exists so she can get some of that mental load (and her evenings) back.
+      <br><br>
+      <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;">☕ Buy my wife a coffee (she's earned it)</a>
+      <br><br>
+      <a href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A" style="color:var(--ink-soft);text-decoration:underline;">💬 Send feedback</a>
+    </div>
+  </div>
+</div>
+
 <!-- ── BOTTOM NAV ── -->
 <div class="bottom-nav">
   <div class="bottom-nav-item active" onclick="scrollToSection('section-events')">
@@ -677,10 +689,6 @@ footer{
     <div class="nav-icon">🥾</div>
     <div class="nav-label">Hikes</div>
   </div>
-  <a class="bottom-nav-item" href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A">
-    <div class="nav-icon">💬</div>
-    <div class="nav-label">Feedback</div>
-  </a>
 </div>
 
 <script>
@@ -855,6 +863,14 @@ function openDrawer(ev){
 function closeDrawer(){
   document.getElementById('drawerOverlay').classList.remove('open');
   document.getElementById('activeDrawer').classList.remove('open');
+}
+function openAboutDrawer(){
+  document.getElementById('aboutDrawerOverlay').classList.add('open');
+  setTimeout(()=>document.getElementById('aboutDrawer').classList.add('open'),10);
+}
+function closeAboutDrawer(){
+  document.getElementById('aboutDrawerOverlay').classList.remove('open');
+  document.getElementById('aboutDrawer').classList.remove('open');
 }
 
 /* ── RENDER FEED ── */
@@ -1081,12 +1097,6 @@ function toggleFilters(){
   document.getElementById("chevron").classList.toggle("open",filtersOpen);
 }
 let releaseNotesOpen=false;
-let aboutOpen=false;
-function toggleAbout(){
-  aboutOpen=!aboutOpen;
-  document.getElementById("aboutPanel").classList.toggle("collapsed",!aboutOpen);
-  document.getElementById("aboutChevron").classList.toggle("open",aboutOpen);
-}
 function toggleReleaseNotes(){
   releaseNotesOpen=!releaseNotesOpen;
   document.getElementById("releaseNotesPanel").classList.toggle("collapsed",!releaseNotesOpen);
