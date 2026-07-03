@@ -594,6 +594,63 @@ function errorResponse(err, status = 500) {
   return json({ error: String(err && err.message ? err.message : err) }, status);
 }
 
+// --- Weekly Active Users tracking ---
+// Privacy-friendly: hashes IP + User-Agent with a salt that rotates every
+// Monday, so the same visitor gets a stable hash within one week (counted
+// once for that week's WAU) but a different, unlinkable hash the next week.
+// No cookies, no persistent client-side ID, nothing stored that identifies
+// a specific person across weeks.
+function currentWeekSalt() {
+  const d = new Date();
+  const day = d.getUTCDay() || 7; // Mon=1..Sun=7
+  d.setUTCDate(d.getUTCDate() - day + 1); // back up to Monday of this week
+  return d.toISOString().slice(0, 10);
+}
+
+async function hashVisitor(request) {
+  const ip = request.headers.get("CF-Connecting-IP") || "";
+  const ua = request.headers.get("User-Agent") || "";
+  const data = new TextEncoder().encode(`${ip}|${ua}|${currentWeekSalt()}`);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function handlePageView(request, env) {
+  const visitorHash = await hashVisitor(request);
+  const cf = request.cf || {};
+  const ua = request.headers.get("User-Agent") || "";
+  const deviceType = /Mobi|Android/i.test(ua) ? "mobile" : "desktop";
+  await env.DB.prepare(
+    `INSERT INTO page_views (visitor_hash, city, country, device_type) VALUES (?, ?, ?, ?)`
+  ).bind(visitorHash, cf.city || null, cf.country || null, deviceType).run();
+  return json({ ok: true });
+}
+
+async function handleStats(env) {
+  const wau = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= datetime('now','-7 days')`
+  ).first();
+  const dau = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= datetime('now','-1 day')`
+  ).first();
+  const totalViews7d = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= datetime('now','-7 days')`
+  ).first();
+  const byDevice = await env.DB.prepare(
+    `SELECT device_type, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= datetime('now','-7 days') GROUP BY device_type`
+  ).all();
+  const byCity = await env.DB.prepare(
+    `SELECT city, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= datetime('now','-7 days') AND city IS NOT NULL GROUP BY city ORDER BY n DESC LIMIT 10`
+  ).all();
+  return json({
+    weekly_active_users: wau?.n || 0,
+    daily_active_users: dau?.n || 0,
+    page_views_7d: totalViews7d?.n || 0,
+    by_device_7d: byDevice.results || [],
+    top_cities_7d: byCity.results || []
+  });
+}
+
 async function upsertEvent(env, ev) {
   await env.DB.prepare(
     `INSERT INTO events
@@ -1000,6 +1057,8 @@ export default {
         return await handlePhoto(env, decodeURIComponent(url.pathname.slice("/api/photos/".length)));
       }
       if (url.pathname === "/api/track-click" && request.method === "POST") return await handleTrackClick(request, env);
+      if (url.pathname === "/api/pageview" && request.method === "POST") return await handlePageView(request, env);
+      if (url.pathname === "/api/stats") return await handleStats(env);
       if (url.pathname === "/api/scrape-now" && request.method === "POST") {
         const [apiResults, icalResults, htmlResults] = await Promise.all([
           runScrape(env),
