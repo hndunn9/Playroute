@@ -307,7 +307,7 @@ main{
   box-shadow:0 2px 8px rgba(44,31,20,0.07);
 }
 .hike-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
-.hike-name{font-weight:600;font-size:14px;color:var(--ink);}
+.hike-name{font-weight:600;font-size:14px;color:var(--ink);flex:1;min-width:0;}
 .hike-city{
   display:inline-block;font-size:10px;font-weight:600;
   color:#fff;background:var(--clay);
@@ -315,7 +315,7 @@ main{
 }
 .hike-stats{
   font-family:'DM Mono',monospace;font-size:11.5px;
-  color:var(--sky);white-space:nowrap;
+  color:var(--sky);white-space:normal;text-align:right;flex-shrink:0;max-width:40%;
 }
 .hike-detail{font-size:12.5px;color:var(--ink-soft);margin-top:5px;line-height:1.5;}
 
@@ -647,7 +647,7 @@ footer{
       </div>
     </div>
     <div class="drawer-body" id="drawerBody"></div>
-    <a class="drawer-cta" id="drawerCta" href="#" target="_blank" rel="noopener noreferrer" onclick="trackClick(this.href, window._drawerMeta)">Open source page ↗</a>
+    <a class="drawer-cta" id="drawerCta" href="#" target="_blank" rel="noopener noreferrer" onclick="trackClick(this.href, window._drawerMeta)">View full details ↗</a>
   </div>
 </div>
 
@@ -812,6 +812,15 @@ function toggleCard(card){
   card.classList.toggle('expanded');
 }
 
+const ctaLabels = {
+  library: 'View library event ↗',
+  museum: 'Visit museum site ↗',
+  farmers_market: 'View market details ↗',
+  rec: 'View rec center listing ↗',
+  community: 'View event listing ↗',
+  outdoor: 'View trail/park details ↗'
+};
+
 function openDrawer(ev){
   const overlay = document.getElementById('drawerOverlay');
   const drawer = document.getElementById('activeDrawer');
@@ -820,6 +829,7 @@ function openDrawer(ev){
   document.getElementById('drawerIcon').innerHTML = blazes[ev.category]||blazes.outdoor;
   const cta = document.getElementById('drawerCta');
   cta.href = ev.source_url || '#';
+  cta.textContent = ctaLabels[ev.category] || 'View full details ↗';
   window._drawerMeta = {id:ev.id, title:ev.title, city:ev.city, category:ev.category};
   const body = document.getElementById('drawerBody');
   body.innerHTML = `
