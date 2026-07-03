@@ -961,6 +961,16 @@ async function handleUnsubscribe(request, env, url) {
   });
 }
 
+async function handlePhoto(env, key) {
+  const obj = await env.PHOTOS.get(key);
+  if (!obj) return new Response("Not found", { status: 404, headers: CORS_HEADERS });
+  const headers = new Headers(CORS_HEADERS);
+  obj.writeHttpMetadata(headers);
+  headers.set("etag", obj.httpEtag);
+  headers.set("Cache-Control", "public, max-age=86400");
+  return new Response(obj.body, { headers });
+}
+
 export default {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
@@ -986,6 +996,9 @@ export default {
       if (url.pathname === "/api/playgrounds") return await handlePlaygrounds(env, url);
       if (url.pathname === "/api/hikes") return await handleHikes(env, url);
       if (url.pathname === "/api/sources") return await handleSources(env);
+      if (url.pathname.startsWith("/api/photos/")) {
+        return await handlePhoto(env, decodeURIComponent(url.pathname.slice("/api/photos/".length)));
+      }
       if (url.pathname === "/api/track-click" && request.method === "POST") return await handleTrackClick(request, env);
       if (url.pathname === "/api/scrape-now" && request.method === "POST") {
         const [apiResults, icalResults, htmlResults] = await Promise.all([
