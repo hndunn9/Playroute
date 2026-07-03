@@ -924,7 +924,9 @@ function renderPlaygrounds(){
     if(isFirst) card.id="pg-city-"+pg.city;
     card.innerHTML=`
       <div class="pg-photo" style="background:${color}22;">
-        <svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes.outdoor}</svg>
+        ${pg.image_key
+          ? `<img src="${API_BASE}/api/photos/${encodeURIComponent(pg.image_key)}" alt="${pg.name}" style="width:100%;height:100%;object-fit:cover;">`
+          : `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes.outdoor}</svg>`}
       </div>
       <div class="pg-body">
         <div class="pg-name">${pg.name}</div>
