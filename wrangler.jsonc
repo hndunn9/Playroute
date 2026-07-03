@@ -13,9 +13,5 @@
       "database_name": "playroute-db",
       "database_id": "f5da3542-a8fa-449a-9827-37d1104dd940"
     }
-  ],
-
-  "triggers": {
-    "crons": ["0 9 * * *", "0 18 * * 0", "0 19 * * 0"]
-  }
+  ]
 }
