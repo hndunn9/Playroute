@@ -606,6 +606,18 @@ footer{
   <div class="freshness-note" id="freshnessNote"></div>
 
   <div class="release-notes">
+    <div class="release-notes-toggle" onclick="toggleAbout()">
+      <span>About Playroute</span>
+      <span class="chevron" id="aboutChevron">▾</span>
+    </div>
+    <div class="release-notes-panel collapsed" id="aboutPanel" style="text-align:center;font-size:12.5px;color:var(--ink-soft);line-height:1.6;">
+      Built by a mom of two in Boulder County who works in tech — married to the person who actually does the work of finding stuff to do with the kids every week. Playroute exists so she can get some of that mental load (and her evenings) back.
+      <br><br>
+      <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;">☕ Buy my wife a coffee (she's earned it)</a>
+    </div>
+  </div>
+
+  <div class="release-notes">
     <div class="release-notes-toggle" onclick="toggleReleaseNotes()">
       <span>What's new</span>
       <span class="chevron" id="releaseChevron">▾</span>
@@ -647,7 +659,7 @@ footer{
       </div>
     </div>
     <div class="drawer-body" id="drawerBody"></div>
-    <a class="drawer-cta" id="drawerCta" href="#" target="_blank" rel="noopener noreferrer" onclick="trackClick(this.href, window._drawerMeta)">View full details ↗</a>
+    <a class="drawer-cta" id="drawerCta" href="#" target="_blank" rel="noopener noreferrer" onclick="trackClick(this.href, window._drawerMeta)">View original site ↗</a>
   </div>
 </div>
 
@@ -817,8 +829,7 @@ const ctaLabels = {
   museum: 'Visit museum site ↗',
   farmers_market: 'View market details ↗',
   rec: 'View rec center listing ↗',
-  community: 'View event listing ↗',
-  outdoor: 'View trail/park details ↗'
+  community: 'View event listing ↗'
 };
 
 function openDrawer(ev){
@@ -829,7 +840,7 @@ function openDrawer(ev){
   document.getElementById('drawerIcon').innerHTML = blazes[ev.category]||blazes.outdoor;
   const cta = document.getElementById('drawerCta');
   cta.href = ev.source_url || '#';
-  cta.textContent = ctaLabels[ev.category] || 'View full details ↗';
+  cta.textContent = ctaLabels[ev.category] || 'View original site ↗';
   window._drawerMeta = {id:ev.id, title:ev.title, city:ev.city, category:ev.category};
   const body = document.getElementById('drawerBody');
   body.innerHTML = `
@@ -1070,6 +1081,12 @@ function toggleFilters(){
   document.getElementById("chevron").classList.toggle("open",filtersOpen);
 }
 let releaseNotesOpen=false;
+let aboutOpen=false;
+function toggleAbout(){
+  aboutOpen=!aboutOpen;
+  document.getElementById("aboutPanel").classList.toggle("collapsed",!aboutOpen);
+  document.getElementById("aboutChevron").classList.toggle("open",aboutOpen);
+}
 function toggleReleaseNotes(){
   releaseNotesOpen=!releaseNotesOpen;
   document.getElementById("releaseNotesPanel").classList.toggle("collapsed",!releaseNotesOpen);
