@@ -655,7 +655,10 @@ footer{
       </div>
     </div>
     <div class="drawer-body" id="drawerBody"></div>
-    <a class="drawer-cta" id="drawerCta" href="#" target="_blank" rel="noopener noreferrer" onclick="trackClick(this.href, window._drawerMeta)">View original site ↗</a>
+    <div style="display:flex;gap:8px;margin:4px 18px 16px;">
+      <a class="drawer-cta" id="drawerCta" href="#" target="_blank" rel="noopener noreferrer" onclick="trackClick(this.href, window._drawerMeta)" style="margin:0;flex:1;width:auto;">View original site ↗</a>
+      <a id="drawerCalBtn" href="#" style="margin:0;flex:0 0 auto;width:48px;display:flex;align-items:center;justify-content:center;background:var(--wheat);border-radius:var(--radius-md);color:var(--ink);text-decoration:none;font-size:19px;" title="Add to calendar" aria-label="Add to calendar">🗓️</a>
+    </div>
   </div>
 </div>
 
@@ -840,6 +843,78 @@ const ctaLabels = {
   community: 'View event listing ↗'
 };
 
+function pad2(n){ return String(n).padStart(2,'0'); }
+// Formats a Date as a UTC ICS/Google-Calendar timestamp (YYYYMMDDTHHMMSSZ).
+// Using UTC directly (rather than local getters + a TZID claim) means this
+// is correct no matter what timezone the viewer's browser is in.
+function toUTCStamp(d){
+  return `${d.getUTCFullYear()}${pad2(d.getUTCMonth()+1)}${pad2(d.getUTCDate())}T${pad2(d.getUTCHours())}${pad2(d.getUTCMinutes())}${pad2(d.getUTCSeconds())}Z`;
+}
+function escapeICS(s){
+  return String(s||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');
+}
+function eventTimes(ev){
+  const start = ev.occurrence ? new Date(ev.occurrence) : null;
+  if(!start) return null;
+  const durationMin = ev.duration_minutes || 60;
+  const end = new Date(start.getTime() + durationMin*60*1000);
+  return {start,end};
+}
+function buildICS(ev){
+  const t = eventTimes(ev);
+  if(!t) return null;
+  const uid = `playroute-${ev.id||Math.random().toString(36).slice(2)}@playroute.co`;
+  const lines = [
+    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Playroute//Event//EN','BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${toUTCStamp(new Date())}`,
+    `DTSTART:${toUTCStamp(t.start)}`,
+    `DTEND:${toUTCStamp(t.end)}`,
+    `SUMMARY:${escapeICS(ev.title)}`,
+    `LOCATION:${escapeICS(ev.source)}`,
+    `DESCRIPTION:${escapeICS(ev.note||'')}`,
+    ev.source_url?`URL:${ev.source_url}`:'',
+    'END:VEVENT','END:VCALENDAR'
+  ].filter(Boolean);
+  return lines.join('\r\n');
+}
+function buildGoogleCalUrl(ev){
+  const t = eventTimes(ev);
+  if(!t) return null;
+  const params = new URLSearchParams({
+    action:'TEMPLATE',
+    text: ev.title||'',
+    dates: `${toUTCStamp(t.start)}/${toUTCStamp(t.end)}`,
+    details: (ev.note||'') + (ev.source_url?`\n\n${ev.source_url}`:''),
+    location: ev.source||''
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+function wireCalendarButton(ev){
+  const btn = document.getElementById('drawerCalBtn');
+  const t = eventTimes(ev);
+  if(!t){ btn.style.display='none'; return; }
+  btn.style.display='flex';
+  btn.removeAttribute('href');
+  btn.removeAttribute('download');
+  btn.onclick = (e)=>{ e.preventDefault(); showCalendarChoice(btn, ev); };
+}
+function showCalendarChoice(anchorEl, ev){
+  document.getElementById('linkPopover')?.remove();
+  const gcalUrl = buildGoogleCalUrl(ev);
+  const icsBlob = new Blob([buildICS(ev)], {type:'text/calendar;charset=utf-8'});
+  const icsUrl = URL.createObjectURL(icsBlob);
+  const safeName = (ev.title||'event').replace(/[^a-z0-9]+/gi,'-').toLowerCase();
+  const pop=document.createElement('div');
+  pop.className='link-popover';pop.id='linkPopover';
+  pop.innerHTML=`<div class="link-popover-label">Add to calendar:</div><div class="link-popover-actions"><a href="${gcalUrl}" target="_blank" rel="noopener noreferrer">Google Calendar</a><a href="${icsUrl}" download="${safeName}.ics">Apple / Outlook</a></div>`;
+  document.body.appendChild(pop);
+  const rect=anchorEl.getBoundingClientRect();
+  pop.style.top=(window.scrollY+rect.bottom+6)+"px";
+  pop.style.left=Math.max(12,window.scrollX+rect.right-240)+"px";
+  setTimeout(()=>document.addEventListener('click',function h(e){ if(!pop.contains(e.target)){pop.remove();document.removeEventListener('click',h,true);} },true),0);
+}
+
 function openDrawer(ev){
   const overlay = document.getElementById('drawerOverlay');
   const drawer = document.getElementById('activeDrawer');
@@ -849,6 +924,7 @@ function openDrawer(ev){
   const cta = document.getElementById('drawerCta');
   cta.href = ev.source_url || '#';
   cta.textContent = ctaLabels[ev.category] || 'View original site ↗';
+  wireCalendarButton(ev);
   window._drawerMeta = {id:ev.id, title:ev.title, city:ev.city, category:ev.category};
   const body = document.getElementById('drawerBody');
   body.innerHTML = `
@@ -1151,6 +1227,7 @@ function renderAll(){ init(); updateActiveCount(); renderFeed(); renderRecentlyP
 loadFilterPrefs();
 document.getElementById("weekFeed").innerHTML=`<div class="empty-state">Loading this week's events…</div>`;
 loadData();
+fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true}).catch(()=>{});
 </script>
 </body>
 </html>
