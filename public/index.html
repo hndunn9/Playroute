@@ -764,12 +764,17 @@ function inDateRange(occurrenceISO, rangeId){
   if(rangeId==="weekend"){ const dow=occ.getDay(); return (dow===0||dow===6)&&daysFromToday>=0&&daysFromToday<=7; }
   return true;
 }
-function cityOptions(){ return [
-  {id:"all",label:"All cities"},{id:"Boulder",label:"Boulder"},
-  {id:"Erie",label:"Erie"},{id:"Longmont",label:"Longmont"},
-  {id:"Lafayette",label:"Lafayette"},{id:"Lyons",label:"Lyons"},
-  {id:"Broomfield",label:"Broomfield"},{id:"Louisville",label:"Louisville"}
-];}
+// Derived from whatever cities actually show up in the data — add a new
+// city to events/playgrounds/hikes and it appears here automatically,
+// no code change needed.
+function cityOptions(){
+  const cities = new Set();
+  events.forEach(e => e.city && cities.add(e.city));
+  playgrounds.forEach(p => p.city && cities.add(p.city));
+  hikes.forEach(h => h.city && cities.add(h.city));
+  const sorted = [...cities].sort();
+  return [{id:"all",label:"All cities"}, ...sorted.map(c => ({id:c, label:c}))];
+}
 function ageOptions(){ return [
   {id:"all",label:"All ages"},{id:"0-1.5",label:"0–18mo"},
   {id:"2-4",label:"2–4"},{id:"5-8",label:"5–8"}
