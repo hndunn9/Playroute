@@ -265,17 +265,17 @@ main{
   font-size:12.5px;color:var(--ink-soft);line-height:1.55;margin-bottom:10px;
 }
 .card-detail-actions{display:flex;gap:8px;align-items:center;}
-.detail-btn-primary{
+.detail-btn-source{
   flex:1;padding:9px 0;border-radius:var(--radius-sm);
   border:none;background:var(--clay);color:#fff;
   font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;
   cursor:pointer;text-align:center;text-decoration:none;display:block;
 }
-.detail-btn-icon{
-  flex:0 0 auto;width:36px;height:36px;border-radius:var(--radius-sm);
-  border:1px solid var(--fog);background:var(--parchment);
-  color:var(--ink-soft);display:flex;align-items:center;
-  justify-content:center;text-decoration:none;cursor:pointer;
+.detail-btn-cal{
+  flex:0 0 auto;width:38px;height:36px;border-radius:var(--radius-sm);
+  border:1px solid var(--fog);background:var(--wheat);
+  display:flex;align-items:center;justify-content:center;
+  text-decoration:none;cursor:pointer;font-size:17px;
 }
 
 /* ── PLAYGROUNDS ── */
@@ -744,7 +744,7 @@ function renderFreshnessNote(){
 }
 
 let activeCities = new Set(), activeAges = new Set(), activeCats = new Set();
-let activeCost = "all", activeWhen = "all";
+let activeCost = "all", activeWhen = "week";
 
 function dateRangeOptions(){ return [
   {id:"all",label:"Anytime"},{id:"today",label:"Today"},
@@ -768,8 +768,7 @@ function cityOptions(){ return [
   {id:"all",label:"All cities"},{id:"Boulder",label:"Boulder"},
   {id:"Erie",label:"Erie"},{id:"Longmont",label:"Longmont"},
   {id:"Lafayette",label:"Lafayette"},{id:"Lyons",label:"Lyons"},
-  {id:"Broomfield",label:"Broomfield"},{id:"Louisville",label:"Louisville"},
-  {id:"Mead",label:"Mead"}
+  {id:"Broomfield",label:"Broomfield"},{id:"Louisville",label:"Louisville"}
 ];}
 function ageOptions(){ return [
   {id:"all",label:"All ages"},{id:"0-1.5",label:"0–18mo"},
@@ -888,6 +887,18 @@ function wireCalendarButton(ev){
   btn.href = URL.createObjectURL(icsBlob);
   btn.download = (ev.title||'event').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.ics';
 }
+// Attaches the .ics download to an inline event-card calendar button.
+// Scoped to the given card element so it's immune to duplicate/null IDs.
+// If the event has no usable date/time, the button is hidden.
+function wireInlineCalendar(ev, cardEl){
+  const btn = cardEl ? cardEl.querySelector('.detail-btn-cal') : document.querySelector(`.detail-btn-cal[data-calfor="${ev.id}"]`);
+  if(!btn) return;
+  const t = eventTimes(ev);
+  if(!t){ btn.style.display='none'; return; }
+  const icsBlob = new Blob([buildICS(ev)], {type:'text/calendar;charset=utf-8'});
+  btn.href = URL.createObjectURL(icsBlob);
+  btn.download = (ev.title||'event').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.ics';
+}
 
 function openDrawer(ev){
   const overlay = document.getElementById('drawerOverlay');
@@ -972,15 +983,14 @@ function renderFeed(){
         <div class="card-detail-inner">
           <div class="card-detail-note">${ev.note||""}</div>
           <div class="card-detail-actions">
-            <button class="detail-btn-primary" onclick="event.stopPropagation();openDrawer(${JSON.stringify(ev).replace(/"/g,'&quot;')})">See full details</button>
-            <a class="detail-btn-icon" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" title="Open source page" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}'})">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M7 17L17 7M17 7H9M17 7V15"/></svg>
-            </a>
+            <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}'})">View source ↗</a>
+            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">🗓️</a>
           </div>
         </div>
       </div>
     `;
     feed.appendChild(card);
+    wireInlineCalendar(ev, card);
   });
   document.getElementById("resultCount").textContent=`${shown} upcoming`;
   if(shown===0){
@@ -1125,15 +1135,14 @@ function renderRecentlyPassed(){
         <div class="card-detail-inner">
           <div class="card-detail-note">${ev.note||""}</div>
           <div class="card-detail-actions">
-            <button class="detail-btn-primary" onclick="event.stopPropagation();openDrawer(${JSON.stringify(ev).replace(/"/g,'&quot;')})">See full details</button>
-            <a class="detail-btn-icon" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" title="Open source page" onclick="event.stopPropagation()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M7 17L17 7M17 7H9M17 7V15"/></svg>
-            </a>
+            <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();">View source ↗</a>
+            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">🗓️</a>
           </div>
         </div>
       </div>
     `;
     feed.appendChild(card);
+    wireInlineCalendar(ev, card);
   });
 }
 function scrollToSection(anchorId){
