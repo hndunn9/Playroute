@@ -46,6 +46,40 @@ function lastSundayOfMonth(year, month) {
   return d;
 }
 
+// Generalized version: the Nth occurrence of a given weekday in a month
+// (ordinal: "first"|"second"|"third"|"fourth"|"last"). Returns null if that
+// ordinal doesn't exist in this particular month (e.g. a "fifth Tuesday").
+const ORDINAL_WEEK_INDEX = { first: 0, second: 1, third: 2, fourth: 3 };
+function nthWeekdayOfMonth(year, month, weekdayIdx, ordinal) {
+  if (ordinal === "last") {
+    const d = new Date(Date.UTC(year, month + 1, 0));
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() - weekdayIdx + 7) % 7));
+    return d;
+  }
+  const idx = ORDINAL_WEEK_INDEX[ordinal];
+  if (idx === undefined) return null;
+  const first = new Date(Date.UTC(year, month, 1));
+  const firstMatchDay = 1 + ((weekdayIdx - first.getUTCDay() + 7) % 7);
+  const targetDay = firstMatchDay + idx * 7;
+  const result = new Date(Date.UTC(year, month, targetDay));
+  return result.getUTCMonth() === month ? result : null;
+}
+
+function getNextMonthlyOrdinalWeekday(ordinal, weekdayIdx, startTime, now) {
+  const [hh, mm] = startTime.split(":").map(Number);
+  const nowMT = new Date(now.toLocaleString("en-US", { timeZone: TZ }));
+  let year = nowMT.getFullYear(), month = nowMT.getMonth();
+  let target = nthWeekdayOfMonth(year, month, weekdayIdx, ordinal);
+  let candidate = target ? toMountainDate(target.toISOString().slice(0, 10), hh, mm) : null;
+  if (!candidate || candidate < now) {
+    month++;
+    if (month > 11) { month = 0; year++; }
+    target = nthWeekdayOfMonth(year, month, weekdayIdx, ordinal);
+    candidate = target ? toMountainDate(target.toISOString().slice(0, 10), hh, mm) : null;
+  }
+  return candidate;
+}
+
 function getNextMonthlyLastSunday(startTime, now) {
   const [hh, mm] = startTime.split(":").map(Number);
   const nowMT = new Date(now.toLocaleString("en-US", { timeZone: TZ }));
@@ -110,23 +144,38 @@ function getOccurrence(ev, now = new Date()) {
     return null;
   }
 
-  // Weekly / monthly-last-sunday: the *immediate* next occurrence might fall
-  // outside a season_start/season_end window (e.g. a program that moves
-  // venues partway through summer and doesn't resume until several weeks
-  // from now). Rather than giving up after one check, walk forward week by
-  // week (capped at a year) until we find one that's actually in season.
-  const isWeeklyStyle = ev.recurrence !== "monthly-last-sunday";
+  // Weekly / monthly-last-sunday / monthly-{ordinal}-{weekday}: the
+  // *immediate* next occurrence might fall outside a season_start/season_end
+  // window (e.g. a program that moves venues partway through summer and
+  // doesn't resume until several weeks from now). Rather than giving up
+  // after one check, walk forward (capped at 60 candidates) until we find
+  // one that's actually in season.
+  const monthlyOrdinalMatch = /^monthly-(first|second|third|fourth)-(\w+)$/i.exec(ev.recurrence);
+  const isMonthlyLastSunday = ev.recurrence === "monthly-last-sunday";
+  const isWeeklyStyle = !isMonthlyLastSunday && !monthlyOrdinalMatch;
+
+  let ordinal, weekdayIdx;
+  if (monthlyOrdinalMatch) {
+    ordinal = monthlyOrdinalMatch[1].toLowerCase();
+    const dayName = monthlyOrdinalMatch[2][0].toUpperCase() + monthlyOrdinalMatch[2].slice(1).toLowerCase();
+    weekdayIdx = DAY_INDEX[dayName];
+  }
+
   let cursor = now;
   for (let i = 0; i < 60; i++) {
-    occ = isWeeklyStyle
-      ? getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, cursor)
-      : getNextMonthlyLastSunday(ev.start_time, cursor);
+    if (isMonthlyLastSunday) {
+      occ = getNextMonthlyLastSunday(ev.start_time, cursor);
+    } else if (monthlyOrdinalMatch && weekdayIdx !== undefined) {
+      occ = getNextMonthlyOrdinalWeekday(ordinal, weekdayIdx, ev.start_time, cursor);
+    } else {
+      occ = getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, cursor);
+    }
     if (!occ) return null;
     if (isInSeason(ev.season_start, ev.season_end, occ)) return occ;
     // Nudge just past this occurrence and check the next one.
     cursor = new Date(occ.getTime() + 60000);
   }
-  return null; // 60 candidates out (over a year for weekly) and never in season — likely misconfigured data
+  return null; // 60 candidates out and never in season — likely misconfigured data
 }
 
 function formatOccurrenceLabel(date) {
@@ -794,10 +843,39 @@ function errorResponse(err, status = 500) {
 // No cookies, no persistent client-side ID, nothing stored that identifies
 // a specific person across weeks.
 function currentWeekSalt() {
-  const d = new Date();
-  const day = d.getUTCDay() || 7; // Mon=1..Sun=7
-  d.setUTCDate(d.getUTCDate() - day + 1); // back up to Monday of this week
-  return d.toISOString().slice(0, 10);
+  // Mountain-Time-anchored so the hash rotates at Monday midnight MT, not
+  // UTC Monday — otherwise a visitor near the day boundary could get an
+  // inconsistent hash relative to what "this week" means for them.
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  const day = mtNow.getDay() || 7; // Mon=1..Sun=7
+  mtNow.setDate(mtNow.getDate() - day + 1); // back up to Monday of this week, MT
+  return `${mtNow.getFullYear()}-${String(mtNow.getMonth() + 1).padStart(2, "0")}-${String(mtNow.getDate()).padStart(2, "0")}`;
+}
+
+// Formats a Date as 'YYYY-MM-DD HH:MM:SS' in UTC, matching the string format
+// SQLite's CURRENT_TIMESTAMP produces (page_views.viewed_at's default) — the
+// stats queries below compare against this as plain strings, so the format
+// has to line up exactly.
+function toSqliteUTCString(date) {
+  return date.toISOString().slice(0, 19).replace("T", " ");
+}
+function mtCalendarDateStr(mtDate) {
+  return `${mtDate.getFullYear()}-${String(mtDate.getMonth() + 1).padStart(2, "0")}-${String(mtDate.getDate()).padStart(2, "0")}`;
+}
+// Start of "today" in Mountain Time, expressed as the equivalent UTC instant.
+// Reuses toMountainDate (already DST-aware) rather than converting directly,
+// since a naive toISOString() on a reinterpreted-timezone Date silently
+// applies zero offset instead of the real +/-6 or 7 hour Mountain offset.
+function mountainMidnightTodayUTC() {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
+}
+// Start of "this week" (Monday) in Mountain Time, as the equivalent UTC instant.
+function mountainMidnightThisWeekUTC() {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  const day = mtNow.getDay() || 7;
+  mtNow.setDate(mtNow.getDate() - day + 1);
+  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
 }
 
 async function hashVisitor(request) {
@@ -820,25 +898,28 @@ async function handlePageView(request, env) {
 }
 
 async function handleStats(env) {
-  const wau = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= datetime('now','-7 days')`
-  ).first();
+  const todayStart = mountainMidnightTodayUTC();
+  const weekStart = mountainMidnightThisWeekUTC();
+
   const dau = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= datetime('now','-1 day')`
-  ).first();
-  const totalViews7d = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= datetime('now','-7 days')`
-  ).first();
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ?`
+  ).bind(todayStart).first();
+  const wau = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ?`
+  ).bind(weekStart).first();
+  const totalViewsThisWeek = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ?`
+  ).bind(weekStart).first();
   const byDevice = await env.DB.prepare(
-    `SELECT device_type, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= datetime('now','-7 days') GROUP BY device_type`
-  ).all();
+    `SELECT device_type, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? GROUP BY device_type`
+  ).bind(weekStart).all();
   const byCity = await env.DB.prepare(
-    `SELECT city, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= datetime('now','-7 days') AND city IS NOT NULL GROUP BY city ORDER BY n DESC LIMIT 10`
-  ).all();
+    `SELECT city, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND city IS NOT NULL GROUP BY city ORDER BY n DESC LIMIT 10`
+  ).bind(weekStart).all();
   return json({
     weekly_active_users: wau?.n || 0,
     daily_active_users: dau?.n || 0,
-    page_views_7d: totalViews7d?.n || 0,
+    page_views_7d: totalViewsThisWeek?.n || 0,
     by_device_7d: byDevice.results || [],
     top_cities_7d: byCity.results || []
   });
@@ -1253,6 +1334,18 @@ export default {
       if (url.pathname === "/api/track-click" && request.method === "POST") return await handleTrackClick(request, env);
       if (url.pathname === "/api/pageview" && request.method === "POST") return await handlePageView(request, env);
       if (url.pathname === "/api/stats") return await handleStats(env);
+      if (url.pathname === "/robots.txt") {
+        return new Response(
+          "User-agent: *\nAllow: /\nSitemap: https://playroute.co/sitemap.xml\n",
+          { headers: { "Content-Type": "text/plain", ...CORS_HEADERS } }
+        );
+      }
+      if (url.pathname === "/sitemap.xml") {
+        return new Response(
+          `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url>\n    <loc>https://playroute.co/</loc>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`,
+          { headers: { "Content-Type": "application/xml", ...CORS_HEADERS } }
+        );
+      }
       if (url.pathname === "/api/scrape-now" && request.method === "POST") {
         const [apiResults, icalResults, htmlResults, meadResults] = await Promise.all([
           runScrape(env),
