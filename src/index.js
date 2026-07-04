@@ -916,12 +916,32 @@ async function handleStats(env) {
   const byCity = await env.DB.prepare(
     `SELECT city, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND city IS NOT NULL GROUP BY city ORDER BY n DESC LIMIT 10`
   ).bind(weekStart).all();
+
+  // Click tracking (source links, "Open in Maps" on playgrounds/hikes, and
+  // the support/feedback links) grouped by category — 1-day and 7-day windows.
+  const clicksByType1d = await env.DB.prepare(
+    `SELECT category, COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ? GROUP BY category ORDER BY n DESC`
+  ).bind(todayStart).all();
+  const clicksByType7d = await env.DB.prepare(
+    `SELECT category, COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ? GROUP BY category ORDER BY n DESC`
+  ).bind(weekStart).all();
+  const totalClicks1d = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ?`
+  ).bind(todayStart).first();
+  const totalClicks7d = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ?`
+  ).bind(weekStart).first();
+
   return json({
     weekly_active_users: wau?.n || 0,
     daily_active_users: dau?.n || 0,
     page_views_7d: totalViewsThisWeek?.n || 0,
     by_device_7d: byDevice.results || [],
-    top_cities_7d: byCity.results || []
+    top_cities_7d: byCity.results || [],
+    link_clicks_1d: totalClicks1d?.n || 0,
+    link_clicks_7d: totalClicks7d?.n || 0,
+    link_clicks_by_type_1d: clicksByType1d.results || [],
+    link_clicks_by_type_7d: clicksByType7d.results || []
   });
 }
 
