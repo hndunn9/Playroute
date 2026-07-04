@@ -657,7 +657,7 @@ footer{
     <div class="drawer-body" id="drawerBody"></div>
     <div style="display:flex;gap:8px;margin:4px 18px 16px;">
       <a class="drawer-cta" id="drawerCta" href="#" target="_blank" rel="noopener noreferrer" onclick="trackClick(this.href, window._drawerMeta)" style="margin:0;flex:1;width:auto;">View original site ↗</a>
-      <a id="drawerCalBtn" href="#" style="margin:0;flex:0 0 auto;width:48px;display:flex;align-items:center;justify-content:center;background:var(--wheat);border-radius:var(--radius-md);color:var(--ink);text-decoration:none;font-size:19px;" title="Add to calendar" aria-label="Add to calendar">🗓️</a>
+      <a id="drawerCalBtn" href="#" download="event.ics" style="margin:0;flex:0 0 auto;width:48px;display:flex;align-items:center;justify-content:center;background:var(--wheat);border-radius:var(--radius-md);color:var(--ink);text-decoration:none;font-size:19px;" title="Add to calendar" aria-label="Add to calendar">🗓️</a>
     </div>
   </div>
 </div>
@@ -878,41 +878,14 @@ function buildICS(ev){
   ].filter(Boolean);
   return lines.join('\r\n');
 }
-function buildGoogleCalUrl(ev){
-  const t = eventTimes(ev);
-  if(!t) return null;
-  const params = new URLSearchParams({
-    action:'TEMPLATE',
-    text: ev.title||'',
-    dates: `${toUTCStamp(t.start)}/${toUTCStamp(t.end)}`,
-    details: (ev.note||'') + (ev.source_url?`\n\n${ev.source_url}`:''),
-    location: ev.source||''
-  });
-  return `https://calendar.google.com/calendar/render?${params.toString()}`;
-}
 function wireCalendarButton(ev){
   const btn = document.getElementById('drawerCalBtn');
   const t = eventTimes(ev);
   if(!t){ btn.style.display='none'; return; }
   btn.style.display='flex';
-  btn.removeAttribute('href');
-  btn.removeAttribute('download');
-  btn.onclick = (e)=>{ e.preventDefault(); showCalendarChoice(btn, ev); };
-}
-function showCalendarChoice(anchorEl, ev){
-  document.getElementById('linkPopover')?.remove();
-  const gcalUrl = buildGoogleCalUrl(ev);
   const icsBlob = new Blob([buildICS(ev)], {type:'text/calendar;charset=utf-8'});
-  const icsUrl = URL.createObjectURL(icsBlob);
-  const safeName = (ev.title||'event').replace(/[^a-z0-9]+/gi,'-').toLowerCase();
-  const pop=document.createElement('div');
-  pop.className='link-popover';pop.id='linkPopover';
-  pop.innerHTML=`<div class="link-popover-label">Add to calendar:</div><div class="link-popover-actions"><a href="${gcalUrl}" target="_blank" rel="noopener noreferrer">Google Calendar</a><a href="${icsUrl}" download="${safeName}.ics">Apple / Outlook</a></div>`;
-  document.body.appendChild(pop);
-  const rect=anchorEl.getBoundingClientRect();
-  pop.style.top=(rect.bottom+6)+"px";
-  pop.style.left=Math.max(12,rect.right-240)+"px";
-  setTimeout(()=>document.addEventListener('click',function h(e){ if(!pop.contains(e.target)){pop.remove();document.removeEventListener('click',h,true);} },true),0);
+  btn.href = URL.createObjectURL(icsBlob);
+  btn.download = (ev.title||'event').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.ics';
 }
 
 function openDrawer(ev){
@@ -1198,7 +1171,7 @@ function showLinkPopover(anchorEl,url){
   const rect=anchorEl.getBoundingClientRect();
   pop.style.top=(rect.bottom+6)+"px";
   pop.style.left=Math.max(12,rect.right-240)+"px";
-  setTimeout(()=>document.addEventListener('click',function h(e){ if(!pop.contains(e.target)){pop.remove();document.removeEventListener('click',h,true);} },true),0);
+  setTimeout(()=>document.addEventListener('click',function h(e){ if(!pop.contains(e.target) && !anchorEl.contains(e.target)){pop.remove();document.removeEventListener('click',h,true);} },true),50);
 }
 
 const FILTER_STORAGE_KEY="playroute-filters-v1";
