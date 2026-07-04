@@ -104,15 +104,29 @@ function getOccurrence(ev, now = new Date()) {
   if (ev.recurrence === "dated") {
     occ = getDatedOccurrence(ev.event_date, ev.start_time);
     if (!occ || occ < now) return null;
-  } else if (ev.recurrence === "monthly-last-sunday") {
-    occ = getNextMonthlyLastSunday(ev.start_time, now);
+    if (occ && !isInSeason(ev.season_start, ev.season_end, occ)) return null;
+    return occ;
   } else if (ev.recurrence === "irregular") {
     return null;
-  } else {
-    occ = getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, now);
   }
-  if (occ && !isInSeason(ev.season_start, ev.season_end, occ)) return null;
-  return occ;
+
+  // Weekly / monthly-last-sunday: the *immediate* next occurrence might fall
+  // outside a season_start/season_end window (e.g. a program that moves
+  // venues partway through summer and doesn't resume until several weeks
+  // from now). Rather than giving up after one check, walk forward week by
+  // week (capped at a year) until we find one that's actually in season.
+  const isWeeklyStyle = ev.recurrence !== "monthly-last-sunday";
+  let cursor = now;
+  for (let i = 0; i < 60; i++) {
+    occ = isWeeklyStyle
+      ? getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, cursor)
+      : getNextMonthlyLastSunday(ev.start_time, cursor);
+    if (!occ) return null;
+    if (isInSeason(ev.season_start, ev.season_end, occ)) return occ;
+    // Nudge just past this occurrence and check the next one.
+    cursor = new Date(occ.getTime() + 60000);
+  }
+  return null; // 60 candidates out (over a year for weekly) and never in season — likely misconfigured data
 }
 
 function formatOccurrenceLabel(date) {
