@@ -61,6 +61,25 @@ body{
   font-family:'Playfair Display',serif;font-size:14px;font-weight:700;
   color:var(--ink-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;
 }
+.support-callout{
+  margin:20px 16px 4px;
+  background:var(--parchment);
+  border:1.5px solid var(--clay);
+  border-radius:var(--radius-md);
+  padding:16px;
+  text-align:center;
+}
+.support-row{padding:8px 0;}
+.support-row + .support-row{border-top:1px solid var(--fog);}
+.support-callout-text{
+  font-size:14px;color:var(--ink);line-height:1.5;margin-bottom:10px;font-weight:500;
+}
+.support-btn-primary,.support-btn-secondary{
+  display:block;width:100%;padding:11px 0;border-radius:var(--radius-sm);
+  font-weight:600;font-size:13.5px;text-decoration:none;box-sizing:border-box;
+}
+.support-btn-primary{background:var(--clay);color:#fff;}
+.support-btn-secondary{background:var(--wheat);color:var(--ink);}
 .mtn-far{height:55px;background:#8B7050;clip-path:polygon(0 80%,8% 45%,18% 60%,28% 35%,40% 55%,52% 28%,62% 48%,72% 30%,82% 50%,92% 38%,100% 55%,100% 100%,0 100%);}
 .mtn-mid{height:60px;background:#6B5A3E;clip-path:polygon(0 70%,10% 40%,20% 55%,32% 25%,44% 50%,58% 20%,68% 42%,80% 28%,90% 45%,100% 35%,100% 100%,0 100%);}
 .mtn-near{height:48px;background:#4A3828;clip-path:polygon(0 60%,15% 30%,30% 50%,45% 20%,60% 45%,75% 25%,88% 40%,100% 30%,100% 100%,0 100%);}
@@ -543,7 +562,7 @@ footer{
       <div class="tab-icon">🥾</div>
       <div class="tab-label">Hikes</div>
     </div>
-    <div class="about-btn" onclick="openAboutDrawer()" aria-label="About and feedback">ⓘ</div>
+    <div class="about-btn" onclick="openAboutDrawer()" aria-label="About and feedback">🧡</div>
   </div>
 
   <!-- Filters -->
@@ -576,6 +595,17 @@ footer{
     <span class="section-sub" id="resultCount"></span>
   </div>
   <div id="weekFeed"></div>
+
+  <div class="support-callout">
+    <div class="support-row">
+      <div class="support-callout-text">💬 Got a tip, a typo, or a wish-list item? We'd love to hear it.</div>
+      <a class="support-btn-primary" href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A">Send feedback</a>
+    </div>
+    <div class="support-row">
+      <div class="support-callout-text">🧡 I built this app — buy my wife, the stay-at-home parent who inspired it, a coffee.</div>
+      <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer">☕ Wife's coffee fund</a>
+    </div>
+  </div>
 
   <!-- Recently passed — hidden until toggled, only shown when content exists -->
   <div id="recentlyPassedWrap" style="display:none;">
