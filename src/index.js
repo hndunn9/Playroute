@@ -579,6 +579,185 @@ async function runHtmlScrape(env) {
   return results;
 }
 
+
+// --- Town of Mead scraper ---
+// Source feed: https://www.townofmead.org/calendar/json
+// Unlike the library/rec-center feeds, this JSON has no structured date
+// field (meeting_date is always empty) — the actual date/time lives buried
+// in freeform HTML prose inside `body`, in wildly inconsistent formats.
+// Rather than risk silently inserting a wrong date, this only auto-adds
+// items where it can confidently extract a single clean "Month Day" (+
+// optional time). Multi-session/recurring listings (e.g. "Thursdays from
+// July 9 - July 30") are skipped on purpose — those need a human to read
+// them once, same as you did manually for the Skyhawks classes.
+// Mead's site structures URLs by department (e.g. /parksandrec/, /municourt/,
+// /boardoftrustees/) — filtering on that path is far more reliable than
+// guessing at title keywords, since it comes from how the town itself
+// organizes the content rather than from us pattern-matching prose.
+const MEAD_FAMILY_PATH_PREFIX = "/parksandrec/";
+// Even within parksandrec, a few things aren't "fun family activity" in the
+// way this app means it — registration paperwork, naming contests you don't
+// attend, and solemn civic ceremonies. Excluded by title keyword.
+const MEAD_TITLE_BLOCKLIST = [
+  /entry form/i, /name the snowplow/i, /ceremony/i, /memorial/i, /veterans/i
+];
+const MEAD_MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December";
+
+function meadDecodeEntities(str) {
+  let s = String(str || "");
+  // The feed double-encodes HTML entities, so unescape twice.
+  for (let i = 0; i < 2; i++) {
+    s = s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+         .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&nbsp;/g, " ");
+  }
+  return s;
+}
+function meadStripTags(html) {
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+// Finds one confident "Month Day[, Year]" plus an optional start time.
+// Returns null (skip this item) if it can't find an unambiguous single date.
+function extractMeadDateTime(text) {
+  // "Month Day" (with optional ordinal suffix: "July 4th", "September 12")
+  let dateMatch = text.match(new RegExp(`\\b(${MEAD_MONTHS})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, "i"));
+  let monthName, day;
+  if (dateMatch) {
+    monthName = dateMatch[1]; day = parseInt(dateMatch[2], 10);
+  } else {
+    // Fallback: "4th of July" / "12th of September" ordering
+    const altMatch = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+of\\s+(${MEAD_MONTHS})\\b`, "i"));
+    if (!altMatch) return null;
+    day = parseInt(altMatch[1], 10); monthName = altMatch[2];
+  }
+  const monthNum = new Date(`${monthName} 1, 2000`).getMonth() + 1;
+
+  // If the post mentions more than one distinct "Month Day", it's describing
+  // a multi-day event (e.g. a Friday date + a separate Saturday date/time) —
+  // too ambiguous to safely pick a single date+time pairing. Skip it.
+  const allDateMatches = text.match(new RegExp(`\\b(${MEAD_MONTHS})\\s+\\d{1,2}(?:st|nd|rd|th)?\\b`, "gi")) || [];
+  const distinctDates = new Set(allDateMatches.map(s => s.toLowerCase().replace(/(st|nd|rd|th)\b/i, "")));
+  if (distinctDates.size > 1) return null;
+
+  // Bail out on anything that reads as a recurring/multi-date listing —
+  // those are exactly the cases we don't want to guess at.
+  if (/\b(thursdays|fridays|saturdays|sundays|mondays|tuesdays|wednesdays)\b/i.test(text)) return null;
+  if (/\bdates?:\s*\w+\s+\d{1,2}\s*[-–]\s*\w*\s*\d{0,2}/i.test(text)) return null;
+
+  // Time extraction, in priority order:
+  // 1) A range where BOTH ends have their own am/pm ("11 a.m. to 3 p.m.") — use the first directly.
+  // 2) A range with only a trailing am/pm ("4 to 9:30 p.m.") — infer the start's period rather
+  //    than mistakenly grabbing the end time as if it were the start.
+  // 3) A single standalone time.
+  let startTime = null, displayHour = null;
+  const bothMarked = text.match(/(\d{1,2})(:\d{2})?\s*(a\.m\.|p\.m\.|am|pm)\s*(?:to|-|–)\s*\d{1,2}(:\d{2})?\s*(?:a\.m\.|p\.m\.|am|pm)/i);
+  const trailingOnly = !bothMarked && text.match(/(\d{1,2})(:\d{2})?\s*(?:to|-|–)\s*(\d{1,2})(:\d{2})?\s*(a\.m\.|p\.m\.|am|pm)/i);
+  const singleTime = !bothMarked && !trailingOnly && text.match(/(\d{1,2})(:\d{2})?\s*(a\.m\.|p\.m\.|am|pm)/i);
+
+  let h = null, min = "00", isPM = null;
+  if (bothMarked) {
+    h = parseInt(bothMarked[1], 10); min = bothMarked[2] ? bothMarked[2].slice(1) : "00";
+    isPM = /p/i.test(bothMarked[3]);
+  } else if (trailingOnly) {
+    const startHour = parseInt(trailingOnly[1], 10);
+    const endHour = parseInt(trailingOnly[3], 10);
+    const endIsPM = /p/i.test(trailingOnly[5]);
+    h = startHour; min = trailingOnly[2] ? trailingOnly[2].slice(1) : "00";
+    // If the start hour is <= the end hour, they share the same period.
+    // If start > end numerically (e.g. "11 to 1 p.m." = 11am-1pm), the
+    // start must be the opposite period (crosses noon).
+    isPM = startHour <= endHour ? endIsPM : !endIsPM;
+  } else if (singleTime) {
+    h = parseInt(singleTime[1], 10); min = singleTime[2] ? singleTime[2].slice(1) : "00";
+    isPM = /p/i.test(singleTime[3]);
+  }
+  if (h !== null) {
+    if (isPM && h < 12) h += 12;
+    if (!isPM && h === 12) h = 0;
+    startTime = `${String(h).padStart(2, "0")}:${min}`;
+    displayHour = { h, min };
+  }
+  return { monthNum, day, startTime, displayHour };
+}
+function meadDisplayTime(displayHour) {
+  if (!displayHour) return "Check listing for time";
+  const { h, min } = displayHour;
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${min} ${period}`;
+}
+
+async function fetchAndNormalizeMeadCalendar() {
+  const res = await fetch("https://www.townofmead.org/calendar/json");
+  if (!res.ok) throw new Error(`Mead calendar fetch failed: ${res.status}`);
+  const items = await res.json();
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const lookAheadCutoff = new Date(startOfToday.getTime() + 90 * 86400000);
+  const currentYear = now.getFullYear();
+
+  const events = [];
+  for (const item of items) {
+    const title = (item.title || "").trim();
+    if (!title) continue;
+    if (!(item.link || "").startsWith(MEAD_FAMILY_PATH_PREFIX)) continue; // civic/court/board content lives elsewhere on the site
+    if (MEAD_TITLE_BLOCKLIST.some(re => re.test(title))) continue;
+
+    const plainBody = meadStripTags(meadDecodeEntities(item.body || ""));
+    const parsed = extractMeadDateTime(plainBody);
+    if (!parsed) continue; // couldn't confidently parse a single clean date — skip, don't guess
+
+    // Try this year first; if that's already passed, try next year (handles
+    // items posted late in the year for an early-next-year date).
+    let eventDate = new Date(currentYear, parsed.monthNum - 1, parsed.day);
+    if (eventDate < startOfToday) {
+      eventDate = new Date(currentYear + 1, parsed.monthNum - 1, parsed.day);
+    }
+    if (eventDate < startOfToday || eventDate > lookAheadCutoff) continue;
+
+    const dayOfWeek = eventDate.toLocaleDateString("en-US", { weekday: "long" });
+    const eventDateStr = `${eventDate.getFullYear()}-${String(eventDate.getMonth() + 1).padStart(2, "0")}-${String(eventDate.getDate()).padStart(2, "0")}`;
+    const startTime = parsed.startTime || "09:00";
+    const displayTime = meadDisplayTime(parsed.displayHour);
+
+    events.push({
+      title,
+      source: "Town of Mead Parks & Recreation",
+      city: "Mead",
+      category: "outdoor",
+      cost: "free",
+      age_min: 0,
+      age_max: 12,
+      day_of_week: dayOfWeek,
+      start_time: startTime,
+      display_time: displayTime,
+      recurrence: "dated",
+      event_date: eventDateStr,
+      note: plainBody.slice(0, 300),
+      source_url: `https://www.townofmead.org${item.link}`,
+      verified: 0, // auto-parsed from prose — flagged unverified, unlike hand-curated entries
+      libcal_event_id: `mead:${item.id}`
+    });
+  }
+  return events;
+}
+
+async function runMeadScrape(env) {
+  const results = [];
+  try {
+    const events = await fetchAndNormalizeMeadCalendar();
+    let count = 0;
+    for (const ev of events) {
+      await upsertEvent(env, ev);
+      count++;
+    }
+    results.push({ source: "Town of Mead", status: "ok", eventsUpserted: count });
+  } catch (err) {
+    results.push({ source: "Town of Mead", status: "error", error: String(err) });
+  }
+  return results;
+}
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -1040,6 +1219,7 @@ export default {
     ctx.waitUntil(runScrape(env));
     ctx.waitUntil(runICalScrape(env));
     ctx.waitUntil(runHtmlScrape(env));
+    ctx.waitUntil(runMeadScrape(env));
   },
   // HTTP entry point — this is what the frontend fetches from instead of
   // using a hardcoded JS array.
@@ -1060,12 +1240,13 @@ export default {
       if (url.pathname === "/api/pageview" && request.method === "POST") return await handlePageView(request, env);
       if (url.pathname === "/api/stats") return await handleStats(env);
       if (url.pathname === "/api/scrape-now" && request.method === "POST") {
-        const [apiResults, icalResults, htmlResults] = await Promise.all([
+        const [apiResults, icalResults, htmlResults, meadResults] = await Promise.all([
           runScrape(env),
           runICalScrape(env),
-          runHtmlScrape(env)
+          runHtmlScrape(env),
+          runMeadScrape(env)
         ]);
-        return json({ ranAt: new Date().toISOString(), apiResults, icalResults, htmlResults });
+        return json({ ranAt: new Date().toISOString(), apiResults, icalResults, htmlResults, meadResults });
       }
       if (url.pathname === "/api/ingest" && request.method === "POST") {
         return await handleIngest(request, env);
