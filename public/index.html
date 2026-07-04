@@ -3,7 +3,35 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Playroute</title>
+<title>Playroute — Things to Do with Kids in Boulder, Lafayette, Erie, Louisville, Longmont & More</title>
+<meta name="description" content="Find family-friendly activities, storytimes, playgrounds, hikes, and events for kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado — updated daily.">
+<link rel="canonical" href="https://playroute.co/">
+<meta property="og:title" content="Playroute — Things to Do with Kids in Boulder County & Beyond">
+<meta property="og:description" content="Family-friendly activities, storytimes, playgrounds, hikes, and events across Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead — updated daily.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://playroute.co/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Playroute — Things to Do with Kids in Boulder County & Beyond">
+<meta name="twitter:description" content="Family-friendly activities, storytimes, playgrounds, hikes, and events across Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead — updated daily.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "Playroute",
+  "url": "https://playroute.co/",
+  "description": "Family-friendly activities, storytimes, playgrounds, hikes, and events for kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado.",
+  "areaServed": [
+    {"@type": "City", "name": "Boulder, CO"},
+    {"@type": "City", "name": "Lafayette, CO"},
+    {"@type": "City", "name": "Erie, CO"},
+    {"@type": "City", "name": "Louisville, CO"},
+    {"@type": "City", "name": "Longmont, CO"},
+    {"@type": "City", "name": "Superior, CO"},
+    {"@type": "City", "name": "Broomfield, CO"},
+    {"@type": "City", "name": "Mead, CO"}
+  ]
+}
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@500&display=swap');
 
@@ -25,6 +53,10 @@
 }
 
 *{box-sizing:border-box;margin:0;padding:0;}
+.sr-only{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;
+}
 html,body{height:100%;}
 body{
   background:var(--soil);
@@ -544,7 +576,8 @@ footer{
       <div class="tree" style="right:28px;"><svg width="28" height="46" viewBox="0 0 36 60"><ellipse cx="18" cy="24" rx="16" ry="20" fill="#4A5C2E"/><rect x="15" y="44" width="6" height="16" fill="#2C1F14"/></svg></div>
       <div class="tree" style="right:60px;"><svg width="13" height="30" viewBox="0 0 18 40"><polygon points="9,0 17,14 13,14 15,26 11,26 13,34 5,34 7,26 3,26 5,14 1,14" fill="#3D5229"/><rect x="7" y="34" width="4" height="6" fill="#2C1F14"/></svg></div>
     </div>
-    <div class="hero-wordmark">Playroute <span class="hero-beta">Beta</span></div>
+    <h1 class="hero-wordmark">Playroute <span class="hero-beta">Beta</span></h1>
+    <p class="sr-only">Find things to do with kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado — storytimes, playgrounds, hikes, farmers markets, and family events updated daily.</p>
   </div>
 
   <!-- Section tabs -->
@@ -603,7 +636,7 @@ footer{
     </div>
     <div class="support-row">
       <div class="support-callout-text">🧡 I built this app — buy my wife, the stay-at-home parent who inspired it, a coffee.</div>
-      <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer">☕ Wife's coffee fund</a>
+      <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (footer callout)',category:'support'})">☕ Wife's coffee fund</a>
     </div>
   </div>
 
@@ -652,6 +685,8 @@ footer{
       <div class="release-entry">
         <div class="release-date">Jul 2026</div>
         <ul>
+          <li>Added Superior — parks, farmers market, and family programs</li>
+          <li>Added Mead — town events and family programs</li>
           <li>Nature-themed redesign with progressive card disclosure</li>
           <li>Live data from Boulder + Erie library iCal feeds — auto-updates daily</li>
           <li>Fixed an incorrect Boulder library event that shouldn't have appeared</li>
@@ -670,7 +705,7 @@ footer{
     </div>
   </div>
 
-  <footer>PLAYROUTE · BOULDER COUNTY + BROOMFIELD PILOT</footer>
+  <footer>PLAYROUTE · BOULDER COUNTY + BROOMFIELD AND BEYOND</footer>
 </main>
 
 <!-- ── LEVEL 3: FULL DETAIL DRAWER ── -->
@@ -701,7 +736,7 @@ footer{
     <div class="drawer-body" style="text-align:center;font-size:13px;color:var(--ink-soft);line-height:1.6;">
       Built by a mom of two in Boulder County who works in tech — married to the person who actually does the work of finding stuff to do with the kids every week. Playroute exists so she can get some of that mental load (and her evenings) back.
       <br><br>
-      <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;">☕ Buy my wife a coffee (she's earned it)</a>
+      <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (About drawer)',category:'support'})">☕ Buy my wife a coffee (she's earned it)</a>
       <br><br>
       <a href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A" style="color:var(--ink-soft);text-decoration:underline;">💬 Send feedback</a>
     </div>
