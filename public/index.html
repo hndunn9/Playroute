@@ -1285,7 +1285,8 @@ function renderAll(){ init(); updateActiveCount(); renderFeed(); renderRecentlyP
 loadFilterPrefs();
 document.getElementById("weekFeed").innerHTML=`<div class="empty-state">Loading this week's events…</div>`;
 loadData();
-fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true}).catch(()=>{});
+const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
+fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc})}).catch(()=>{});
 </script>
 </body>
 </html>
