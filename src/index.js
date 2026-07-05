@@ -914,9 +914,14 @@ async function handlePageView(request, env) {
   const cf = request.cf || {};
   const ua = request.headers.get("User-Agent") || "";
   const deviceType = /Mobi|Android/i.test(ua) ? "mobile" : "desktop";
+  let source = null;
+  try {
+    const body = await request.json();
+    if (body && body.source) source = String(body.source).slice(0, 50);
+  } catch { /* no body / not JSON — fine, organic visit */ }
   await env.DB.prepare(
-    `INSERT INTO page_views (visitor_hash, city, country, device_type) VALUES (?, ?, ?, ?)`
-  ).bind(visitorHash, cf.city || null, cf.country || null, deviceType).run();
+    `INSERT INTO page_views (visitor_hash, city, country, device_type, source) VALUES (?, ?, ?, ?, ?)`
+  ).bind(visitorHash, cf.city || null, cf.country || null, deviceType, source).run();
   return json({ ok: true });
 }
 
@@ -940,6 +945,19 @@ async function handleStats(env) {
     `SELECT city, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND city IS NOT NULL GROUP BY city ORDER BY n DESC LIMIT 10`
   ).bind(weekStart).all();
 
+  // Visits that came specifically from clicking the link in a digest email
+  // (tagged ?src=newsletter) — lets you see whether the newsletter is
+  // actually driving people back into the app, separate from organic visits.
+  const newsletterVisits1d = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND source = 'newsletter'`
+  ).bind(todayStart).first();
+  const newsletterVisits7d = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND source = 'newsletter'`
+  ).bind(weekStart).first();
+  const newsletterVisitors7d = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND source = 'newsletter'`
+  ).bind(weekStart).first();
+
   // Click tracking (source links, "Open in Maps" on playgrounds/hikes, and
   // the support/feedback links) grouped by category — 1-day and 7-day windows.
   const clicksByType1d = await env.DB.prepare(
@@ -961,6 +979,9 @@ async function handleStats(env) {
     page_views_7d: totalViewsThisWeek?.n || 0,
     by_device_7d: byDevice.results || [],
     top_cities_7d: byCity.results || [],
+    newsletter_visits_1d: newsletterVisits1d?.n || 0,
+    newsletter_visits_7d: newsletterVisits7d?.n || 0,
+    newsletter_unique_visitors_7d: newsletterVisitors7d?.n || 0,
     link_clicks_1d: totalClicks1d?.n || 0,
     link_clicks_7d: totalClicks7d?.n || 0,
     link_clicks_by_type_1d: clicksByType1d.results || [],
@@ -1235,7 +1256,7 @@ function buildDigestHtml(byDay, unsubscribeUrl) {
     <p style="color:#8a7a63;font-size:13px;margin-top:0;">A quick look at what's coming up for the kids this week.</p>
     ${bodyContent}
     <div style="margin:28px 0;">
-      <a href="${DIGEST_SITE_URL}" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:14px;">Open Playroute \u2192</a>
+      <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:14px;">Open Playroute \u2192</a>
     </div>
     <p style="font-size:11px;color:#b5a88f;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
   </div>`;
@@ -1250,7 +1271,7 @@ function buildDigestText(byDay) {
     }
     lines.push("");
   }
-  lines.push(`Open Playroute: ${DIGEST_SITE_URL}`);
+  lines.push(`Open Playroute: ${DIGEST_SITE_URL}/?src=newsletter`);
   return lines.join("\n");
 }
 
