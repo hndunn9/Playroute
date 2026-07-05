@@ -768,6 +768,7 @@ async function fetchAndNormalizeMeadCalendar() {
   const currentYear = now.getFullYear();
 
   const events = [];
+  const needsReview = []; // family-relevant items that couldn't be confidently auto-parsed
   for (const item of items) {
     const title = (item.title || "").trim();
     if (!title) continue;
@@ -776,7 +777,21 @@ async function fetchAndNormalizeMeadCalendar() {
 
     const plainBody = meadStripTags(meadDecodeEntities(item.body || ""));
     const parsed = extractMeadDateTime(plainBody);
-    if (!parsed) continue; // couldn't confidently parse a single clean date — skip, don't guess
+    if (!parsed) {
+      // Passed the family-relevance filter but couldn't confidently parse a
+      // single clean date (recurring/multi-session listing, ambiguous
+      // phrasing, etc.) — rather than silently dropping it, surface it for
+      // a human to look at once, instead of guessing.
+      needsReview.push({
+        title,
+        source: "Town of Mead Parks & Recreation",
+        city: "Mead",
+        note: plainBody.slice(0, 300),
+        source_url: `https://www.townofmead.org${item.link}`,
+        dedup_key: `mead-review:${item.id}`
+      });
+      continue;
+    }
 
     // Try this year first; if that's already passed, try next year (handles
     // items posted late in the year for an early-next-year date).
@@ -810,13 +825,13 @@ async function fetchAndNormalizeMeadCalendar() {
       libcal_event_id: `mead:${item.id}`
     });
   }
-  return events;
+  return { events, needsReview };
 }
 
 async function runMeadScrape(env) {
   const results = [];
   try {
-    const events = await fetchAndNormalizeMeadCalendar();
+    const { events } = await fetchAndNormalizeMeadCalendar();
     let count = 0;
     for (const ev of events) {
       await upsertEvent(env, ev);
@@ -1239,7 +1254,7 @@ function buildDigestText(byDay) {
   return lines.join("\n");
 }
 
-async function sendDigestEmail(env, toEmail, html, text) {
+async function sendDigestEmail(env, toEmail, html, text, subject = "This week on Playroute \uD83C\uDF33") {
   if (!env.RESEND_API_KEY || !env.DIGEST_FROM) {
     throw new Error("RESEND_API_KEY / DIGEST_FROM not configured \u2014 see README");
   }
@@ -1252,7 +1267,7 @@ async function sendDigestEmail(env, toEmail, html, text) {
     body: JSON.stringify({
       from: env.DIGEST_FROM,
       to: [toEmail],
-      subject: "This week on Playroute \uD83C\uDF33",
+      subject,
       html,
       text
     })
@@ -1289,6 +1304,107 @@ async function runWeeklyDigest(env) {
 function isNearNoonMountain(now) {
   const hourMT = +now.toLocaleString("en-US", { timeZone: TZ, hour: "2-digit", hour12: false });
   return hourMT === 12;
+}
+
+async function runPendingEventsScan(env) {
+  const results = [];
+  let newCandidates = 0;
+  try {
+    const { needsReview } = await fetchAndNormalizeMeadCalendar();
+    for (const item of needsReview) {
+      // Skip anything whose title+city already exists in the live events
+      // table — otherwise something already manually reviewed and added
+      // (e.g. because its real single date got buried among other unrelated
+      // dates on the page, like a vendor-registration deadline) would keep
+      // getting re-suggested every week.
+      const already = await env.DB.prepare(
+        `SELECT 1 FROM events WHERE title = ? AND city = ? LIMIT 1`
+      ).bind(item.title, item.city).first();
+      if (already) continue;
+
+      const token = crypto.randomUUID();
+      const res = await env.DB.prepare(
+        `INSERT INTO pending_events (title, source, city, note, source_url, raw_excerpt, dedup_key, approval_token)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(dedup_key) DO NOTHING`
+      ).bind(item.title, item.source, item.city, item.note, item.source_url, item.note, item.dedup_key, token).run();
+      if (res.meta.changes > 0) newCandidates++;
+    }
+    results.push({ source: "Mead (needs review)", status: "ok", newCandidates });
+  } catch (err) {
+    results.push({ source: "Mead (needs review)", status: "error", error: String(err) });
+  }
+
+  // Only email if there's something to actually review — no empty "nothing
+  // found this week" noise.
+  const { results: pending } = await env.DB.prepare(
+    `SELECT * FROM pending_events WHERE status = 'pending' ORDER BY discovered_at DESC`
+  ).all();
+  if (pending.length > 0 && env.ADMIN_EMAIL) {
+    const html = buildPendingEventsEmailHtml(pending);
+    try {
+      await sendDigestEmail(env, env.ADMIN_EMAIL, html, null, "New events to review on Playroute");
+      results.push({ source: "pending-events-email", status: "sent", count: pending.length });
+    } catch (err) {
+      results.push({ source: "pending-events-email", status: "error", error: String(err) });
+    }
+  }
+  return results;
+}
+
+function buildPendingEventsEmailHtml(pending) {
+  const rows = pending.map(p => `
+    <tr><td style="padding:16px 0;border-bottom:1px solid #eee;font-family:sans-serif;">
+      <div style="font-size:15px;font-weight:600;color:#2c1f14;">${escapeHtml(p.title)}</div>
+      <div style="font-size:12px;color:#8a7a63;margin:2px 0 8px;">${escapeHtml(p.city || "")} ${p.source ? "· " + escapeHtml(p.source) : ""}</div>
+      <div style="font-size:13px;color:#5c4a38;margin-bottom:10px;">${escapeHtml((p.note || "").slice(0, 200))}</div>
+      ${p.source_url ? `<div style="font-size:12px;margin-bottom:10px;"><a href="${p.source_url}" style="color:#9b5c2a;">View original listing ↗</a></div>` : ""}
+      <a href="${DIGEST_SITE_URL}/api/approve-pending?token=${p.approval_token}" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:8px 16px;border-radius:6px;font-size:13px;font-family:sans-serif;margin-right:8px;">Approve</a>
+      <a href="${DIGEST_SITE_URL}/api/reject-pending?token=${p.approval_token}" style="display:inline-block;background:#eee;color:#5c4a38;text-decoration:none;padding:8px 16px;border-radius:6px;font-size:13px;font-family:sans-serif;">Reject</a>
+    </td></tr>`).join("");
+
+  return `
+  <div style="max-width:520px;margin:0 auto;font-family:sans-serif;">
+    <h1 style="font-family:serif;font-size:20px;color:#2c1f14;">New events to review</h1>
+    <p style="color:#8a7a63;font-size:13px;">Found on Mead's calendar but couldn't be auto-added with confidence — take a look and approve or reject each one.</p>
+    <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+  </div>`;
+}
+
+async function handleApprovePending(env, url) {
+  const token = url.searchParams.get("token");
+  if (!token) return new Response("Missing token", { status: 400 });
+  const row = await env.DB.prepare(`SELECT * FROM pending_events WHERE approval_token = ? AND status = 'pending'`).bind(token).first();
+  if (!row) return new Response("This item was already handled or doesn't exist.", { headers: { "Content-Type": "text/plain" } });
+
+  await upsertEvent(env, {
+    title: row.title,
+    source: row.source,
+    city: row.city,
+    category: row.category || "outdoor",
+    cost: row.cost || "free",
+    age_min: row.age_min ?? 0,
+    age_max: row.age_max ?? 12,
+    day_of_week: row.day_of_week,
+    start_time: row.start_time,
+    display_time: row.display_time,
+    recurrence: row.recurrence || "dated",
+    event_date: row.event_date,
+    note: row.note,
+    source_url: row.source_url,
+    verified: 0,
+    libcal_event_id: row.dedup_key
+  });
+  await env.DB.prepare(`UPDATE pending_events SET status = 'approved', decided_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
+  return new Response(`"${row.title}" has been added to Playroute. Thanks for reviewing!`, { headers: { "Content-Type": "text/plain" } });
+}
+
+async function handleRejectPending(env, url) {
+  const token = url.searchParams.get("token");
+  if (!token) return new Response("Missing token", { status: 400 });
+  const res = await env.DB.prepare(`UPDATE pending_events SET status = 'rejected', decided_at = CURRENT_TIMESTAMP WHERE approval_token = ? AND status = 'pending'`).bind(token).run();
+  if (res.meta.changes === 0) return new Response("This item was already handled or doesn't exist.", { headers: { "Content-Type": "text/plain" } });
+  return new Response("Got it — dismissed and won't be suggested again.", { headers: { "Content-Type": "text/plain" } });
 }
 
 async function handleSubscribe(request, env) {
@@ -1333,9 +1449,10 @@ async function handlePhoto(env, key) {
 export default {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
-    if (event.cron === "0 18 * * 0" || event.cron === "0 19 * * 0") {
+    if (event.cron === "0 18 * * 7" || event.cron === "0 19 * * 7") {
       if (isNearNoonMountain(new Date())) {
         ctx.waitUntil(runWeeklyDigest(env));
+        ctx.waitUntil(runPendingEventsScan(env));
       }
       return;
     }
@@ -1394,6 +1511,16 @@ export default {
       }
       if (url.pathname === "/api/digest-now" && request.method === "POST") {
         const results = await runWeeklyDigest(env);
+        return json({ ranAt: new Date().toISOString(), results });
+      }
+      if (url.pathname === "/api/approve-pending") {
+        return await handleApprovePending(env, url);
+      }
+      if (url.pathname === "/api/reject-pending") {
+        return await handleRejectPending(env, url);
+      }
+      if (url.pathname === "/api/pending-scan-now" && request.method === "POST") {
+        const results = await runPendingEventsScan(env);
         return json({ ranAt: new Date().toISOString(), results });
       }
     } catch (err) {
