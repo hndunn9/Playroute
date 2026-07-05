@@ -1156,7 +1156,7 @@ async function handleIngest(request, env) {
 // Browser Rendering is a reasonable fast-follow if this gets used.
 // ---------------------------------------------------------------------
 
-const DIGEST_SITE_URL = "https://test.playroute.workers.dev";
+const DIGEST_SITE_URL = "https://playroute.co";
 const DIGEST_MAX_PER_DAY = 6;
 const DIGEST_MAX_DAYS = 7;
 
