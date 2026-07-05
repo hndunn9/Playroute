@@ -65,13 +65,13 @@ function nthWeekdayOfMonth(year, month, weekdayIdx, ordinal) {
   return result.getUTCMonth() === month ? result : null;
 }
 
-function getNextMonthlyOrdinalWeekday(ordinal, weekdayIdx, startTime, now) {
+function getNextMonthlyOrdinalWeekday(ordinal, weekdayIdx, startTime, now, durationMs = 0) {
   const [hh, mm] = startTime.split(":").map(Number);
   const nowMT = new Date(now.toLocaleString("en-US", { timeZone: TZ }));
   let year = nowMT.getFullYear(), month = nowMT.getMonth();
   let target = nthWeekdayOfMonth(year, month, weekdayIdx, ordinal);
   let candidate = target ? toMountainDate(target.toISOString().slice(0, 10), hh, mm) : null;
-  if (!candidate || candidate < now) {
+  if (!candidate || candidate.getTime() + durationMs < now.getTime()) {
     month++;
     if (month > 11) { month = 0; year++; }
     target = nthWeekdayOfMonth(year, month, weekdayIdx, ordinal);
@@ -80,13 +80,13 @@ function getNextMonthlyOrdinalWeekday(ordinal, weekdayIdx, startTime, now) {
   return candidate;
 }
 
-function getNextMonthlyLastSunday(startTime, now) {
+function getNextMonthlyLastSunday(startTime, now, durationMs = 0) {
   const [hh, mm] = startTime.split(":").map(Number);
   const nowMT = new Date(now.toLocaleString("en-US", { timeZone: TZ }));
   let year = nowMT.getFullYear(), month = nowMT.getMonth();
   let sunday = lastSundayOfMonth(year, month);
   let candidate = toMountainDate(sunday.toISOString().slice(0, 10), hh, mm);
-  if (candidate < now) {
+  if (candidate.getTime() + durationMs < now.getTime()) {
     month++;
     if (month > 11) {
       month = 0;
@@ -98,7 +98,7 @@ function getNextMonthlyLastSunday(startTime, now) {
   return candidate;
 }
 
-function getNextWeeklyOccurrence(dayName, startTime, now) {
+function getNextWeeklyOccurrence(dayName, startTime, now, durationMs = 0) {
   const [hh, mm] = startTime.split(":").map(Number);
   const targetIdx = DAY_INDEX[dayName];
   if (targetIdx === undefined) return null;
@@ -108,7 +108,10 @@ function getNextWeeklyOccurrence(dayName, startTime, now) {
   const todayMs = new Date(todayMT + "T12:00:00Z").getTime();
   const candidateDateStr = new Date(todayMs + diff * 864e5).toISOString().slice(0, 10);
   let candidate = toMountainDate(candidateDateStr, hh, mm);
-  if (diff === 0 && candidate < now) {
+  // Only roll to next week once the event has actually ENDED (start + duration),
+  // not merely once its start time has passed — an in-progress event should
+  // keep showing until it's actually over.
+  if (diff === 0 && candidate.getTime() + durationMs < now.getTime()) {
     const nextDateStr = new Date(todayMs + 7 * 864e5).toISOString().slice(0, 10);
     candidate = toMountainDate(nextDateStr, hh, mm);
   }
@@ -135,9 +138,11 @@ function isInSeason(seasonStart, seasonEnd, date) {
 
 function getOccurrence(ev, now = new Date()) {
   let occ;
+  const durationMs = (ev.duration_minutes || 60) * 60000;
   if (ev.recurrence === "dated") {
     occ = getDatedOccurrence(ev.event_date, ev.start_time);
-    if (!occ || occ < now) return null;
+    if (!occ) return null;
+    if (occ.getTime() + durationMs < now.getTime()) return null; // fully ended, not just started
     if (occ && !isInSeason(ev.season_start, ev.season_end, occ)) return null;
     return occ;
   } else if (ev.recurrence === "irregular") {
@@ -164,16 +169,19 @@ function getOccurrence(ev, now = new Date()) {
   let cursor = now;
   for (let i = 0; i < 60; i++) {
     if (isMonthlyLastSunday) {
-      occ = getNextMonthlyLastSunday(ev.start_time, cursor);
+      occ = getNextMonthlyLastSunday(ev.start_time, cursor, durationMs);
     } else if (monthlyOrdinalMatch && weekdayIdx !== undefined) {
-      occ = getNextMonthlyOrdinalWeekday(ordinal, weekdayIdx, ev.start_time, cursor);
+      occ = getNextMonthlyOrdinalWeekday(ordinal, weekdayIdx, ev.start_time, cursor, durationMs);
     } else {
-      occ = getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, cursor);
+      occ = getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, cursor, durationMs);
     }
     if (!occ) return null;
     if (isInSeason(ev.season_start, ev.season_end, occ)) return occ;
-    // Nudge just past this occurrence and check the next one.
-    cursor = new Date(occ.getTime() + 60000);
+    // Nudge past this occurrence's actual END (not just its start) so the
+    // duration-aware helpers above correctly treat it as expired and roll
+    // forward to the next cycle, rather than returning the same candidate
+    // repeatedly until the iteration cap is exhausted.
+    cursor = new Date(occ.getTime() + durationMs + 60000);
   }
   return null; // 60 candidates out and never in season — likely misconfigured data
 }
