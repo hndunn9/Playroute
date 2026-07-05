@@ -32,9 +32,10 @@
   ]
 }
 </script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@500&display=swap">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@500&display=swap');
-
 :root {
   --soil:      #2C1F14;
   --bark:      #5C3A1E;
@@ -968,6 +969,7 @@ function wireInlineCalendar(ev, cardEl){
   const icsBlob = new Blob([buildICS(ev)], {type:'text/calendar;charset=utf-8'});
   btn.href = URL.createObjectURL(icsBlob);
   btn.download = (ev.title||'event').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.ics';
+  btn.onclick = () => trackClick('add-to-calendar', {id:ev.id, title:ev.title, city:ev.city, category:'calendar'});
 }
 
 function openDrawer(ev){
@@ -1161,13 +1163,16 @@ function renderRecentlyPassed(){
   const now=new Date();
   const threeDaysAgo=new Date(now.getTime()-3*86400000);
 
-  // One-off dated events that already passed within the last 3 days
+  // One-off dated events that have actually ENDED within the last 3 days
+  // (not just started — an in-progress event shouldn't show as "passed").
   const recentlyPassed=events
     .filter(ev=>{
       if(!passesFilters(ev)) return false;
       if(ev.recurrence!=="dated"||!ev.event_date) return false;
       const occ=new Date(`${ev.event_date}T${ev.start_time||"00:00"}:00`);
-      return occ<now && occ>=threeDaysAgo;
+      const durationMs=(ev.duration_minutes||60)*60000;
+      const endTime=new Date(occ.getTime()+durationMs);
+      return endTime<now && occ>=threeDaysAgo;
     })
     .sort((a,b)=>new Date(b.event_date)-new Date(a.event_date));
 
