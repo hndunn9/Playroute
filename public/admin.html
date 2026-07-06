@@ -26,6 +26,19 @@
     width:100%;padding:10px;border:1px solid #C8BA9E;border-radius:8px;
     font-size:14px;margin-bottom:10px;font-family:inherit;
   }
+  .card select{
+    width:100%;padding:10px;border:1px solid #C8BA9E;border-radius:8px;
+    font-size:14px;margin-bottom:10px;font-family:inherit;background:#fff;
+  }
+  .activity-row{
+    display:flex;justify-content:space-between;gap:8px;
+    padding:8px 0;border-bottom:1px solid #EDE2CA;font-size:12px;
+  }
+  .activity-row:last-child{border-bottom:none;}
+  .activity-main{flex:1;min-width:0;}
+  .activity-title{font-weight:600;color:#2C1F14;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .activity-meta{color:#7A6650;font-size:10.5px;margin-top:2px;}
+  .activity-when{color:#9B5C2A;font-size:10.5px;white-space:nowrap;text-align:right;}
   button{
     width:100%;padding:11px;border:none;border-radius:8px;
     background:#9B5C2A;color:#fff;font-size:14px;font-weight:600;
@@ -48,6 +61,10 @@
   .stat-box{background:#F5EFDF;border-radius:8px;padding:10px;text-align:center;}
   .stat-num{font-size:22px;font-weight:700;color:#9B5C2A;}
   .stat-label{font-size:10.5px;color:#7A6650;text-transform:uppercase;letter-spacing:0.04em;}
+  .stat-trend{font-size:11px;font-weight:600;margin-top:3px;}
+  .stat-trend.up{color:#3a5a2a;}
+  .stat-trend.down{color:#7a2a2a;}
+  .stat-trend.flat{color:#9a8a70;}
   .breakdown{margin-top:12px;font-size:12.5px;}
   .breakdown-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #EDE2CA;}
   .warn{
@@ -82,7 +99,7 @@
 
   <div class="card">
     <h2>📊 Live stats</h2>
-    <p>Pulls straight from /api/stats — active users, clicks, newsletter visits.</p>
+    <p>Pulls straight from /api/stats — active users, clicks, newsletter visits, and digest subscribers, each vs the prior period (day-over-day for DAU, week-over-week for everything else).</p>
     <button onclick="loadStats()">Refresh stats</button>
     <div id="statsOutput"></div>
   </div>
@@ -102,16 +119,32 @@
   </div>
 
   <div class="card">
+    <h2>📝 Recently scraped events</h2>
+    <p>Every event any automated scraper has added or updated, most recent first — so you can actually see what they're doing, not just whether they succeeded.</p>
+    <select id="activityJobFilter" onchange="loadScrapeActivity()">
+      <option value="">All scrapers</option>
+      <option value="libcal-scrape">LibCal (Boulder/Erie)</option>
+      <option value="ical-scrape">iCal (Boulder/Erie)</option>
+      <option value="html-scrape">WOW Museum</option>
+      <option value="mead-scrape">Mead</option>
+      <option value="longmont-scrape">Longmont</option>
+      <option value="louisville-scrape">Louisville</option>
+    </select>
+    <button class="secondary" onclick="loadScrapeActivity()">Refresh</button>
+    <div id="activityOutput"><div class="result show loading">Loading…</div></div>
+  </div>
+
+  <div class="card">
     <h2>🔍 Run pending-events scan now</h2>
     <p>Normally runs Sunday at noon MT. Scope is whatever's listed under "Pending-events review scan" above — re-checks that source and emails you if anything new turns up for review.</p>
-    <button class="secondary" onclick="runAction('/api/pending-scan-now', 'pendingResult').then(loadSourceRegistry)">Run scan now</button>
+    <button class="secondary" onclick="runAction('/api/pending-scan-now', 'pendingResult').then(() => { loadSourceRegistry(); loadScrapeActivity(); })">Run scan now</button>
     <div class="result" id="pendingResult"></div>
   </div>
 
   <div class="card">
     <h2>🔄 Run all scrapers now</h2>
     <p>Manually triggers every "Automated" source listed above (LibCal, iCal, HTML, Mead).</p>
-    <button class="secondary" onclick="runAction('/api/scrape-now', 'scrapeResult').then(loadSourceRegistry)">Run scrapers now</button>
+    <button class="secondary" onclick="runAction('/api/scrape-now', 'scrapeResult').then(() => { loadSourceRegistry(); loadScrapeActivity(); })">Run scrapers now</button>
     <div class="result" id="scrapeResult"></div>
   </div>
 
@@ -149,6 +182,19 @@ function sendRealDigest(){
   runAction('/api/digest-now', 'realDigestResult');
 }
 
+function trendBadge(current, prev, { asPercent = false } = {}){
+  const delta = current - prev;
+  if (delta === 0) return `<div class="stat-trend flat">\u2013 flat vs prior period</div>`;
+  const dir = delta > 0 ? 'up' : 'down';
+  const arrow = delta > 0 ? '\u25B2' : '\u25BC';
+  let magnitude = `${delta > 0 ? '+' : ''}${delta}`;
+  if (asPercent && prev > 0) {
+    const pct = Math.round((delta / prev) * 100);
+    magnitude += ` (${pct > 0 ? '+' : ''}${pct}%)`;
+  }
+  return `<div class="stat-trend ${dir}">${arrow} ${magnitude} vs prior period</div>`;
+}
+
 async function loadStats(){
   const out = document.getElementById('statsOutput');
   out.innerHTML = '<div class="result show loading">Loading…</div>';
@@ -157,12 +203,35 @@ async function loadStats(){
     const s = await res.json();
     out.innerHTML = `
       <div class="stats-grid">
-        <div class="stat-box"><div class="stat-num">${s.daily_active_users}</div><div class="stat-label">DAU</div></div>
-        <div class="stat-box"><div class="stat-num">${s.weekly_active_users}</div><div class="stat-label">WAU</div></div>
-        <div class="stat-box"><div class="stat-num">${s.page_views_7d}</div><div class="stat-label">Views (wk)</div></div>
-        <div class="stat-box"><div class="stat-num">${s.link_clicks_7d}</div><div class="stat-label">Clicks (wk)</div></div>
-        <div class="stat-box"><div class="stat-num">${s.newsletter_visits_7d}</div><div class="stat-label">Newsletter visits</div></div>
-        <div class="stat-box"><div class="stat-num">${s.newsletter_unique_visitors_7d}</div><div class="stat-label">Newsletter uniques</div></div>
+        <div class="stat-box">
+          <div class="stat-num">${s.daily_active_users}</div><div class="stat-label">DAU</div>
+          ${trendBadge(s.daily_active_users, s.daily_active_users_prev)}
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${s.weekly_active_users}</div><div class="stat-label">WAU</div>
+          ${trendBadge(s.weekly_active_users, s.weekly_active_users_prev)}
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${s.page_views_7d}</div><div class="stat-label">Views (wk)</div>
+          ${trendBadge(s.page_views_7d, s.page_views_7d_prev)}
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${s.link_clicks_7d}</div><div class="stat-label">Clicks (wk)</div>
+          ${trendBadge(s.link_clicks_7d, s.link_clicks_7d_prev)}
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${s.newsletter_visits_7d}</div><div class="stat-label">Newsletter visits</div>
+          ${trendBadge(s.newsletter_visits_7d, s.newsletter_visits_7d_prev)}
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${s.newsletter_unique_visitors_7d}</div><div class="stat-label">Newsletter uniques</div>
+          ${trendBadge(s.newsletter_unique_visitors_7d, s.newsletter_unique_visitors_7d_prev)}
+        </div>
+        <div class="stat-box" style="grid-column:1 / -1;">
+          <div class="stat-num">${s.subscribers_total}</div><div class="stat-label">Digest subscribers</div>
+          ${trendBadge(s.subscribers_total, s.subscribers_total_prev)}
+          <div style="font-size:10.5px;color:#7A6650;margin-top:4px;">+${s.subscribers_new_7d} new \u00B7 \u2212${s.subscribers_unsubscribed_7d} unsubscribed this week</div>
+        </div>
       </div>
       <div class="breakdown">
         <strong>Clicks by type (7d):</strong>
@@ -232,8 +301,45 @@ async function loadSourceRegistry(){
   }
 }
 
+function fmtWhen(iso){
+  if(!iso) return '';
+  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z');
+  return d.toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+}
+
+const JOB_LABELS = {
+  'libcal-scrape': 'LibCal', 'ical-scrape': 'iCal', 'html-scrape': 'WOW Museum',
+  'mead-scrape': 'Mead', 'longmont-scrape': 'Longmont', 'louisville-scrape': 'Louisville'
+};
+
+async function loadScrapeActivity(){
+  const out = document.getElementById('activityOutput');
+  const jobName = document.getElementById('activityJobFilter').value;
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const qs = jobName ? `?job_name=${encodeURIComponent(jobName)}&limit=75` : '?limit=75';
+    const res = await fetch('/api/scrape-activity' + qs);
+    const rows = await res.json();
+    if (!rows.length){
+      out.innerHTML = '<div class="result show">Nothing logged yet for this filter — run a scraper first.</div>';
+      return;
+    }
+    out.innerHTML = rows.map(r => `
+      <div class="activity-row">
+        <div class="activity-main">
+          <div class="activity-title">${r.event_title}</div>
+          <div class="activity-meta">${r.city || ''}${r.event_date ? ' · ' + r.event_date : ''} · ${JOB_LABELS[r.job_name] || r.job_name}</div>
+        </div>
+        <div class="activity-when">${fmtWhen(r.scraped_at)}</div>
+      </div>`).join('');
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
 loadStats();
 loadSourceRegistry();
+loadScrapeActivity();
 </script>
 </body>
 </html>
