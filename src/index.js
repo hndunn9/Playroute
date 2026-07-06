@@ -647,6 +647,7 @@ async function runHtmlScrape(env) {
   } catch (err) {
     results.push({ source: "WOW Children's Museum", status: "error", error: String(err) });
   }
+  await logJobRun(env, "html-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -841,6 +842,7 @@ async function runMeadScrape(env) {
   } catch (err) {
     results.push({ source: "Town of Mead", status: "error", error: String(err) });
   }
+  await logJobRun(env, "mead-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -1058,6 +1060,7 @@ async function runScrape(env) {
       results.push({ library: lib.key, status: "error", error: String(err) });
     }
   }
+  await logJobRun(env, "libcal-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -1076,6 +1079,7 @@ async function runICalScrape(env) {
       results.push({ library: lib.city, status: "error", error: String(err) });
     }
   }
+  await logJobRun(env, "ical-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -1139,6 +1143,86 @@ async function handleHikes(env, url) {
 async function handleSources(env) {
   const { results } = await env.DB.prepare("SELECT * FROM scrape_sources").all();
   return json(results);
+}
+
+// Records that a scrape/scan job ran, so the admin page can always show
+// real last-run status instead of only what a manual "run now" button
+// happened to return in that one browser session. Logging failures are
+// swallowed on purpose — a broken job_runs insert should never take down
+// the actual scrape.
+async function logJobRun(env, jobName, status, details) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO job_runs (job_name, status, details) VALUES (?, ?, ?)`
+    ).bind(jobName, status, details ? JSON.stringify(details) : null).run();
+  } catch (err) {
+    console.error(`logJobRun failed for ${jobName}:`, err);
+  }
+}
+
+// Single source of truth describing every scraper that's actually wired up
+// in code (as opposed to `scrape_sources`, which is a hand-maintained
+// registry of sources someone has looked at — some coded, many still
+// manual). Keep this in sync with LIBCAL_LIBRARIES / ICAL_LIBRARIES /
+// WOW_MUSEUM / the Mead scraper above whenever one of those changes.
+const AUTOMATED_SOURCES = [
+  {
+    job_name: "libcal-scrape",
+    label: "LibCal API",
+    cities: LIBCAL_LIBRARIES.map((l) => l.city),
+    scope: "Structured event feed via each library's LibCal API (birth\u20135 audience where the API supports filtering).",
+    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
+  },
+  {
+    job_name: "ical-scrape",
+    label: "iCal feed",
+    cities: ICAL_LIBRARIES.map((l) => l.city),
+    scope: "Same libraries as LibCal API, pulled via public .ics subscription feed as a second, independent pass.",
+    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
+  },
+  {
+    job_name: "html-scrape",
+    label: "HTML calendar scrape",
+    cities: [WOW_MUSEUM.city],
+    scope: "WOW Children's Museum \u2014 parses the museum's own calendar.html pages (current month + next 2).",
+    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
+  },
+  {
+    job_name: "mead-scrape",
+    label: "JSON calendar feed",
+    cities: ["Mead"],
+    scope: "Town of Mead \u2014 auto-adds only events with an unambiguous single date/time from /parksandrec/ posts; anything ambiguous or recurring is left for the pending-events check below instead of being guessed at.",
+    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
+  },
+  {
+    job_name: "pending-events-scan",
+    label: "Pending-events review scan",
+    cities: ["Mead"],
+    scope: "Re-checks Mead's calendar for anything the scraper above skipped (recurring/multi-date/ambiguous listings) and emails a review link for each candidate \u2014 nothing here is auto-added to the live events table without a manual Approve.",
+    cadence: "Sundays ~noon MT (cron) + on-demand via \u201cRun pending-events scan now\u201d"
+  }
+];
+
+async function handleSourceRegistry(env) {
+  const { results: manual } = await env.DB.prepare("SELECT * FROM scrape_sources ORDER BY city").all();
+  const jobNames = AUTOMATED_SOURCES.map((s) => s.job_name);
+  const placeholders = jobNames.map(() => "?").join(",");
+  const { results: lastRuns } = await env.DB.prepare(
+    `SELECT job_name, ran_at, status, details FROM job_runs
+     WHERE job_name IN (${placeholders})
+     AND id IN (SELECT MAX(id) FROM job_runs WHERE job_name IN (${placeholders}) GROUP BY job_name)`
+  ).bind(...jobNames, ...jobNames).all();
+  const lastRunByJob = Object.fromEntries(lastRuns.map((r) => [r.job_name, r]));
+  const automated = AUTOMATED_SOURCES.map((s) => {
+    const last = lastRunByJob[s.job_name];
+    return {
+      ...s,
+      last_run_at: last?.ran_at ?? null,
+      last_run_status: last?.status ?? "never run",
+      last_run_details: last?.details ? JSON.parse(last.details) : null
+    };
+  });
+  return json({ automated, manual });
 }
 
 async function handleTrackClick(request, env) {
@@ -1385,6 +1469,7 @@ async function runPendingEventsScan(env) {
       results.push({ source: "pending-events-email", status: "error", error: String(err) });
     }
   }
+  await logJobRun(env, "pending-events-scan", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -1509,6 +1594,7 @@ export default {
       if (url.pathname === "/api/playgrounds") return await handlePlaygrounds(env, url);
       if (url.pathname === "/api/hikes") return await handleHikes(env, url);
       if (url.pathname === "/api/sources") return await handleSources(env);
+      if (url.pathname === "/api/source-registry") return await handleSourceRegistry(env);
       if (url.pathname.startsWith("/api/photos/")) {
         return await handlePhoto(env, decodeURIComponent(url.pathname.slice("/api/photos/".length)));
       }
