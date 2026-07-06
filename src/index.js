@@ -1298,8 +1298,23 @@ async function sendDigestEmail(env, toEmail, html, text, subject = "This week on
   }
 }
 
-async function runWeeklyDigest(env) {
+async function runWeeklyDigest(env, testEmail = null) {
   const byDay = await getWeekAheadEvents(env);
+
+  if (testEmail) {
+    // Test mode: send to exactly one address, real content, without
+    // touching the subscribers table or anyone's real subscription at all.
+    const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(testEmail)}`;
+    const html = buildDigestHtml(byDay, unsubscribeUrl);
+    const text = buildDigestText(byDay);
+    try {
+      await sendDigestEmail(env, testEmail, html, text, "[TEST] This week on Playroute \uD83C\uDF33");
+      return [{ email: testEmail, status: "sent (test)" }];
+    } catch (err) {
+      return [{ email: testEmail, status: "error", error: String(err) }];
+    }
+  }
+
   const { results: subs } = await env.DB.prepare(
     "SELECT email FROM subscribers WHERE active = 1"
   ).all();
@@ -1531,8 +1546,9 @@ export default {
         return await handleUnsubscribe(request, env, url);
       }
       if (url.pathname === "/api/digest-now" && request.method === "POST") {
-        const results = await runWeeklyDigest(env);
-        return json({ ranAt: new Date().toISOString(), results });
+        const testEmail = url.searchParams.get("email");
+        const results = await runWeeklyDigest(env, testEmail);
+        return json({ ranAt: new Date().toISOString(), mode: testEmail ? "test" : "all-subscribers", results });
       }
       if (url.pathname === "/api/approve-pending") {
         return await handleApprovePending(env, url);
