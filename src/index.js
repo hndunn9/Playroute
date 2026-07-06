@@ -758,12 +758,16 @@ function parseLongmontLibraryHtml(html) {
 
     // Passed the relevance filter but either the title isn't a known
     // recognized program, or a time couldn't be confidently placed this
-    // pass \u2014 surface it for a human glance rather than dropping it.
+    // pass — surface it for a human glance rather than dropping it. The
+    // date itself is always known (it's embedded in the URL), so include
+    // it even though the time/day-of-week couldn't be confidently derived —
+    // this is what lets the approval flow auto-fill day_of_week later.
     needsReview.push({
       title,
       source: "Longmont Public Library",
       city: "Longmont",
-      note: (nearbyText || "").slice(0, 300) || "Couldn't confidently auto-parse this listing \u2014 see source link.",
+      event_date: eventDate,
+      note: (nearbyText || "").slice(0, 300) || "Couldn't confidently auto-parse a time for this listing \u2014 see source link.",
       source_url: href,
       dedup_key: `longmont-review:${slug}:${eventDate}`
     });
@@ -888,14 +892,22 @@ function parseLouisvilleChildrensHtml(html) {
     }
 
     // Everything on this page is already the library's own "Children &
-    // Family" category \u2014 so an unrecognized title, a multi-day/date-range
+    // Family" category — so an unrecognized title, a multi-day/date-range
     // listing (dateMatch[1] !== dateMatch[3]), or a missing time isn't
     // irrelevant, it's just not confident enough to auto-add. Surface it
-    // for a human instead of dropping it.
+    // for a human instead of dropping it. When a start date is at least
+    // extractable (even from a multi-day range), include it so the
+    // approval flow can auto-fill day_of_week later.
+    let reviewEventDate = null;
+    if (dateMatch) {
+      const [mo, day, year] = dateMatch[1].split("/");
+      reviewEventDate = `${year}-${mo}-${day}`;
+    }
     needsReview.push({
       title,
       source: "Louisville Public Library",
       city: "Louisville",
+      event_date: reviewEventDate,
       note: (dateMatch ? dateMatch[0] : nearbyText).slice(0, 300) || "Couldn't confidently auto-parse this listing \u2014 see source link.",
       source_url: resolvedHref,
       dedup_key: `louisville-review:${id}`
@@ -1912,10 +1924,10 @@ async function runPendingEventsScan(env) {
 
         const token = crypto.randomUUID();
         const res = await env.DB.prepare(
-          `INSERT INTO pending_events (title, source, city, note, source_url, raw_excerpt, dedup_key, approval_token)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO pending_events (title, source, city, event_date, note, source_url, raw_excerpt, dedup_key, approval_token)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(dedup_key) DO NOTHING`
-        ).bind(item.title, item.source, item.city, item.note, item.source_url, item.note, item.dedup_key, token).run();
+        ).bind(item.title, item.source, item.city, item.event_date ?? null, item.note, item.source_url, item.note, item.dedup_key, token).run();
         if (res.meta.changes > 0) newCandidates++;
       }
       results.push({ source: name, status: "ok", newCandidates });
@@ -1967,6 +1979,29 @@ async function handleApprovePending(env, url) {
   const row = await env.DB.prepare(`SELECT * FROM pending_events WHERE approval_token = ? AND status = 'pending'`).bind(token).first();
   if (!row) return new Response("This item was already handled or doesn't exist.", { headers: { "Content-Type": "text/plain" } });
 
+  // The whole reason something lands here is the scraper couldn't
+  // confidently determine day_of_week/start_time/display_time — so unlike
+  // upsertEvent's other callers, this can't assume those are already
+  // filled in. Derive what we reasonably can from event_date (when the
+  // source at least had a date, just not a confident time), and only give
+  // up if there's truly nothing to go on.
+  let dayOfWeek = row.day_of_week;
+  if (!dayOfWeek && row.event_date) {
+    const d = new Date(`${row.event_date}T12:00:00Z`); // noon UTC avoids any date-shift-by-timezone edge cases
+    dayOfWeek = d.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+  }
+  if (!dayOfWeek) {
+    // No event_date at all (e.g. a genuinely recurring/multi-session Mead
+    // listing) — there's nothing to derive a single day from. Rather than
+    // let the INSERT crash with a raw SQL error, say so plainly. The item
+    // stays pending so it isn't lost; add it manually once you've read the
+    // source link and decided what the actual recurring schedule is.
+    return new Response(
+      `"${row.title}" doesn't have a specific date attached (this usually means the source listing is recurring or spans multiple dates), so it can't be auto-approved into a single calendar slot. Check the source link (${row.source_url}) and add it manually with the right recurrence instead. It's still marked pending, not lost.`,
+      { headers: { "Content-Type": "text/plain" } }
+    );
+  }
+
   await upsertEvent(env, {
     title: row.title,
     source: row.source,
@@ -1975,9 +2010,9 @@ async function handleApprovePending(env, url) {
     cost: row.cost || "free",
     age_min: row.age_min ?? 0,
     age_max: row.age_max ?? 12,
-    day_of_week: row.day_of_week,
-    start_time: row.start_time,
-    display_time: row.display_time,
+    day_of_week: dayOfWeek,
+    start_time: row.start_time || "09:00",
+    display_time: row.display_time || "See source link for exact time",
     recurrence: row.recurrence || "dated",
     event_date: row.event_date,
     note: row.note,
