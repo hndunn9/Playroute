@@ -1572,12 +1572,16 @@ async function getWeekAheadEvents(env) {
   }
   withOccurrence.sort((a, b) => a.occurrence - b.occurrence);
 
-  // Group by day, capping how many show per day so the email stays skimmable.
+  // Group by day, capping how many show per day so the email stays
+  // skimmable \u2014 but keep the real total too, so the email can honestly
+  // say "+N more today" instead of silently implying the shown list is
+  // everything happening.
   const byDay = new Map();
   for (const ev of withOccurrence) {
-    const list = byDay.get(ev.occurrence_label) || [];
-    if (list.length < DIGEST_MAX_PER_DAY) list.push(ev);
-    byDay.set(ev.occurrence_label, list);
+    const entry = byDay.get(ev.occurrence_label) || { events: [], totalCount: 0 };
+    entry.totalCount++;
+    if (entry.events.length < DIGEST_MAX_PER_DAY) entry.events.push(ev);
+    byDay.set(ev.occurrence_label, entry);
   }
   return byDay;
 }
@@ -1585,31 +1589,38 @@ async function getWeekAheadEvents(env) {
 function buildDigestHtml(byDay, unsubscribeUrl) {
   const days = [...byDay.entries()];
 
-  const dayBlocks = days.map(([label, evs]) => {
+  const dayBlocks = days.map(([label, { events: evs, totalCount }]) => {
     const cards = evs.map((ev) => {
       const meta = digestCategoryMeta(ev.category);
       const costPill = ev.cost === "free"
-        ? `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:#D4EBC9;color:#3A5C2A;">Free</span>`
-        : `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:#E8DED0;color:#5C4A38;">Paid</span>`;
-      const cityPill = `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:#9B5C2A;color:#ffffff;margin-right:6px;">${escapeHtml(ev.city)}</span>`;
+        ? `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;background:#D4EBC9;color:#3A5C2A;">Free</span>`
+        : `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;background:#E8DED0;color:#5C4A38;">Paid</span>`;
+      const cityPill = `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;background:#9B5C2A;color:#ffffff;margin-right:5px;">${escapeHtml(ev.city)}</span>`;
 
       return `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;margin-bottom:10px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;margin-bottom:7px;">
         <tr>
-          <td width="5" style="background:${meta.color};border-radius:6px 0 0 6px;font-size:0;line-height:0;">&nbsp;</td>
-          <td style="background:#EDE2CA;border-top:1px solid #C8BA9E;border-right:1px solid #C8BA9E;border-bottom:1px solid #C8BA9E;border-radius:0 6px 6px 0;padding:13px 15px;">
-            <div style="font-family:'DM Sans',Arial,sans-serif;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:${meta.color};margin-bottom:4px;">${meta.label}</div>
-            <div style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:16px;color:#2C1F14;line-height:1.3;">${escapeHtml(ev.title)}</div>
-            <div style="font-family:Consolas,'Courier New',monospace;font-weight:700;font-size:13px;color:#5C3A1E;margin-top:4px;">${escapeHtml(ev.display_time)}</div>
-            <div style="margin-top:10px;">${cityPill}${costPill}</div>
+          <td width="4" style="background:${meta.color};border-radius:5px 0 0 5px;font-size:0;line-height:0;">&nbsp;</td>
+          <td style="background:#EDE2CA;border-top:1px solid #C8BA9E;border-right:1px solid #C8BA9E;border-bottom:1px solid #C8BA9E;border-radius:0 5px 5px 0;padding:9px 12px;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:14.5px;color:#2C1F14;line-height:1.25;">${escapeHtml(ev.title)}</div>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:5px;">
+              <tr>
+                <td style="font-family:Consolas,'Courier New',monospace;font-weight:700;font-size:12px;color:#5C3A1E;padding-right:8px;white-space:nowrap;">${escapeHtml(ev.display_time)}</td>
+                <td>${cityPill}${costPill}</td>
+              </tr>
+            </table>
           </td>
         </tr>
       </table>`;
     }).join("");
 
+    const overflow = totalCount > evs.length
+      ? `<div style="font-family:'DM Sans',Arial,sans-serif;font-size:11.5px;color:#7A6650;font-style:italic;margin:2px 0 4px 4px;">+${totalCount - evs.length} more that day in the app \u2192</div>`
+      : "";
+
     return `
-      <div style="font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#9B5C2A;border-bottom:1px solid #C8BA9E;padding-bottom:6px;margin:24px 0 12px;">${escapeHtml(label)}</div>
-      ${cards}`;
+      <div style="font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#9B5C2A;border-bottom:1px solid #C8BA9E;padding-bottom:5px;margin:18px 0 9px;">${escapeHtml(label)}</div>
+      ${cards}${overflow}`;
   }).join("");
 
   const bodyContent = days.length
@@ -1619,27 +1630,30 @@ function buildDigestHtml(byDay, unsubscribeUrl) {
   return `
   <div style="background:#EDE2CA;padding:24px 12px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;">
-      <tr><td style="background:#F5EDD8;border-radius:16px;padding:26px 20px 20px;">
+      <tr><td style="background:#F5EDD8;border-radius:16px;padding:22px 18px 18px;">
         <div style="text-align:center;">
-          <span style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:24px;color:#2C1F14;">Playroute</span>
+          <span style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:22px;color:#2C1F14;">Playroute</span>
         </div>
-        <p style="text-align:center;color:#7A6650;font-family:'DM Sans',Arial,sans-serif;font-size:13px;margin:4px 0 22px;">The next few days for the kids, at a glance.</p>
+        <p style="text-align:center;color:#7A6650;font-family:'DM Sans',Arial,sans-serif;font-size:12.5px;margin:3px 0 16px;">A sneak peek at what's coming up for the kids \u2014 see everything in the app.</p>
         ${bodyContent}
-        <div style="text-align:center;margin:24px 0 14px;">
-          <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2C1F14;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-family:'DM Sans',Arial,sans-serif;font-size:14px;font-weight:600;">Open Playroute \u2192</a>
+        <div style="text-align:center;margin:20px 0 12px;">
+          <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2C1F14;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:9px;font-family:'DM Sans',Arial,sans-serif;font-size:13.5px;font-weight:600;">Open Playroute \u2192</a>
         </div>
-        <p style="text-align:center;font-family:'DM Sans',Arial,sans-serif;font-size:11px;color:#B5A88F;margin-top:16px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#B5A88F;">Unsubscribe</a></p>
+        <p style="text-align:center;font-family:'DM Sans',Arial,sans-serif;font-size:11px;color:#B5A88F;margin-top:14px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#B5A88F;">Unsubscribe</a></p>
       </td></tr>
     </table>
   </div>`;
 }
 
 function buildDigestText(byDay) {
-  const lines = ["Playroute \u2014 the next few days for the kids", ""];
-  for (const [label, evs] of byDay.entries()) {
+  const lines = ["Playroute \u2014 a sneak peek at what's coming up for the kids (see everything in the app)", ""];
+  for (const [label, { events: evs, totalCount }] of byDay.entries()) {
     lines.push(label.toUpperCase());
     for (const ev of evs) {
       lines.push(`- ${ev.title} \u2014 ${ev.display_time} \u00B7 ${ev.city} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}`);
+    }
+    if (totalCount > evs.length) {
+      lines.push(`+${totalCount - evs.length} more that day in the app`);
     }
     lines.push("");
   }
