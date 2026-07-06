@@ -641,6 +641,7 @@ async function runHtmlScrape(env) {
     let count = 0;
     for (const ev of events) {
       await upsertEvent(env, ev);
+      await logScrapeActivity(env, "html-scrape", ev);
       count++;
     }
     results.push({ source: "WOW Children's Museum", status: "ok", eventsUpserted: count });
@@ -696,19 +697,32 @@ function longmontMatchTitle(title) {
   return LONGMONT_TITLE_ALLOWLIST.find((rule) => rule.match.test(title.trim()));
 }
 
+// The /events/category/library/ page mixes in plenty of teen/adult/senior
+// programming alongside the family stuff (it's "library category", not
+// "children's category"). Anything matching this is clearly not
+// family-relevant and shouldn't even reach the review queue \u2014 everything
+// else that doesn't cleanly auto-add is genuinely ambiguous rather than
+// irrelevant, and gets surfaced for a human instead of silently dropped.
+const LONGMONT_REVIEW_BLOCKLIST = [
+  /\bteen\b/i, /\btween\b/i, /\bsenior\b/i, /\badult\b/i,
+  /writers?\s*group/i, /tech help/i, /resume/i, /job search/i,
+  /conversation\s*(cafe|group)/i, /book club/i, /active minds/i,
+  /history happy hour/i, /quiet\s*(writing|study)/i
+];
+
 // Matches Tribe Events Calendar's dated-instance permalink pattern, which
 // is stable across sites using this plugin regardless of theme/CSS.
 const LONGMONT_EVENT_LINK_RE = /<a\s+[^>]*href=["'](https:\/\/longmontcolorado\.gov\/event\/([a-z0-9-]+)\/(\d{4}-\d{2}-\d{2})\/)["'][^>]*>(.*?)<\/a>/gis;
 
 function parseLongmontLibraryHtml(html) {
   const events = [];
+  const needsReview = [];
   let m;
   while ((m = LONGMONT_EVENT_LINK_RE.exec(html)) !== null) {
     const [fullMatch, href, slug, eventDate, innerHtml] = m;
     const title = decodeHtmlEntities(stripTags(innerHtml));
     if (!title) continue;
-    const rule = longmontMatchTitle(title);
-    if (!rule) continue; // not a recognized child/family program \u2014 skip rather than guess
+    if (LONGMONT_REVIEW_BLOCKLIST.some((re) => re.test(title))) continue; // clearly not family-relevant
 
     // Scan a window of raw HTML right after the title link for a
     // "H:MM am - H:MM pm" time range \u2014 proximity-based like the WOW
@@ -716,54 +730,71 @@ function parseLongmontLibraryHtml(html) {
     const windowEnd = m.index + fullMatch.length + 500;
     const nearbyText = decodeHtmlEntities(stripTags(html.slice(m.index + fullMatch.length, windowEnd)));
     const timeMatch = nearbyText.match(/(\d{1,2}(?::\d{2})?\s*[ap]m)\s*-\s*(\d{1,2}(?::\d{2})?\s*[ap]m)/i);
-    if (!timeMatch) continue; // can't confidently place a time \u2014 skip rather than guess
+    const rule = longmontMatchTitle(title);
+    const startTime = timeMatch ? to24HourFromLabel(timeMatch[1]) : null;
 
-    const startTime = to24HourFromLabel(timeMatch[1]);
-    if (!startTime) continue;
-    const displayTime = `${timeMatch[1].toUpperCase().replace(/\s+/g, " ")} \u2013 ${timeMatch[2].toUpperCase().replace(/\s+/g, " ")}`;
+    if (rule && startTime) {
+      const displayTime = `${timeMatch[1].toUpperCase().replace(/\s+/g, " ")} \u2013 ${timeMatch[2].toUpperCase().replace(/\s+/g, " ")}`;
+      events.push({
+        title,
+        source: "Longmont Public Library",
+        city: "Longmont",
+        category: rule.category,
+        cost: "free",
+        age_min: rule.age_min,
+        age_max: rule.age_max,
+        day_of_week: undefined,
+        start_time: startTime,
+        display_time: displayTime,
+        recurrence: "dated",
+        event_date: eventDate,
+        note: "Pulled from the Longmont Public Library events calendar.",
+        source_url: href,
+        verified: 1,
+        libcal_event_id: `longmont:${slug}:${eventDate}`
+      });
+      continue;
+    }
 
-    events.push({
+    // Passed the relevance filter but either the title isn't a known
+    // recognized program, or a time couldn't be confidently placed this
+    // pass \u2014 surface it for a human glance rather than dropping it.
+    needsReview.push({
       title,
       source: "Longmont Public Library",
       city: "Longmont",
-      category: rule.category,
-      cost: "free",
-      age_min: rule.age_min,
-      age_max: rule.age_max,
-      day_of_week: undefined,
-      start_time: startTime,
-      display_time: displayTime,
-      recurrence: "dated",
-      event_date: eventDate,
-      note: "Pulled from the Longmont Public Library events calendar.",
+      note: (nearbyText || "").slice(0, 300) || "Couldn't confidently auto-parse this listing \u2014 see source link.",
       source_url: href,
-      verified: 1,
-      libcal_event_id: `longmont:${slug}:${eventDate}`
+      dedup_key: `longmont-review:${slug}:${eventDate}`
     });
   }
-  return events;
+  return { events, needsReview };
 }
 
 async function fetchAndNormalizeLongmontLibrary() {
   const allEvents = [];
+  const allNeedsReview = [];
   let url = LONGMONT_LIBRARY_CATEGORY_URL;
   for (let page = 1; page <= LONGMONT_MAX_PAGES && url; page++) {
-    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" } });
     if (!res.ok) throw new Error(`Longmont library calendar fetch failed for ${url}: ${res.status}`);
     const html = await res.text();
-    allEvents.push(...parseLongmontLibraryHtml(html));
+    const { events, needsReview } = parseLongmontLibraryHtml(html);
+    allEvents.push(...events);
+    allNeedsReview.push(...needsReview);
     url = page < LONGMONT_MAX_PAGES ? `${LONGMONT_LIBRARY_CATEGORY_URL}page/${page + 1}/` : null;
   }
-  return allEvents;
+  return { events: allEvents, needsReview: allNeedsReview };
 }
 
 async function runLongmontScrape(env) {
   const results = [];
   try {
-    const events = await fetchAndNormalizeLongmontLibrary();
+    const { events } = await fetchAndNormalizeLongmontLibrary();
     let count = 0;
     for (const ev of events) {
       await upsertEvent(env, ev);
+      await logScrapeActivity(env, "longmont-scrape", ev);
       count++;
     }
     if (count === 0) {
@@ -815,51 +846,66 @@ const LOUISVILLE_DATE_RE = /(\d{2}\/\d{2}\/\d{4})\s+(\d{1,2}:\d{2}\s*[AP]M)\s*-\
 
 function parseLouisvilleChildrensHtml(html) {
   const events = [];
+  const needsReview = [];
   let m;
   while ((m = LOUISVILLE_EVENT_LINK_RE.exec(html)) !== null) {
     const [fullMatch, href, id] = m;
     const title = decodeHtmlEntities(stripTags(m[4]));
     if (!title) continue;
-    const rule = louisvilleMatchTitle(title);
-    if (!rule) continue;
 
     const windowEnd = m.index + fullMatch.length + 300;
     const nearbyText = decodeHtmlEntities(stripTags(html.slice(m.index + fullMatch.length, windowEnd)));
     const dateMatch = nearbyText.match(LOUISVILLE_DATE_RE);
-    if (!dateMatch) continue;
-    const [, startDate, startLabel, endDate, endLabel] = dateMatch;
-    if (startDate !== endDate) continue; // multi-day listing \u2014 needs a human, skip
+    const rule = louisvilleMatchTitle(title);
+    const resolvedHref = href.startsWith("http") ? href : `https://www.louisville-library.org${href}`;
 
-    const [mo, day, year] = startDate.split("/");
-    const eventDate = `${year}-${mo}-${day}`;
-    const startTime = to24HourFromLabel(startLabel);
-    if (!startTime) continue;
-    const displayTime = `${startLabel.toUpperCase()} \u2013 ${endLabel.toUpperCase()}`;
+    if (rule && dateMatch && dateMatch[1] === dateMatch[3]) {
+      const [, startDate, startLabel, , endLabel] = dateMatch;
+      const [mo, day, year] = startDate.split("/");
+      const eventDate = `${year}-${mo}-${day}`;
+      const startTime = to24HourFromLabel(startLabel);
+      if (startTime) {
+        events.push({
+          title,
+          source: "Louisville Public Library",
+          city: "Louisville",
+          category: rule.category,
+          cost: "free",
+          age_min: rule.age_min,
+          age_max: rule.age_max,
+          day_of_week: undefined,
+          start_time: startTime,
+          display_time: `${startLabel.toUpperCase()} \u2013 ${endLabel.toUpperCase()}`,
+          recurrence: "dated",
+          event_date: eventDate,
+          note: "Pulled from Louisville Public Library's Children & Family Events Calendar.",
+          source_url: resolvedHref,
+          verified: 1,
+          libcal_event_id: `louisville:${id}:${eventDate}`
+        });
+        continue;
+      }
+    }
 
-    events.push({
+    // Everything on this page is already the library's own "Children &
+    // Family" category \u2014 so an unrecognized title, a multi-day/date-range
+    // listing (dateMatch[1] !== dateMatch[3]), or a missing time isn't
+    // irrelevant, it's just not confident enough to auto-add. Surface it
+    // for a human instead of dropping it.
+    needsReview.push({
       title,
       source: "Louisville Public Library",
       city: "Louisville",
-      category: rule.category,
-      cost: "free",
-      age_min: rule.age_min,
-      age_max: rule.age_max,
-      day_of_week: undefined,
-      start_time: startTime,
-      display_time: displayTime,
-      recurrence: "dated",
-      event_date: eventDate,
-      note: "Pulled from Louisville Public Library's Children & Family Events Calendar.",
-      source_url: href.startsWith("http") ? href : `https://www.louisville-library.org${href}`,
-      verified: 1,
-      libcal_event_id: `louisville:${id}:${eventDate}`
+      note: (dateMatch ? dateMatch[0] : nearbyText).slice(0, 300) || "Couldn't confidently auto-parse this listing \u2014 see source link.",
+      source_url: resolvedHref,
+      dedup_key: `louisville-review:${id}`
     });
   }
-  return events;
+  return { events, needsReview };
 }
 
 async function fetchAndNormalizeLouisvilleChildrens() {
-  const res = await fetch(LOUISVILLE_CHILDRENS_URL, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+  const res = await fetch(LOUISVILLE_CHILDRENS_URL, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" } });
   if (!res.ok) throw new Error(`Louisville children's calendar fetch failed: ${res.status}`);
   const html = await res.text();
   return parseLouisvilleChildrensHtml(html);
@@ -868,10 +914,11 @@ async function fetchAndNormalizeLouisvilleChildrens() {
 async function runLouisvilleScrape(env) {
   const results = [];
   try {
-    const events = await fetchAndNormalizeLouisvilleChildrens();
+    const { events } = await fetchAndNormalizeLouisvilleChildrens();
     let count = 0;
     for (const ev of events) {
       await upsertEvent(env, ev);
+      await logScrapeActivity(env, "louisville-scrape", ev);
       count++;
     }
     if (count === 0) {
@@ -994,7 +1041,9 @@ function meadDisplayTime(displayHour) {
 }
 
 async function fetchAndNormalizeMeadCalendar() {
-  const res = await fetch("https://www.townofmead.org/calendar/json");
+  const res = await fetch("https://www.townofmead.org/calendar/json", {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" }
+  });
   if (!res.ok) throw new Error(`Mead calendar fetch failed: ${res.status}`);
   const items = await res.json();
 
@@ -1071,6 +1120,7 @@ async function runMeadScrape(env) {
     let count = 0;
     for (const ev of events) {
       await upsertEvent(env, ev);
+      await logScrapeActivity(env, "mead-scrape", ev);
       count++;
     }
     results.push({ source: "Town of Mead", status: "ok", eventsUpserted: count });
@@ -1137,6 +1187,20 @@ function mountainMidnightThisWeekUTC() {
   mtNow.setDate(mtNow.getDate() - day + 1);
   return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
 }
+// Same instant, but 24h/7d earlier \u2014 used as the trend-comparison baseline
+// so each stat card can show growth/decline vs the prior period rather than
+// just a raw current number.
+function mountainMidnightYesterdayUTC() {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  mtNow.setDate(mtNow.getDate() - 1);
+  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
+}
+function mountainMidnightPriorWeekUTC() {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  const day = mtNow.getDay() || 7;
+  mtNow.setDate(mtNow.getDate() - day + 1 - 7);
+  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
+}
 
 async function hashVisitor(request) {
   const ip = request.headers.get("CF-Connecting-IP") || "";
@@ -1164,17 +1228,31 @@ async function handlePageView(request, env) {
 
 async function handleStats(env) {
   const todayStart = mountainMidnightTodayUTC();
+  const yesterdayStart = mountainMidnightYesterdayUTC();
   const weekStart = mountainMidnightThisWeekUTC();
+  const priorWeekStart = mountainMidnightPriorWeekUTC();
 
   const dau = await env.DB.prepare(
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ?`
   ).bind(todayStart).first();
+  const dauPrev = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ?`
+  ).bind(yesterdayStart, todayStart).first();
+
   const wau = await env.DB.prepare(
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ?`
   ).bind(weekStart).first();
+  const wauPrev = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ?`
+  ).bind(priorWeekStart, weekStart).first();
+
   const totalViewsThisWeek = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ?`
   ).bind(weekStart).first();
+  const totalViewsPrevWeek = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ?`
+  ).bind(priorWeekStart, weekStart).first();
+
   const byDevice = await env.DB.prepare(
     `SELECT device_type, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? GROUP BY device_type`
   ).bind(weekStart).all();
@@ -1191,9 +1269,15 @@ async function handleStats(env) {
   const newsletterVisits7d = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND source = 'newsletter'`
   ).bind(weekStart).first();
+  const newsletterVisits7dPrev = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? AND source = 'newsletter'`
+  ).bind(priorWeekStart, weekStart).first();
   const newsletterVisitors7d = await env.DB.prepare(
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND source = 'newsletter'`
   ).bind(weekStart).first();
+  const newsletterVisitors7dPrev = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? AND source = 'newsletter'`
+  ).bind(priorWeekStart, weekStart).first();
 
   // Click tracking (source links, "Open in Maps" on playgrounds/hikes, and
   // the support/feedback links) grouped by category — 1-day and 7-day windows.
@@ -1209,20 +1293,54 @@ async function handleStats(env) {
   const totalClicks7d = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ?`
   ).bind(weekStart).first();
+  const totalClicks7dPrev = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ? AND clicked_at < ?`
+  ).bind(priorWeekStart, weekStart).first();
+
+  // Digest subscribers — current active total, plus how that total compared
+  // at the same point last week (subscribers who existed then and hadn't
+  // unsubscribed by then), so growth/decline is visible rather than just a
+  // raw headcount.
+  const subscribersTotal = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM subscribers WHERE active = 1`
+  ).first();
+  const subscribersTotalPrev = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM subscribers WHERE created_at < ? AND (unsubscribed_at IS NULL OR unsubscribed_at >= ?)`
+  ).bind(weekStart, weekStart).first();
+  const subscribersNew7d = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM subscribers WHERE created_at >= ?`
+  ).bind(weekStart).first();
+  const subscribersNew7dPrev = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM subscribers WHERE created_at >= ? AND created_at < ?`
+  ).bind(priorWeekStart, weekStart).first();
+  const subscribersUnsubscribed7d = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM subscribers WHERE unsubscribed_at >= ?`
+  ).bind(weekStart).first();
 
   return json({
     weekly_active_users: wau?.n || 0,
+    weekly_active_users_prev: wauPrev?.n || 0,
     daily_active_users: dau?.n || 0,
+    daily_active_users_prev: dauPrev?.n || 0,
     page_views_7d: totalViewsThisWeek?.n || 0,
+    page_views_7d_prev: totalViewsPrevWeek?.n || 0,
     by_device_7d: byDevice.results || [],
     top_cities_7d: byCity.results || [],
     newsletter_visits_1d: newsletterVisits1d?.n || 0,
     newsletter_visits_7d: newsletterVisits7d?.n || 0,
+    newsletter_visits_7d_prev: newsletterVisits7dPrev?.n || 0,
     newsletter_unique_visitors_7d: newsletterVisitors7d?.n || 0,
+    newsletter_unique_visitors_7d_prev: newsletterVisitors7dPrev?.n || 0,
     link_clicks_1d: totalClicks1d?.n || 0,
     link_clicks_7d: totalClicks7d?.n || 0,
+    link_clicks_7d_prev: totalClicks7dPrev?.n || 0,
     link_clicks_by_type_1d: clicksByType1d.results || [],
-    link_clicks_by_type_7d: clicksByType7d.results || []
+    link_clicks_by_type_7d: clicksByType7d.results || [],
+    subscribers_total: subscribersTotal?.n || 0,
+    subscribers_total_prev: subscribersTotalPrev?.n || 0,
+    subscribers_new_7d: subscribersNew7d?.n || 0,
+    subscribers_new_7d_prev: subscribersNew7dPrev?.n || 0,
+    subscribers_unsubscribed_7d: subscribersUnsubscribed7d?.n || 0
   });
 }
 
@@ -1233,7 +1351,7 @@ async function upsertEvent(env, ev) {
        start_time, display_time, recurrence, event_date, note, source_url,
        verified, libcal_event_id, season_start, season_end, last_scraped_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(libcal_event_id) DO UPDATE SET
+     ON CONFLICT(libcal_event_id) WHERE libcal_event_id IS NOT NULL DO UPDATE SET
        title=excluded.title,
        source=excluded.source,
        city=excluded.city,
@@ -1288,6 +1406,7 @@ async function runScrape(env) {
       for (const raw of rawEvents) {
         const ev = normalizeEvent(raw, lib.city);
         await upsertEvent(env, ev);
+        await logScrapeActivity(env, "libcal-scrape", ev);
         count++;
       }
       results.push({ library: lib.key, status: "ok", eventsUpserted: count });
@@ -1307,6 +1426,7 @@ async function runICalScrape(env) {
       let count = 0;
       for (const ev of events) {
         await upsertEvent(env, ev);
+        await logScrapeActivity(env, "ical-scrape", ev);
         count++;
       }
       results.push({ library: lib.city, status: "ok", eventsUpserted: count });
@@ -1395,6 +1515,20 @@ async function logJobRun(env, jobName, status, details) {
   }
 }
 
+// Per-event audit trail, separate from job_runs' per-run summary — lets the
+// admin page answer "what exactly did the scrapers add/touch" as a plain
+// queryable table instead of digging through a JSON blob. Logging failures
+// are swallowed on purpose, same reasoning as logJobRun.
+async function logScrapeActivity(env, jobName, ev) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO scrape_activity (job_name, event_title, city, event_date, source_url) VALUES (?, ?, ?, ?, ?)`
+    ).bind(jobName, ev.title, ev.city ?? null, ev.event_date ?? null, ev.source_url ?? null).run();
+  } catch (err) {
+    console.error(`logScrapeActivity failed for ${jobName}:`, err);
+  }
+}
+
 // Single source of truth describing every scraper that's actually wired up
 // in code (as opposed to `scrape_sources`, which is a hand-maintained
 // registry of sources someone has looked at — some coded, many still
@@ -1446,11 +1580,25 @@ const AUTOMATED_SOURCES = [
   {
     job_name: "pending-events-scan",
     label: "Pending-events review scan",
-    cities: ["Mead"],
-    scope: "Re-checks Mead's calendar for anything the scraper above skipped (recurring/multi-date/ambiguous listings) and emails a review link for each candidate \u2014 nothing here is auto-added to the live events table without a manual Approve.",
+    cities: ["Mead", "Longmont", "Louisville"],
+    scope: "Sweeps Mead, Longmont, and Louisville for anything their scrapers above couldn't confidently auto-add \u2014 recurring/multi-date listings, unrecognized-but-plausibly-family titles, missing times, etc. \u2014 and emails a review link for each candidate. Boulder/Erie and WOW aren't included here since they don't produce this kind of ambiguous candidate in the first place. Nothing in this scan is auto-added to the live events table without a manual Approve.",
     cadence: "Sundays ~noon MT (cron) + on-demand via \u201cRun pending-events scan now\u201d"
   }
 ];
+
+async function handleScrapeActivity(env, url) {
+  const jobName = url.searchParams.get("job_name");
+  const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 200);
+  const query = jobName
+    ? env.DB.prepare(
+        `SELECT * FROM scrape_activity WHERE job_name = ? ORDER BY scraped_at DESC LIMIT ?`
+      ).bind(jobName, limit)
+    : env.DB.prepare(
+        `SELECT * FROM scrape_activity ORDER BY scraped_at DESC LIMIT ?`
+      ).bind(limit);
+  const { results } = await query.all();
+  return json(results);
+}
 
 async function handleSourceRegistry(env) {
   const { results: manual } = await env.DB.prepare("SELECT * FROM scrape_sources ORDER BY city").all();
@@ -1730,33 +1878,50 @@ function isNearNoonMountain(now) {
   return hourMT === 12;
 }
 
+// Sweeps every source that can produce genuinely-ambiguous-but-plausibly-
+// family-relevant listings (recurring/multi-date/unrecognized-title, etc.)
+// and stages them in pending_events for a manual look, instead of the
+// confident scrapers above silently dropping anything they're not sure
+// about. Boulder/Erie (structured LibCal/iCal feeds) and WOW (which has a
+// title-parsing fallback for everything, no ambiguous case) aren't in this
+// list because they don't produce this kind of "couldn't confidently
+// parse" candidate in the first place.
+const PENDING_REVIEW_SOURCES = [
+  { name: "Mead (needs review)", fetchFn: fetchAndNormalizeMeadCalendar },
+  { name: "Longmont (needs review)", fetchFn: fetchAndNormalizeLongmontLibrary },
+  { name: "Louisville (needs review)", fetchFn: fetchAndNormalizeLouisvilleChildrens }
+];
+
 async function runPendingEventsScan(env) {
   const results = [];
-  let newCandidates = 0;
-  try {
-    const { needsReview } = await fetchAndNormalizeMeadCalendar();
-    for (const item of needsReview) {
-      // Skip anything whose title+city already exists in the live events
-      // table — otherwise something already manually reviewed and added
-      // (e.g. because its real single date got buried among other unrelated
-      // dates on the page, like a vendor-registration deadline) would keep
-      // getting re-suggested every week.
-      const already = await env.DB.prepare(
-        `SELECT 1 FROM events WHERE title = ? AND city = ? LIMIT 1`
-      ).bind(item.title, item.city).first();
-      if (already) continue;
 
-      const token = crypto.randomUUID();
-      const res = await env.DB.prepare(
-        `INSERT INTO pending_events (title, source, city, note, source_url, raw_excerpt, dedup_key, approval_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(dedup_key) DO NOTHING`
-      ).bind(item.title, item.source, item.city, item.note, item.source_url, item.note, item.dedup_key, token).run();
-      if (res.meta.changes > 0) newCandidates++;
+  for (const { name, fetchFn } of PENDING_REVIEW_SOURCES) {
+    let newCandidates = 0;
+    try {
+      const { needsReview } = await fetchFn();
+      for (const item of needsReview) {
+        // Skip anything whose title+city already exists in the live events
+        // table — otherwise something already manually reviewed and added
+        // (e.g. because its real single date got buried among other unrelated
+        // dates on the page, like a vendor-registration deadline) would keep
+        // getting re-suggested every week.
+        const already = await env.DB.prepare(
+          `SELECT 1 FROM events WHERE title = ? AND city = ? LIMIT 1`
+        ).bind(item.title, item.city).first();
+        if (already) continue;
+
+        const token = crypto.randomUUID();
+        const res = await env.DB.prepare(
+          `INSERT INTO pending_events (title, source, city, note, source_url, raw_excerpt, dedup_key, approval_token)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(dedup_key) DO NOTHING`
+        ).bind(item.title, item.source, item.city, item.note, item.source_url, item.note, item.dedup_key, token).run();
+        if (res.meta.changes > 0) newCandidates++;
+      }
+      results.push({ source: name, status: "ok", newCandidates });
+    } catch (err) {
+      results.push({ source: name, status: "error", error: String(err) });
     }
-    results.push({ source: "Mead (needs review)", status: "ok", newCandidates });
-  } catch (err) {
-    results.push({ source: "Mead (needs review)", status: "error", error: String(err) });
   }
 
   // Only email if there's something to actually review — no empty "nothing
@@ -1901,6 +2066,7 @@ export default {
       if (url.pathname === "/api/hikes") return await handleHikes(env, url);
       if (url.pathname === "/api/sources") return await handleSources(env);
       if (url.pathname === "/api/source-registry") return await handleSourceRegistry(env);
+      if (url.pathname === "/api/scrape-activity") return await handleScrapeActivity(env, url);
       if (url.pathname.startsWith("/api/photos/")) {
         return await handlePhoto(env, decodeURIComponent(url.pathname.slice("/api/photos/".length)));
       }
