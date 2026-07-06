@@ -651,6 +651,241 @@ async function runHtmlScrape(env) {
   return results;
 }
 
+// ---------------------------------------------------------------------
+// Longmont Public Library — WordPress "The Events Calendar" plugin.
+// This environment can't confirm an iCal/JSON export is reachable, but the
+// plugin's event permalinks reliably embed the date for dated instances:
+//   https://longmontcolorado.gov/event/{slug}/{YYYY-MM-DD}/
+// That means the two fields riskiest to get wrong — URL and date — don't
+// depend on this site's exact CSS classes at all. Only the title (anchor
+// text) and time (nearest time-range text found after the link, not tied
+// to a specific selector) do, so minor markup/theme differences shouldn't
+// break this outright the way a class-name-dependent parser would.
+//
+// Scope is deliberately narrow on purpose: only titles matching a known,
+// already-verified recurring children's/family program name are auto-added
+// (LONGMONT_TITLE_ALLOWLIST, built from manually confirming each of these
+// programs' real posting history earlier). One-off named specials
+// (concerts, visiting performers, etc.) still need a human to set
+// age/cost/category correctly, so those are left for manual review rather
+// than guessed at — same philosophy as the Mead scraper below.
+// ---------------------------------------------------------------------
+
+const LONGMONT_LIBRARY_CATEGORY_URL = "https://longmontcolorado.gov/events/category/library/";
+const LONGMONT_MAX_PAGES = 6; // confirmed reachable (~5-6 weeks of real postings) during manual testing
+
+const LONGMONT_TITLE_ALLOWLIST = [
+  { match: /^baby storytime$/i, category: "library", age_min: 0, age_max: 2 },
+  { match: /^baby stay\s*&?\s*play/i, category: "library", age_min: 0, age_max: 2 },
+  { match: /^toddler storytime$/i, category: "library", age_min: 1.5, age_max: 3 },
+  { match: /^toddler stay\s*&?\s*play/i, category: "library", age_min: 2, age_max: 3 },
+  { match: /^bilingual storytime$/i, category: "library", age_min: 0, age_max: 5 },
+  { match: /^all ages storytime/i, category: "library", age_min: 0, age_max: 8 },
+  { match: /^all ages stay\s*&?\s*play/i, category: "library", age_min: 0, age_max: 4 },
+  { match: /^craft storytime$/i, category: "library", age_min: 2, age_max: 6 },
+  { match: /^yoga storytime$/i, category: "library", age_min: 2, age_max: 6 },
+  { match: /^kids club$/i, category: "library", age_min: 6, age_max: 8 },
+  { match: /^read to rover$/i, category: "library", age_min: 5, age_max: 12 },
+  { match: /^first monday craft kits$/i, category: "library", age_min: 3, age_max: 8 },
+  { match: /^mis pininos/i, category: "library", age_min: 0, age_max: 3 },
+  { match: /^kids'?\s*creative movement class$/i, category: "library", age_min: 2, age_max: 8 },
+  { match: /^dogs enjoy afternoon reading/i, category: "library", age_min: 5, age_max: 12 }
+];
+
+function longmontMatchTitle(title) {
+  return LONGMONT_TITLE_ALLOWLIST.find((rule) => rule.match.test(title.trim()));
+}
+
+// Matches Tribe Events Calendar's dated-instance permalink pattern, which
+// is stable across sites using this plugin regardless of theme/CSS.
+const LONGMONT_EVENT_LINK_RE = /<a\s+[^>]*href=["'](https:\/\/longmontcolorado\.gov\/event\/([a-z0-9-]+)\/(\d{4}-\d{2}-\d{2})\/)["'][^>]*>(.*?)<\/a>/gis;
+
+function parseLongmontLibraryHtml(html) {
+  const events = [];
+  let m;
+  while ((m = LONGMONT_EVENT_LINK_RE.exec(html)) !== null) {
+    const [fullMatch, href, slug, eventDate, innerHtml] = m;
+    const title = decodeHtmlEntities(stripTags(innerHtml));
+    if (!title) continue;
+    const rule = longmontMatchTitle(title);
+    if (!rule) continue; // not a recognized child/family program \u2014 skip rather than guess
+
+    // Scan a window of raw HTML right after the title link for a
+    // "H:MM am - H:MM pm" time range \u2014 proximity-based like the WOW
+    // parser, not tied to an exact selector.
+    const windowEnd = m.index + fullMatch.length + 500;
+    const nearbyText = decodeHtmlEntities(stripTags(html.slice(m.index + fullMatch.length, windowEnd)));
+    const timeMatch = nearbyText.match(/(\d{1,2}(?::\d{2})?\s*[ap]m)\s*-\s*(\d{1,2}(?::\d{2})?\s*[ap]m)/i);
+    if (!timeMatch) continue; // can't confidently place a time \u2014 skip rather than guess
+
+    const startTime = to24HourFromLabel(timeMatch[1]);
+    if (!startTime) continue;
+    const displayTime = `${timeMatch[1].toUpperCase().replace(/\s+/g, " ")} \u2013 ${timeMatch[2].toUpperCase().replace(/\s+/g, " ")}`;
+
+    events.push({
+      title,
+      source: "Longmont Public Library",
+      city: "Longmont",
+      category: rule.category,
+      cost: "free",
+      age_min: rule.age_min,
+      age_max: rule.age_max,
+      day_of_week: undefined,
+      start_time: startTime,
+      display_time: displayTime,
+      recurrence: "dated",
+      event_date: eventDate,
+      note: "Pulled from the Longmont Public Library events calendar.",
+      source_url: href,
+      verified: 1,
+      libcal_event_id: `longmont:${slug}:${eventDate}`
+    });
+  }
+  return events;
+}
+
+async function fetchAndNormalizeLongmontLibrary() {
+  const allEvents = [];
+  let url = LONGMONT_LIBRARY_CATEGORY_URL;
+  for (let page = 1; page <= LONGMONT_MAX_PAGES && url; page++) {
+    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+    if (!res.ok) throw new Error(`Longmont library calendar fetch failed for ${url}: ${res.status}`);
+    const html = await res.text();
+    allEvents.push(...parseLongmontLibraryHtml(html));
+    url = page < LONGMONT_MAX_PAGES ? `${LONGMONT_LIBRARY_CATEGORY_URL}page/${page + 1}/` : null;
+  }
+  return allEvents;
+}
+
+async function runLongmontScrape(env) {
+  const results = [];
+  try {
+    const events = await fetchAndNormalizeLongmontLibrary();
+    let count = 0;
+    for (const ev of events) {
+      await upsertEvent(env, ev);
+      count++;
+    }
+    if (count === 0) {
+      // These programs run almost every day \u2014 zero matches almost
+      // certainly means the page structure changed, not that nothing's
+      // happening. Fail loudly rather than silently doing nothing.
+      results.push({ source: "Longmont Public Library", status: "error", error: "0 events matched \u2014 check LONGMONT_EVENT_LINK_RE / title allowlist against the live page" });
+    } else {
+      results.push({ source: "Longmont Public Library", status: "ok", eventsUpserted: count });
+    }
+  } catch (err) {
+    results.push({ source: "Longmont Public Library", status: "error", error: String(err) });
+  }
+  await logJobRun(env, "longmont-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
+  return results;
+}
+
+// ---------------------------------------------------------------------
+// Louisville Public Library \u2014 CivicPlus/CivicEngage calendar. Event
+// permalinks (/Home/Components/Calendar/Event/{id}/{listId}) don't embed a
+// date, and the month-grid calendar view lays events out by grid position
+// rather than in a way that's safe to regex without seeing the real raw
+// markup \u2014 so rather than guess at that, this reads the site's own
+// "Children & Family Events Calendar" list page instead, which (per manual
+// inspection) renders each event with an explicit MM/DD/YYYY date range in
+// plain text next to the title \u2014 the same "MM/DD/YYYY H:MM AM - MM/DD/YYYY
+// H:MM PM" format used on every individual event page. Multi-day / date-
+// range listings are skipped on purpose (same reasoning as the Mead
+// scraper) \u2014 a single unambiguous day is required to auto-add.
+// ---------------------------------------------------------------------
+
+const LOUISVILLE_CHILDRENS_URL = "https://www.louisville-library.org/browse-find/children-s/children-s-programs";
+
+const LOUISVILLE_TITLE_ALLOWLIST = [
+  { match: /storytime/i, category: "library", age_min: 0, age_max: 5 },
+  { match: /read to rover/i, category: "library", age_min: 5, age_max: 12 },
+  { match: /messy art/i, category: "library", age_min: 2, age_max: 5 },
+  { match: /baby social hour/i, category: "library", age_min: 0, age_max: 1.92 },
+  { match: /stories in the park/i, category: "outdoor", age_min: 2, age_max: 5 },
+  { match: /music\s*(&|and)\s*movement/i, category: "library", age_min: 0, age_max: 5 }
+];
+
+function louisvilleMatchTitle(title) {
+  return LOUISVILLE_TITLE_ALLOWLIST.find((rule) => rule.match.test(title));
+}
+
+const LOUISVILLE_EVENT_LINK_RE = /<a\s+[^>]*href=["']([^"']*\/Home\/Components\/Calendar\/Event\/(\d+)\/(\d+)[^"']*)["'][^>]*>(.*?)<\/a>/gis;
+const LOUISVILLE_DATE_RE = /(\d{2}\/\d{2}\/\d{4})\s+(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*(\d{2}\/\d{2}\/\d{4})\s+(\d{1,2}:\d{2}\s*[AP]M)/i;
+
+function parseLouisvilleChildrensHtml(html) {
+  const events = [];
+  let m;
+  while ((m = LOUISVILLE_EVENT_LINK_RE.exec(html)) !== null) {
+    const [fullMatch, href, id] = m;
+    const title = decodeHtmlEntities(stripTags(m[4]));
+    if (!title) continue;
+    const rule = louisvilleMatchTitle(title);
+    if (!rule) continue;
+
+    const windowEnd = m.index + fullMatch.length + 300;
+    const nearbyText = decodeHtmlEntities(stripTags(html.slice(m.index + fullMatch.length, windowEnd)));
+    const dateMatch = nearbyText.match(LOUISVILLE_DATE_RE);
+    if (!dateMatch) continue;
+    const [, startDate, startLabel, endDate, endLabel] = dateMatch;
+    if (startDate !== endDate) continue; // multi-day listing \u2014 needs a human, skip
+
+    const [mo, day, year] = startDate.split("/");
+    const eventDate = `${year}-${mo}-${day}`;
+    const startTime = to24HourFromLabel(startLabel);
+    if (!startTime) continue;
+    const displayTime = `${startLabel.toUpperCase()} \u2013 ${endLabel.toUpperCase()}`;
+
+    events.push({
+      title,
+      source: "Louisville Public Library",
+      city: "Louisville",
+      category: rule.category,
+      cost: "free",
+      age_min: rule.age_min,
+      age_max: rule.age_max,
+      day_of_week: undefined,
+      start_time: startTime,
+      display_time: displayTime,
+      recurrence: "dated",
+      event_date: eventDate,
+      note: "Pulled from Louisville Public Library's Children & Family Events Calendar.",
+      source_url: href.startsWith("http") ? href : `https://www.louisville-library.org${href}`,
+      verified: 1,
+      libcal_event_id: `louisville:${id}:${eventDate}`
+    });
+  }
+  return events;
+}
+
+async function fetchAndNormalizeLouisvilleChildrens() {
+  const res = await fetch(LOUISVILLE_CHILDRENS_URL, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+  if (!res.ok) throw new Error(`Louisville children's calendar fetch failed: ${res.status}`);
+  const html = await res.text();
+  return parseLouisvilleChildrensHtml(html);
+}
+
+async function runLouisvilleScrape(env) {
+  const results = [];
+  try {
+    const events = await fetchAndNormalizeLouisvilleChildrens();
+    let count = 0;
+    for (const ev of events) {
+      await upsertEvent(env, ev);
+      count++;
+    }
+    if (count === 0) {
+      results.push({ source: "Louisville Public Library", status: "error", error: "0 events matched \u2014 check LOUISVILLE_EVENT_LINK_RE / LOUISVILLE_DATE_RE against the live page" });
+    } else {
+      results.push({ source: "Louisville Public Library", status: "ok", eventsUpserted: count });
+    }
+  } catch (err) {
+    results.push({ source: "Louisville Public Library", status: "error", error: String(err) });
+  }
+  await logJobRun(env, "louisville-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
+  return results;
+}
+
 
 // --- Town of Mead scraper ---
 // Source feed: https://www.townofmead.org/calendar/json
@@ -1195,6 +1430,20 @@ const AUTOMATED_SOURCES = [
     cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
   },
   {
+    job_name: "longmont-scrape",
+    label: "HTML calendar scrape (Tribe Events Calendar)",
+    cities: ["Longmont"],
+    scope: "Reads the library category page's event links, which embed their date directly in the URL. Only auto-adds titles matching a known, pre-verified recurring program (storytimes, stay & play, Read to Rover, etc.) \u2014 one-off named specials are intentionally skipped and need a manual look. Confidence: written without access to this site's raw HTML in the build environment \u2014 first live run should be checked for a 0-result error before trusting it.",
+    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
+  },
+  {
+    job_name: "louisville-scrape",
+    label: "HTML calendar scrape (Children & Family list page)",
+    cities: ["Louisville"],
+    scope: "Reads the library's Children & Family Events Calendar list page, which prints an explicit MM/DD/YYYY date next to each title. Only auto-adds titles matching a known children's program name; multi-day listings and unrecognized titles are skipped. Confidence: written without access to this site's raw HTML in the build environment \u2014 first live run should be checked for a 0-result error before trusting it.",
+    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
+  },
+  {
     job_name: "pending-events-scan",
     label: "Pending-events review scan",
     cities: ["Mead"],
@@ -1286,7 +1535,25 @@ async function handleIngest(request, env) {
 
 const DIGEST_SITE_URL = "https://playroute.co";
 const DIGEST_MAX_PER_DAY = 6;
-const DIGEST_MAX_DAYS = 7;
+const DIGEST_MAX_DAYS = 5;
+
+// Mirrors the category colors used in the app itself (see the --* and
+// .tag.* definitions in public/index.html) so the email feels like the same
+// product. Deliberately NOT using emoji here — color-emoji rendering is
+// inconsistent across email clients (some show monochrome outline glyphs,
+// some show tofu/missing-glyph boxes), so a plain color bar + text label is
+// the safer choice for something that has to look right everywhere.
+const DIGEST_CATEGORY_META = {
+  library:        { label: "Library",        color: "#7A5568" },
+  rec:            { label: "Rec & Fitness",  color: "#6E8B8A" },
+  museum:         { label: "Museum",         color: "#C79A4B" },
+  outdoor:        { label: "Outdoor",        color: "#B4805A" },
+  community:      { label: "Community",      color: "#9B8AAE" },
+  farmers_market: { label: "Farmers Market", color: "#B85C4A" }
+};
+function digestCategoryMeta(category) {
+  return DIGEST_CATEGORY_META[category] || { label: "Event", color: "#9B5C2A" };
+}
 
 function escapeHtml(s) {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -1317,37 +1584,58 @@ async function getWeekAheadEvents(env) {
 
 function buildDigestHtml(byDay, unsubscribeUrl) {
   const days = [...byDay.entries()];
+
   const dayBlocks = days.map(([label, evs]) => {
-    const rows = evs.map((ev) => `
-      <tr>
-        <td style="padding:6px 0;font-family:sans-serif;font-size:14px;color:#2c1f14;">
-          <strong>${escapeHtml(ev.title)}</strong> \u2014 ${escapeHtml(ev.display_time)}
-          <span style="color:#8a7a63;">\u00B7 ${escapeHtml(ev.city)} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}</span>
-        </td>
-      </tr>`).join("");
+    const cards = evs.map((ev) => {
+      const meta = digestCategoryMeta(ev.category);
+      const costPill = ev.cost === "free"
+        ? `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:#D4EBC9;color:#3A5C2A;">Free</span>`
+        : `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:#E8DED0;color:#5C4A38;">Paid</span>`;
+      const cityPill = `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:600;padding:3px 9px;border-radius:6px;background:#9B5C2A;color:#ffffff;margin-right:6px;">${escapeHtml(ev.city)}</span>`;
+
+      return `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;margin-bottom:10px;">
+        <tr>
+          <td width="5" style="background:${meta.color};border-radius:6px 0 0 6px;font-size:0;line-height:0;">&nbsp;</td>
+          <td style="background:#EDE2CA;border-top:1px solid #C8BA9E;border-right:1px solid #C8BA9E;border-bottom:1px solid #C8BA9E;border-radius:0 6px 6px 0;padding:13px 15px;">
+            <div style="font-family:'DM Sans',Arial,sans-serif;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:${meta.color};margin-bottom:4px;">${meta.label}</div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:16px;color:#2C1F14;line-height:1.3;">${escapeHtml(ev.title)}</div>
+            <div style="font-family:Consolas,'Courier New',monospace;font-weight:700;font-size:13px;color:#5C3A1E;margin-top:4px;">${escapeHtml(ev.display_time)}</div>
+            <div style="margin-top:10px;">${cityPill}${costPill}</div>
+          </td>
+        </tr>
+      </table>`;
+    }).join("");
+
     return `
-      <tr><td style="padding:18px 0 4px;font-family:sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#a68a5b;border-bottom:1px solid #eee;">${escapeHtml(label)}</td></tr>
-      ${rows}`;
+      <div style="font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#9B5C2A;border-bottom:1px solid #C8BA9E;padding-bottom:6px;margin:24px 0 12px;">${escapeHtml(label)}</div>
+      ${cards}`;
   }).join("");
 
   const bodyContent = days.length
-    ? `<table width="100%" cellpadding="0" cellspacing="0">${dayBlocks}</table>`
-    : `<p style="font-family:sans-serif;color:#8a7a63;">No events loaded for this week yet \u2014 check the app directly.</p>`;
+    ? dayBlocks
+    : `<p style="font-family:'DM Sans',Arial,sans-serif;color:#7A6650;font-size:13px;">No events loaded for the next few days yet \u2014 check the app directly.</p>`;
 
   return `
-  <div style="max-width:520px;margin:0 auto;font-family:sans-serif;">
-    <h1 style="font-family:serif;font-size:22px;color:#2c1f14;margin-bottom:4px;">This week on Playroute</h1>
-    <p style="color:#8a7a63;font-size:13px;margin-top:0;">A quick look at what's coming up for the kids this week.</p>
-    ${bodyContent}
-    <div style="margin:28px 0;">
-      <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:14px;">Open Playroute \u2192</a>
-    </div>
-    <p style="font-size:11px;color:#b5a88f;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
+  <div style="background:#EDE2CA;padding:24px 12px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;">
+      <tr><td style="background:#F5EDD8;border-radius:16px;padding:26px 20px 20px;">
+        <div style="text-align:center;">
+          <span style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:24px;color:#2C1F14;">Playroute</span>
+        </div>
+        <p style="text-align:center;color:#7A6650;font-family:'DM Sans',Arial,sans-serif;font-size:13px;margin:4px 0 22px;">The next few days for the kids, at a glance.</p>
+        ${bodyContent}
+        <div style="text-align:center;margin:24px 0 14px;">
+          <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2C1F14;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-family:'DM Sans',Arial,sans-serif;font-size:14px;font-weight:600;">Open Playroute \u2192</a>
+        </div>
+        <p style="text-align:center;font-family:'DM Sans',Arial,sans-serif;font-size:11px;color:#B5A88F;margin-top:16px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#B5A88F;">Unsubscribe</a></p>
+      </td></tr>
+    </table>
   </div>`;
 }
 
 function buildDigestText(byDay) {
-  const lines = ["This week on Playroute", ""];
+  const lines = ["Playroute \u2014 the next few days for the kids", ""];
   for (const [label, evs] of byDay.entries()) {
     lines.push(label.toUpperCase());
     for (const ev of evs) {
@@ -1581,6 +1869,8 @@ export default {
     ctx.waitUntil(runICalScrape(env));
     ctx.waitUntil(runHtmlScrape(env));
     ctx.waitUntil(runMeadScrape(env));
+    ctx.waitUntil(runLongmontScrape(env));
+    ctx.waitUntil(runLouisvilleScrape(env));
   },
   // HTTP entry point — this is what the frontend fetches from instead of
   // using a hardcoded JS array.
@@ -1614,13 +1904,15 @@ export default {
         );
       }
       if (url.pathname === "/api/scrape-now" && request.method === "POST") {
-        const [apiResults, icalResults, htmlResults, meadResults] = await Promise.all([
+        const [apiResults, icalResults, htmlResults, meadResults, longmontResults, louisvilleResults] = await Promise.all([
           runScrape(env),
           runICalScrape(env),
           runHtmlScrape(env),
-          runMeadScrape(env)
+          runMeadScrape(env),
+          runLongmontScrape(env),
+          runLouisvilleScrape(env)
         ]);
-        return json({ ranAt: new Date().toISOString(), apiResults, icalResults, htmlResults, meadResults });
+        return json({ ranAt: new Date().toISOString(), apiResults, icalResults, htmlResults, meadResults, longmontResults, louisvilleResults });
       }
       if (url.pathname === "/api/ingest" && request.method === "POST") {
         return await handleIngest(request, env);
