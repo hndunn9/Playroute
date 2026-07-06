@@ -54,6 +54,23 @@
     background:#F5EFDF;border:1px dashed #C8BA9E;border-radius:8px;
     padding:10px;font-size:11.5px;color:#7A6650;margin-bottom:16px;
   }
+  .src-item{border-bottom:1px solid #EDE2CA;padding:10px 0;}
+  .src-item:last-child{border-bottom:none;}
+  .src-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;}
+  .src-name{font-size:13.5px;font-weight:600;}
+  .src-cities{font-size:11.5px;color:#9B5C2A;margin-top:2px;}
+  .src-scope{font-size:12px;color:#5c4a38;margin-top:5px;line-height:1.5;}
+  .src-meta{font-size:11px;color:#7A6650;margin-top:5px;}
+  .badge{
+    display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;
+    border-radius:10px;text-transform:uppercase;letter-spacing:0.03em;white-space:nowrap;
+  }
+  .badge.ok{background:#e8f0e0;color:#3a5a2a;}
+  .badge.error{background:#f5e0e0;color:#7a2a2a;}
+  .badge.never{background:#eee;color:#888;}
+  .badge.manual{background:#F5EFDF;color:#9B5C2A;border:1px solid #D4A96A;}
+  .section-label{font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#9B5C2A;font-weight:700;margin:14px 0 4px;}
+  .section-label:first-child{margin-top:0;}
 </style>
 </head>
 <body>
@@ -79,16 +96,22 @@
   </div>
 
   <div class="card">
+    <h2>🗂️ Scraper &amp; source coverage</h2>
+    <p>Always up to date — what actually runs in code vs. what's just been hand-verified/added manually (like Louisville and Longmont so far).</p>
+    <div id="registryOutput"><div class="result show loading">Loading…</div></div>
+  </div>
+
+  <div class="card">
     <h2>🔍 Run pending-events scan now</h2>
-    <p>Normally runs Sunday at noon MT. Re-checks known sources and emails you if anything new turns up for review.</p>
-    <button class="secondary" onclick="runAction('/api/pending-scan-now', 'pendingResult')">Run scan now</button>
+    <p>Normally runs Sunday at noon MT. Scope is whatever's listed under "Pending-events review scan" above — re-checks that source and emails you if anything new turns up for review.</p>
+    <button class="secondary" onclick="runAction('/api/pending-scan-now', 'pendingResult').then(loadSourceRegistry)">Run scan now</button>
     <div class="result" id="pendingResult"></div>
   </div>
 
   <div class="card">
     <h2>🔄 Run all scrapers now</h2>
-    <p>Manually triggers the library iCal feeds, Mead's calendar, and everything else that normally runs daily.</p>
-    <button class="secondary" onclick="runAction('/api/scrape-now', 'scrapeResult')">Run scrapers now</button>
+    <p>Manually triggers every "Automated" source listed above (LibCal, iCal, HTML, Mead).</p>
+    <button class="secondary" onclick="runAction('/api/scrape-now', 'scrapeResult').then(loadSourceRegistry)">Run scrapers now</button>
     <div class="result" id="scrapeResult"></div>
   </div>
 
@@ -155,7 +178,62 @@ async function loadStats(){
   }
 }
 
+function fmtAgo(iso){
+  if(!iso) return 'never';
+  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z');
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if(mins < 60) return mins + 'm ago';
+  const hrs = Math.round(mins/60);
+  if(hrs < 48) return hrs + 'h ago';
+  return Math.round(hrs/24) + 'd ago';
+}
+
+function renderAutomated(list){
+  return list.map(s => {
+    const badgeClass = s.last_run_status === 'ok' ? 'ok' : (s.last_run_status === 'never run' ? 'never' : 'error');
+    return `
+      <div class="src-item">
+        <div class="src-top">
+          <span class="src-name">${s.label}</span>
+          <span class="badge ${badgeClass}">${s.last_run_status}</span>
+        </div>
+        <div class="src-cities">${(s.cities||[]).join(', ')}</div>
+        <div class="src-scope">${s.scope}</div>
+        <div class="src-meta">${s.cadence} · last ran ${fmtAgo(s.last_run_at)}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderManual(list){
+  return list.map(s => `
+    <div class="src-item">
+      <div class="src-top">
+        <span class="src-name">${s.city}</span>
+        <span class="badge manual">${s.adapter_type}</span>
+      </div>
+      <div class="src-cities">${s.platform || ''}</div>
+      <div class="src-meta">last manual pass: ${s.last_run_at ? fmtAgo(s.last_run_at) : 'never'} ${s.last_run_status ? '· ' + s.last_run_status : ''}</div>
+    </div>`).join('');
+}
+
+async function loadSourceRegistry(){
+  const out = document.getElementById('registryOutput');
+  try{
+    const res = await fetch('/api/source-registry');
+    const data = await res.json();
+    out.innerHTML = `
+      <div class="section-label">Automated (runs in code)</div>
+      ${renderAutomated(data.automated || [])}
+      <div class="section-label">Manually tracked / not yet coded</div>
+      ${renderManual(data.manual || []) || '<div class="src-item">None tracked yet</div>'}
+    `;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
 loadStats();
+loadSourceRegistry();
 </script>
 </body>
 </html>
