@@ -1596,22 +1596,23 @@ function buildDigestHtml(byDay, unsubscribeUrl) {
         ? `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;background:#D4EBC9;color:#3A5C2A;">Free</span>`
         : `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;background:#E8DED0;color:#5C4A38;">Paid</span>`;
       const cityPill = `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;background:#9B5C2A;color:#ffffff;margin-right:5px;">${escapeHtml(ev.city)}</span>`;
+      // A plain inline dot instead of a left-border/indent treatment \u2014
+      // some mail clients (Gmail especially) heuristically treat a colored
+      // vertical bar + indented block as quoted-reply formatting and fold
+      // it behind "Show quoted text", which is exactly what happened with
+      // the previous card design.
+      const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${meta.color};margin-right:7px;"></span>`;
 
       return `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;margin-bottom:7px;">
-        <tr>
-          <td width="4" style="background:${meta.color};border-radius:5px 0 0 5px;font-size:0;line-height:0;">&nbsp;</td>
-          <td style="background:#EDE2CA;border-top:1px solid #C8BA9E;border-right:1px solid #C8BA9E;border-bottom:1px solid #C8BA9E;border-radius:0 5px 5px 0;padding:9px 12px;">
-            <div style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:14.5px;color:#2C1F14;line-height:1.25;">${escapeHtml(ev.title)}</div>
-            <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:5px;">
-              <tr>
-                <td style="font-family:Consolas,'Courier New',monospace;font-weight:700;font-size:12px;color:#5C3A1E;padding-right:8px;white-space:nowrap;">${escapeHtml(ev.display_time)}</td>
-                <td>${cityPill}${costPill}</td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>`;
+      <div style="background:#EDE2CA;border:1px solid #C8BA9E;border-radius:8px;padding:9px 12px;margin-bottom:7px;">
+        <div style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:14.5px;color:#2C1F14;line-height:1.25;">${dot}${escapeHtml(ev.title)}</div>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:5px;">
+          <tr>
+            <td style="font-family:Consolas,'Courier New',monospace;font-weight:700;font-size:12px;color:#5C3A1E;padding-right:8px;white-space:nowrap;">${escapeHtml(ev.display_time)}</td>
+            <td>${cityPill}${costPill}</td>
+          </tr>
+        </table>
+      </div>`;
     }).join("");
 
     const overflow = totalCount > evs.length
@@ -1627,6 +1628,8 @@ function buildDigestHtml(byDay, unsubscribeUrl) {
     ? dayBlocks
     : `<p style="font-family:'DM Sans',Arial,sans-serif;color:#7A6650;font-size:13px;">No events loaded for the next few days yet \u2014 check the app directly.</p>`;
 
+  const ctaButton = `<a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2C1F14;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:9px;font-family:'DM Sans',Arial,sans-serif;font-size:13.5px;font-weight:600;">Open Playroute \u2192</a>`;
+
   return `
   <div style="background:#EDE2CA;padding:24px 12px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;">
@@ -1634,11 +1637,10 @@ function buildDigestHtml(byDay, unsubscribeUrl) {
         <div style="text-align:center;">
           <span style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:22px;color:#2C1F14;">Playroute</span>
         </div>
-        <p style="text-align:center;color:#7A6650;font-family:'DM Sans',Arial,sans-serif;font-size:12.5px;margin:3px 0 16px;">A sneak peek at what's coming up for the kids \u2014 see everything in the app.</p>
+        <p style="text-align:center;color:#7A6650;font-family:'DM Sans',Arial,sans-serif;font-size:12.5px;margin:3px 0 14px;">A sneak peek at what's coming up for the kids \u2014 see everything in the app.</p>
+        <div style="text-align:center;margin-bottom:18px;">${ctaButton}</div>
         ${bodyContent}
-        <div style="text-align:center;margin:20px 0 12px;">
-          <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2C1F14;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:9px;font-family:'DM Sans',Arial,sans-serif;font-size:13.5px;font-weight:600;">Open Playroute \u2192</a>
-        </div>
+        <div style="text-align:center;margin:20px 0 12px;">${ctaButton}</div>
         <p style="text-align:center;font-family:'DM Sans',Arial,sans-serif;font-size:11px;color:#B5A88F;margin-top:14px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#B5A88F;">Unsubscribe</a></p>
       </td></tr>
     </table>
