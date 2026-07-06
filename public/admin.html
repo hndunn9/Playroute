@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playroute Admin</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:'DM Sans',-apple-system,sans-serif;
+    background:#EDE2CA;color:#2C1F14;
+    padding:20px 16px 60px;
+    max-width:520px;margin:0 auto;
+  }
+  h1{
+    font-family:Georgia,serif;font-size:22px;margin-bottom:4px;
+  }
+  .subtitle{color:#7A6650;font-size:13px;margin-bottom:24px;}
+  .card{
+    background:#fff;border:1px solid #C8BA9E;border-radius:12px;
+    padding:16px;margin-bottom:14px;
+  }
+  .card h2{font-size:15px;margin-bottom:4px;}
+  .card p{font-size:12.5px;color:#7A6650;margin-bottom:12px;line-height:1.5;}
+  .card input[type=email]{
+    width:100%;padding:10px;border:1px solid #C8BA9E;border-radius:8px;
+    font-size:14px;margin-bottom:10px;font-family:inherit;
+  }
+  button{
+    width:100%;padding:11px;border:none;border-radius:8px;
+    background:#9B5C2A;color:#fff;font-size:14px;font-weight:600;
+    cursor:pointer;font-family:inherit;
+  }
+  button:active{opacity:0.85;}
+  button.secondary{background:#D4A96A;color:#2C1F14;}
+  button:disabled{opacity:0.5;cursor:default;}
+  .result{
+    margin-top:10px;padding:10px;border-radius:8px;
+    font-family:'DM Mono',monospace;font-size:11.5px;
+    white-space:pre-wrap;word-break:break-word;line-height:1.5;
+    display:none;
+  }
+  .result.show{display:block;}
+  .result.ok{background:#e8f0e0;color:#3a5a2a;}
+  .result.err{background:#f5e0e0;color:#7a2a2a;}
+  .result.loading{background:#f0ece0;color:#7A6650;}
+  .stats-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;}
+  .stat-box{background:#F5EFDF;border-radius:8px;padding:10px;text-align:center;}
+  .stat-num{font-size:22px;font-weight:700;color:#9B5C2A;}
+  .stat-label{font-size:10.5px;color:#7A6650;text-transform:uppercase;letter-spacing:0.04em;}
+  .breakdown{margin-top:12px;font-size:12.5px;}
+  .breakdown-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #EDE2CA;}
+  .warn{
+    background:#F5EFDF;border:1px dashed #C8BA9E;border-radius:8px;
+    padding:10px;font-size:11.5px;color:#7A6650;margin-bottom:16px;
+  }
+</style>
+</head>
+<body>
+
+  <h1>Playroute Admin</h1>
+  <div class="subtitle">Private control panel — not linked from the app</div>
+
+  <div class="warn">⚠️ This page has no password. Don't share this URL. Bookmark it to your home screen for quick access.</div>
+
+  <div class="card">
+    <h2>📊 Live stats</h2>
+    <p>Pulls straight from /api/stats — active users, clicks, newsletter visits.</p>
+    <button onclick="loadStats()">Refresh stats</button>
+    <div id="statsOutput"></div>
+  </div>
+
+  <div class="card">
+    <h2>✉️ Send test digest</h2>
+    <p>Sends this week's real digest content to one address only. Doesn't touch your subscriber list.</p>
+    <input type="email" id="testEmail" placeholder="you@example.com" value="hndunn9@gmail.com">
+    <button onclick="sendTestDigest()">Send test digest</button>
+    <div class="result" id="digestResult"></div>
+  </div>
+
+  <div class="card">
+    <h2>🔍 Run pending-events scan now</h2>
+    <p>Normally runs Sunday at noon MT. Re-checks known sources and emails you if anything new turns up for review.</p>
+    <button class="secondary" onclick="runAction('/api/pending-scan-now', 'pendingResult')">Run scan now</button>
+    <div class="result" id="pendingResult"></div>
+  </div>
+
+  <div class="card">
+    <h2>🔄 Run all scrapers now</h2>
+    <p>Manually triggers the library iCal feeds, Mead's calendar, and everything else that normally runs daily.</p>
+    <button class="secondary" onclick="runAction('/api/scrape-now', 'scrapeResult')">Run scrapers now</button>
+    <div class="result" id="scrapeResult"></div>
+  </div>
+
+  <div class="card">
+    <h2>⚠️ Send real digest to all subscribers</h2>
+    <p>This actually emails everyone currently subscribed. Use with care.</p>
+    <button style="background:#7a2a2a;" onclick="sendRealDigest()">Send real digest to everyone</button>
+    <div class="result" id="realDigestResult"></div>
+  </div>
+
+<script>
+async function runAction(path, resultId, method='POST'){
+  const el = document.getElementById(resultId);
+  el.className = 'result show loading';
+  el.textContent = 'Running…';
+  try{
+    const res = await fetch(path, {method});
+    const data = await res.json();
+    el.className = 'result show ' + (res.ok ? 'ok' : 'err');
+    el.textContent = JSON.stringify(data, null, 2);
+  }catch(err){
+    el.className = 'result show err';
+    el.textContent = 'Error: ' + err.message;
+  }
+}
+
+function sendTestDigest(){
+  const email = document.getElementById('testEmail').value.trim();
+  if(!email){ alert('Enter an email first'); return; }
+  runAction(`/api/digest-now?email=${encodeURIComponent(email)}`, 'digestResult');
+}
+
+function sendRealDigest(){
+  if(!confirm('This will email EVERY active subscriber right now. Are you sure?')) return;
+  runAction('/api/digest-now', 'realDigestResult');
+}
+
+async function loadStats(){
+  const out = document.getElementById('statsOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/stats');
+    const s = await res.json();
+    out.innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-box"><div class="stat-num">${s.daily_active_users}</div><div class="stat-label">DAU</div></div>
+        <div class="stat-box"><div class="stat-num">${s.weekly_active_users}</div><div class="stat-label">WAU</div></div>
+        <div class="stat-box"><div class="stat-num">${s.page_views_7d}</div><div class="stat-label">Views (wk)</div></div>
+        <div class="stat-box"><div class="stat-num">${s.link_clicks_7d}</div><div class="stat-label">Clicks (wk)</div></div>
+        <div class="stat-box"><div class="stat-num">${s.newsletter_visits_7d}</div><div class="stat-label">Newsletter visits</div></div>
+        <div class="stat-box"><div class="stat-num">${s.newsletter_unique_visitors_7d}</div><div class="stat-label">Newsletter uniques</div></div>
+      </div>
+      <div class="breakdown">
+        <strong>Clicks by type (7d):</strong>
+        ${(s.link_clicks_by_type_7d||[]).map(c=>`<div class="breakdown-row"><span>${c.category||'(none)'}</span><span>${c.n}</span></div>`).join('') || '<div class="breakdown-row">No clicks yet</div>'}
+      </div>
+      <div class="breakdown">
+        <strong>Top cities (7d):</strong>
+        ${(s.top_cities_7d||[]).map(c=>`<div class="breakdown-row"><span>${c.city}</span><span>${c.n}</span></div>`).join('') || '<div class="breakdown-row">No data yet</div>'}
+      </div>
+    `;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
+loadStats();
+</script>
+</body>
+</html>
