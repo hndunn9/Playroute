@@ -78,21 +78,23 @@ body{
   content:"";
   position:absolute;
   inset:0;
-  background:linear-gradient(180deg,#8B6C3E 0%,#C49A5A 35%,#D4B07A 60%,#E8D0A0 100%);
+  background-image:url('/hero-flatirons.jpg');
+  background-size:cover;
+  background-position:center 65%;
 }
-.mountain-layer{position:absolute;bottom:0;left:0;right:0;}
-.sun{
-  position:absolute;top:14px;right:60px;
-  width:22px;height:22px;border-radius:50%;
-  background:radial-gradient(circle,#FFF8E6 40%,#F5D98A 100%);
-  box-shadow:0 0 20px rgba(255,240,180,0.6);
+.hero::after{
+  /* Scrim so the wordmark stays legible no matter what's directly behind it
+     — the photo's sky/rock/tree tones vary, this guarantees contrast. */
+  content:"";
+  position:absolute;
+  inset:0;
+  background:linear-gradient(120deg,rgba(15,18,15,0.72) 0%,rgba(15,18,15,0.35) 40%,rgba(15,18,15,0.05) 65%,transparent 80%);
 }
 .about-btn{
   flex-shrink:0;align-self:center;
   width:26px;height:26px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
-  font-family:'Playfair Display',serif;font-size:14px;font-weight:700;
-  color:var(--ink-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  color:var(--clay);cursor:pointer;-webkit-tap-highlight-color:transparent;
 }
 .support-callout{
   margin:20px 16px 4px;
@@ -113,27 +115,24 @@ body{
 }
 .support-btn-primary{background:var(--clay);color:#fff;}
 .support-btn-secondary{background:var(--wheat);color:var(--ink);}
-.mtn-far{height:55px;background:#8B7050;clip-path:polygon(0 80%,8% 45%,18% 60%,28% 35%,40% 55%,52% 28%,62% 48%,72% 30%,82% 50%,92% 38%,100% 55%,100% 100%,0 100%);}
-.mtn-mid{height:60px;background:#6B5A3E;clip-path:polygon(0 70%,10% 40%,20% 55%,32% 25%,44% 50%,58% 20%,68% 42%,80% 28%,90% 45%,100% 35%,100% 100%,0 100%);}
-.mtn-near{height:48px;background:#4A3828;clip-path:polygon(0 60%,15% 30%,30% 50%,45% 20%,60% 45%,75% 25%,88% 40%,100% 30%,100% 100%,0 100%);}
-.trees{position:absolute;bottom:0;left:0;right:0;height:52px;}
-.tree{position:absolute;bottom:0;}
 .hero-wordmark{
-  position:absolute;top:16px;left:16px;
+  position:absolute;top:14px;left:16px;
   color:#FFF8E6;
   font-family:'Playfair Display',serif;
-  font-size:20px;font-weight:700;
+  font-size:28px;font-weight:700;
   letter-spacing:0.02em;
-  text-shadow:0 2px 8px rgba(0,0,0,0.4);
-  display:flex;align-items:center;gap:8px;
+  text-shadow:0 2px 10px rgba(0,0,0,0.65),0 1px 3px rgba(0,0,0,0.8);
+  display:flex;align-items:center;gap:10px;
 }
 .hero-beta{
   font-family:'DM Sans',sans-serif;
-  font-size:9px;font-weight:500;
+  font-size:10.5px;font-weight:700;
   text-transform:uppercase;letter-spacing:0.1em;
-  color:var(--wheat);
-  border:1px solid rgba(212,169,106,0.5);
-  border-radius:3px;padding:2px 6px;
+  color:#FFF8E6;
+  background:rgba(44,31,20,0.55);
+  border:1px solid rgba(255,248,230,0.6);
+  border-radius:4px;padding:3px 8px;
+  backdrop-filter:blur(2px);
 }
 
 /* ── SECTION TABS ── */
@@ -357,6 +356,7 @@ main{
   display:inline-block;margin-top:8px;
   font-size:11px;font-weight:600;color:var(--clay);text-decoration:none;
 }
+.pg-maps-link svg{vertical-align:-2px;margin-right:2px;}
 .pg-maps-link:active{opacity:0.7;}
 
 /* ── HIKES ── */
@@ -567,16 +567,6 @@ footer{
 <!-- ── HEADER ── -->
 <header>
   <div class="hero">
-    <div class="sun"></div>
-    <div class="mountain-layer mtn-far"></div>
-    <div class="mountain-layer mtn-mid"></div>
-    <div class="mountain-layer mtn-near"></div>
-    <div class="trees">
-      <div class="tree" style="left:18px;"><svg width="20" height="46" viewBox="0 0 28 65"><polygon points="14,0 26,22 20,22 24,38 18,38 22,55 6,55 10,38 4,38 8,22 2,22" fill="#3D5229"/><rect x="11" y="55" width="6" height="10" fill="#2C1F14"/></svg></div>
-      <div class="tree" style="left:44px;"><svg width="16" height="36" viewBox="0 0 22 50"><polygon points="11,0 21,18 16,18 19,32 14,32 17,44 5,44 8,32 3,32 6,18 1,18" fill="#4A6632"/><rect x="9" y="44" width="4" height="6" fill="#2C1F14"/></svg></div>
-      <div class="tree" style="right:28px;"><svg width="28" height="46" viewBox="0 0 36 60"><ellipse cx="18" cy="24" rx="16" ry="20" fill="#4A5C2E"/><rect x="15" y="44" width="6" height="16" fill="#2C1F14"/></svg></div>
-      <div class="tree" style="right:60px;"><svg width="13" height="30" viewBox="0 0 18 40"><polygon points="9,0 17,14 13,14 15,26 11,26 13,34 5,34 7,26 3,26 5,14 1,14" fill="#3D5229"/><rect x="7" y="34" width="4" height="6" fill="#2C1F14"/></svg></div>
-    </div>
     <h1 class="hero-wordmark">Playroute <span class="hero-beta">Beta</span></h1>
     <p class="sr-only">Find things to do with kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado — storytimes, playgrounds, hikes, farmers markets, and family events updated daily.</p>
   </div>
@@ -584,19 +574,19 @@ footer{
   <!-- Section tabs -->
   <div class="section-tabs">
     <div class="section-tab active" onclick="scrollToSection('section-events')">
-      <div class="tab-icon">📅</div>
+      <div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/></svg></div>
       <div class="tab-label">Events</div>
       <div class="tab-active-dot"></div>
     </div>
     <div class="section-tab" onclick="scrollToSection('section-playgrounds')">
-      <div class="tab-icon">🛝</div>
+      <div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><line x1="6" y1="21" x2="6" y2="6"/><line x1="6" y1="9" x2="10" y2="9"/><line x1="6" y1="13" x2="10" y2="13"/><line x1="6" y1="17" x2="10" y2="17"/><path d="M6 6 C 14 6, 18 12, 20 21"/></svg></div>
       <div class="tab-label">Parks</div>
     </div>
     <div class="section-tab" onclick="scrollToSection('section-hikes')">
-      <div class="tab-icon">🥾</div>
+      <div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M6 3v8l-3 4v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1c0-2-1.5-3-4-3.5L11 13.5V3"/><line x1="6" y1="6" x2="9" y2="6"/><line x1="6" y1="9" x2="9" y2="9"/></svg></div>
       <div class="tab-label">Hikes</div>
     </div>
-    <div class="about-btn" onclick="openAboutDrawer()" aria-label="About and feedback">🧡</div>
+    <div class="about-btn" onclick="openAboutDrawer()" aria-label="About and feedback"><svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M12 20s-7-4.5-9.5-9C.8 7.8 2 4 5.5 4c2 0 3.5 1.2 4.5 3 1-1.8 2.5-3 4.5-3 3.5 0 4.7 3.8 3 7-2.5 4.5-9.5 9-9.5 9z"/></svg></div>
   </div>
 
   <!-- Filters -->
@@ -724,7 +714,7 @@ footer{
     <div class="drawer-body" id="drawerBody"></div>
     <div style="display:flex;gap:8px;margin:4px 18px 16px;">
       <a class="drawer-cta" id="drawerCta" href="#" target="_blank" rel="noopener noreferrer" onclick="trackClick(this.href, window._drawerMeta)" style="margin:0;flex:1;width:auto;">View original site ↗</a>
-      <a id="drawerCalBtn" href="#" download="event.ics" style="margin:0;flex:0 0 auto;width:48px;display:flex;align-items:center;justify-content:center;background:var(--wheat);border-radius:var(--radius-md);color:var(--ink);text-decoration:none;font-size:19px;" title="Add to calendar" aria-label="Add to calendar">🗓️</a>
+      <a id="drawerCalBtn" href="#" download="event.ics" style="margin:0;flex:0 0 auto;width:48px;display:flex;align-items:center;justify-content:center;background:var(--wheat);border-radius:var(--radius-md);color:var(--ink);text-decoration:none;font-size:19px;" title="Add to calendar" aria-label="Add to calendar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="12" y1="13" x2="12" y2="17"/><line x1="10" y1="15" x2="14" y2="15"/></svg></a>
     </div>
   </div>
 </div>
@@ -748,15 +738,15 @@ footer{
 <!-- ── BOTTOM NAV ── -->
 <div class="bottom-nav">
   <div class="bottom-nav-item active" onclick="scrollToSection('section-events')">
-    <div class="nav-icon">🌿</div>
+    <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M4 20c0-9 5-15 16-16-1 11-7 16-16 16z"/><path d="M6 18c4-4 7-7 12-13"/></svg></div>
     <div class="nav-label">Explore</div>
   </div>
   <div class="bottom-nav-item" onclick="scrollToSection('section-playgrounds')">
-    <div class="nav-icon">🛝</div>
+    <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><line x1="6" y1="21" x2="6" y2="6"/><line x1="6" y1="9" x2="10" y2="9"/><line x1="6" y1="13" x2="10" y2="13"/><line x1="6" y1="17" x2="10" y2="17"/><path d="M6 6 C 14 6, 18 12, 20 21"/></svg></div>
     <div class="nav-label">Parks</div>
   </div>
   <div class="bottom-nav-item" onclick="scrollToSection('section-hikes')">
-    <div class="nav-icon">🥾</div>
+    <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M6 3v8l-3 4v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1c0-2-1.5-3-4-3.5L11 13.5V3"/><line x1="6" y1="6" x2="9" y2="6"/><line x1="6" y1="9" x2="9" y2="9"/></svg></div>
     <div class="nav-label">Hikes</div>
   </div>
 </div>
@@ -776,6 +766,16 @@ function blazeSvg(cat){
 
 const API_BASE = "";
 let events = [], playgrounds = [], hikes = [], dataLoadFailed = false;
+
+// Shared inline-SVG icons (replacing emoji) used across dynamically-rendered
+// cards/drawers. Same stroke weight/style as the static nav icons above.
+const ICONS = {
+  pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="13" height="13" style="flex-shrink:0;"><path d="M12 22s7-7.5 7-13a7 7 0 0 0-14 0c0 5.5 7 13 7 13z"/><circle cx="12" cy="9" r="2.3"/></svg>',
+  ticket: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1.5a1.5 1.5 0 0 0 0 3V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2.5a1.5 1.5 0 0 0 0-3V8z"/><line x1="14" y1="6" x2="14" y2="17" stroke-dasharray="2,2"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/></svg>',
+  calendarAdd: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="12" y1="13" x2="12" y2="17"/><line x1="10" y1="15" x2="14" y2="15"/></svg>',
+  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none"/></svg>'
+};
 
 async function loadData(){
   try{
@@ -986,10 +986,10 @@ function openDrawer(ev){
   window._drawerMeta = {id:ev.id, title:ev.title, city:ev.city, category:ev.category};
   const body = document.getElementById('drawerBody');
   body.innerHTML = `
-    <div class="drawer-row"><div class="drawer-row-icon">🗓</div><div class="drawer-row-text"><strong>${ev.occurrence_label||ev.day_of_week}</strong> · ${ev.display_time}</div></div>
-    <div class="drawer-row"><div class="drawer-row-icon">📍</div><div class="drawer-row-text">${ev.source}</div></div>
-    <div class="drawer-row"><div class="drawer-row-icon">🎟</div><div class="drawer-row-text"><strong>${ev.cost==='free'?'Free':'Paid'}</strong> · Ages ${formatAgeRange(ev.age_min,ev.age_max)}</div></div>
-    ${ev.note?`<div class="drawer-row"><div class="drawer-row-icon">ℹ️</div><div class="drawer-row-text">${ev.note}</div></div>`:''}
+    <div class="drawer-row"><div class="drawer-row-icon">${ICONS.calendar}</div><div class="drawer-row-text"><strong>${ev.occurrence_label||ev.day_of_week}</strong> · ${ev.display_time}</div></div>
+    <div class="drawer-row"><div class="drawer-row-icon">${ICONS.pin}</div><div class="drawer-row-text">${ev.source}</div></div>
+    <div class="drawer-row"><div class="drawer-row-icon">${ICONS.ticket}</div><div class="drawer-row-text"><strong>${ev.cost==='free'?'Free':'Paid'}</strong> · Ages ${formatAgeRange(ev.age_min,ev.age_max)}</div></div>
+    ${ev.note?`<div class="drawer-row"><div class="drawer-row-icon">${ICONS.info}</div><div class="drawer-row-text">${ev.note}</div></div>`:''}
   `;
   overlay.classList.add('open');
   setTimeout(()=>drawer.classList.add('open'),10);
@@ -1057,7 +1057,7 @@ function renderFeed(){
           <div class="card-detail-note">${ev.note||""}</div>
           <div class="card-detail-actions">
             <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}'})">View source ↗</a>
-            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">🗓️</a>
+            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
           </div>
         </div>
       </div>
@@ -1103,7 +1103,7 @@ function renderPlaygrounds(){
         <div class="pg-city">${pg.city}</div>
         <div class="pg-detail">${pg.detail||""}</div>
         <div class="pg-tips">${tips.map(t=>`<span class="pg-tip">${t}</span>`).join("")}</div>
-        ${pg.source_url?`<a class="pg-maps-link" href="${pg.source_url}" target="_blank" rel="noopener noreferrer" onclick='trackClick("${pg.source_url}",{title:"${(pg.name||"").replace(/"/g,"'")}",city:"${pg.city}",category:"playground"})'>📍 Open in Maps</a>`:""}
+        ${pg.source_url?`<a class="pg-maps-link" href="${pg.source_url}" target="_blank" rel="noopener noreferrer" onclick='trackClick("${pg.source_url}",{title:"${(pg.name||"").replace(/"/g,"'")}",city:"${pg.city}",category:"playground"})'>${ICONS.pin} Open in Maps</a>`:""}
       </div>
     `;
     grid.appendChild(card);
@@ -1126,7 +1126,7 @@ function renderHikes(){
       </div>
       <div class="hike-detail">${h.detail||""}</div>
       <div class="hike-detail" style="color:var(--sky);margin-top:4px;">🚼 ${h.stroller_note||""}</div>
-      ${h.source_url?`<a class="pg-maps-link" href="${h.source_url}" target="_blank" rel="noopener noreferrer" onclick='trackClick("${h.source_url}",{title:"${(h.name||"").replace(/"/g,"'")}",city:"${h.city}",category:"hike"})'>📍 Open in Maps</a>`:""}
+      ${h.source_url?`<a class="pg-maps-link" href="${h.source_url}" target="_blank" rel="noopener noreferrer" onclick='trackClick("${h.source_url}",{title:"${(h.name||"").replace(/"/g,"'")}",city:"${h.city}",category:"hike"})'>${ICONS.pin} Open in Maps</a>`:""}
     `;
     list.appendChild(card);
   });
@@ -1212,7 +1212,7 @@ function renderRecentlyPassed(){
           <div class="card-detail-note">${ev.note||""}</div>
           <div class="card-detail-actions">
             <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();">View source ↗</a>
-            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">🗓️</a>
+            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
           </div>
         </div>
       </div>
