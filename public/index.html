@@ -624,12 +624,12 @@ footer{
 
   <div class="support-callout">
     <div class="support-row">
-      <div class="support-callout-text" id="feedbackCalloutText">💬 Got a tip, a typo, or a wish-list item? We'd love to hear it.</div>
-      <a class="support-btn-primary" href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A">Send feedback</a>
-    </div>
-    <div class="support-row">
       <div class="support-callout-text" id="coffeeCalloutText">🧡 I built this app — buy my wife, the stay-at-home parent who inspired it, a coffee.</div>
       <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (footer callout)',category:'support'})">☕ Wife's coffee fund</a>
+    </div>
+    <div class="support-row">
+      <div class="support-callout-text" id="feedbackCalloutText">💬 Got a tip, a typo, or a wish-list item? We'd love to hear it.</div>
+      <a class="support-btn-primary" href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A">Send feedback</a>
     </div>
   </div>
 
@@ -778,7 +778,8 @@ const ICONS = {
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/></svg>',
   calendarAdd: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="12" y1="13" x2="12" y2="17"/><line x1="10" y1="15" x2="14" y2="15"/></svg>',
   info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none"/></svg>',
-  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>'
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>',
+  sparkle: '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15" style="vertical-align:-2px;"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg>'
 };
 
 async function loadData(){
@@ -1012,15 +1013,18 @@ function openAboutDrawer(){
   setTimeout(()=>document.getElementById('aboutDrawer').classList.add('open'),10);
   const statEl = document.getElementById('discoveryStat');
   if(statEl && !statEl.dataset.loaded){
+    statEl.textContent = 'Loading…';
     fetch(`${API_BASE}/api/public-stats`)
       .then(r=>r.json())
       .then(d=>{
         if(d && typeof d.events_discovered_all_time === 'number'){
-          statEl.textContent = `🎉 ${d.events_discovered_all_time.toLocaleString()} events discovered through Playroute so far`;
+          statEl.innerHTML = `${ICONS.sparkle} ${d.events_discovered_all_time.toLocaleString()} events discovered through Playroute so far`;
           statEl.dataset.loaded = '1';
+        } else {
+          statEl.textContent = '';
         }
       })
-      .catch(()=>{});
+      .catch(()=>{ statEl.textContent = ''; });
   }
 }
 function closeAboutDrawer(){
