@@ -641,307 +641,12 @@ async function runHtmlScrape(env) {
     let count = 0;
     for (const ev of events) {
       await upsertEvent(env, ev);
-      await logScrapeActivity(env, "html-scrape", ev);
       count++;
     }
     results.push({ source: "WOW Children's Museum", status: "ok", eventsUpserted: count });
   } catch (err) {
     results.push({ source: "WOW Children's Museum", status: "error", error: String(err) });
   }
-  await logJobRun(env, "html-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
-  return results;
-}
-
-// ---------------------------------------------------------------------
-// Longmont Public Library — WordPress "The Events Calendar" plugin.
-// This environment can't confirm an iCal/JSON export is reachable, but the
-// plugin's event permalinks reliably embed the date for dated instances:
-//   https://longmontcolorado.gov/event/{slug}/{YYYY-MM-DD}/
-// That means the two fields riskiest to get wrong — URL and date — don't
-// depend on this site's exact CSS classes at all. Only the title (anchor
-// text) and time (nearest time-range text found after the link, not tied
-// to a specific selector) do, so minor markup/theme differences shouldn't
-// break this outright the way a class-name-dependent parser would.
-//
-// Scope is deliberately narrow on purpose: only titles matching a known,
-// already-verified recurring children's/family program name are auto-added
-// (LONGMONT_TITLE_ALLOWLIST, built from manually confirming each of these
-// programs' real posting history earlier). One-off named specials
-// (concerts, visiting performers, etc.) still need a human to set
-// age/cost/category correctly, so those are left for manual review rather
-// than guessed at — same philosophy as the Mead scraper below.
-// ---------------------------------------------------------------------
-
-const LONGMONT_LIBRARY_CATEGORY_URL = "https://longmontcolorado.gov/events/category/library/";
-const LONGMONT_MAX_PAGES = 6; // confirmed reachable (~5-6 weeks of real postings) during manual testing
-
-const LONGMONT_TITLE_ALLOWLIST = [
-  { match: /^baby storytime$/i, category: "library", age_min: 0, age_max: 2 },
-  { match: /^baby stay\s*&?\s*play/i, category: "library", age_min: 0, age_max: 2 },
-  { match: /^toddler storytime$/i, category: "library", age_min: 1.5, age_max: 3 },
-  { match: /^toddler stay\s*&?\s*play/i, category: "library", age_min: 2, age_max: 3 },
-  { match: /^bilingual storytime$/i, category: "library", age_min: 0, age_max: 5 },
-  { match: /^all ages storytime/i, category: "library", age_min: 0, age_max: 8 },
-  { match: /^all ages stay\s*&?\s*play/i, category: "library", age_min: 0, age_max: 4 },
-  { match: /^craft storytime$/i, category: "library", age_min: 2, age_max: 6 },
-  { match: /^yoga storytime$/i, category: "library", age_min: 2, age_max: 6 },
-  { match: /^kids club$/i, category: "library", age_min: 6, age_max: 8 },
-  { match: /^read to rover$/i, category: "library", age_min: 5, age_max: 12 },
-  { match: /^first monday craft kits$/i, category: "library", age_min: 3, age_max: 8 },
-  { match: /^mis pininos/i, category: "library", age_min: 0, age_max: 3 },
-  { match: /^kids'?\s*creative movement class$/i, category: "library", age_min: 2, age_max: 8 },
-  { match: /^dogs enjoy afternoon reading/i, category: "library", age_min: 5, age_max: 12 }
-];
-
-function longmontMatchTitle(title) {
-  return LONGMONT_TITLE_ALLOWLIST.find((rule) => rule.match.test(title.trim()));
-}
-
-// The /events/category/library/ page mixes in plenty of teen/adult/senior
-// programming alongside the family stuff (it's "library category", not
-// "children's category"). Anything matching this is clearly not
-// family-relevant and shouldn't even reach the review queue \u2014 everything
-// else that doesn't cleanly auto-add is genuinely ambiguous rather than
-// irrelevant, and gets surfaced for a human instead of silently dropped.
-const LONGMONT_REVIEW_BLOCKLIST = [
-  /\bteen\b/i, /\btween\b/i, /\bsenior\b/i, /\badult\b/i,
-  /writers?\s*group/i, /tech help/i, /resume/i, /job search/i,
-  /conversation\s*(cafe|group)/i, /book club/i, /active minds/i,
-  /history happy hour/i, /quiet\s*(writing|study)/i
-];
-
-// Matches Tribe Events Calendar's dated-instance permalink pattern, which
-// is stable across sites using this plugin regardless of theme/CSS.
-const LONGMONT_EVENT_LINK_RE = /<a\s+[^>]*href=["'](https:\/\/longmontcolorado\.gov\/event\/([a-z0-9-]+)\/(\d{4}-\d{2}-\d{2})\/)["'][^>]*>(.*?)<\/a>/gis;
-
-function parseLongmontLibraryHtml(html) {
-  const events = [];
-  const needsReview = [];
-  let m;
-  while ((m = LONGMONT_EVENT_LINK_RE.exec(html)) !== null) {
-    const [fullMatch, href, slug, eventDate, innerHtml] = m;
-    const title = decodeHtmlEntities(stripTags(innerHtml));
-    if (!title) continue;
-    if (LONGMONT_REVIEW_BLOCKLIST.some((re) => re.test(title))) continue; // clearly not family-relevant
-
-    // Scan a window of raw HTML right after the title link for a
-    // "H:MM am - H:MM pm" time range \u2014 proximity-based like the WOW
-    // parser, not tied to an exact selector.
-    const windowEnd = m.index + fullMatch.length + 500;
-    const nearbyText = decodeHtmlEntities(stripTags(html.slice(m.index + fullMatch.length, windowEnd)));
-    const timeMatch = nearbyText.match(/(\d{1,2}(?::\d{2})?\s*[ap]m)\s*-\s*(\d{1,2}(?::\d{2})?\s*[ap]m)/i);
-    const rule = longmontMatchTitle(title);
-    const startTime = timeMatch ? to24HourFromLabel(timeMatch[1]) : null;
-
-    if (rule && startTime) {
-      const displayTime = `${timeMatch[1].toUpperCase().replace(/\s+/g, " ")} \u2013 ${timeMatch[2].toUpperCase().replace(/\s+/g, " ")}`;
-      events.push({
-        title,
-        source: "Longmont Public Library",
-        city: "Longmont",
-        category: rule.category,
-        cost: "free",
-        age_min: rule.age_min,
-        age_max: rule.age_max,
-        day_of_week: undefined,
-        start_time: startTime,
-        display_time: displayTime,
-        recurrence: "dated",
-        event_date: eventDate,
-        note: "Pulled from the Longmont Public Library events calendar.",
-        source_url: href,
-        verified: 1,
-        libcal_event_id: `longmont:${slug}:${eventDate}`
-      });
-      continue;
-    }
-
-    // Passed the relevance filter but either the title isn't a known
-    // recognized program, or a time couldn't be confidently placed this
-    // pass — surface it for a human glance rather than dropping it. The
-    // date itself is always known (it's embedded in the URL), so include
-    // it even though the time/day-of-week couldn't be confidently derived —
-    // this is what lets the approval flow auto-fill day_of_week later.
-    needsReview.push({
-      title,
-      source: "Longmont Public Library",
-      city: "Longmont",
-      event_date: eventDate,
-      note: (nearbyText || "").slice(0, 300) || "Couldn't confidently auto-parse a time for this listing \u2014 see source link.",
-      source_url: href,
-      dedup_key: `longmont-review:${slug}:${eventDate}`
-    });
-  }
-  return { events, needsReview };
-}
-
-async function fetchAndNormalizeLongmontLibrary() {
-  const allEvents = [];
-  const allNeedsReview = [];
-  let url = LONGMONT_LIBRARY_CATEGORY_URL;
-  for (let page = 1; page <= LONGMONT_MAX_PAGES && url; page++) {
-    const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" } });
-    if (!res.ok) throw new Error(`Longmont library calendar fetch failed for ${url}: ${res.status}`);
-    const html = await res.text();
-    const { events, needsReview } = parseLongmontLibraryHtml(html);
-    allEvents.push(...events);
-    allNeedsReview.push(...needsReview);
-    url = page < LONGMONT_MAX_PAGES ? `${LONGMONT_LIBRARY_CATEGORY_URL}page/${page + 1}/` : null;
-  }
-  return { events: allEvents, needsReview: allNeedsReview };
-}
-
-async function runLongmontScrape(env) {
-  const results = [];
-  try {
-    const { events } = await fetchAndNormalizeLongmontLibrary();
-    let count = 0;
-    for (const ev of events) {
-      await upsertEvent(env, ev);
-      await logScrapeActivity(env, "longmont-scrape", ev);
-      count++;
-    }
-    if (count === 0) {
-      // These programs run almost every day \u2014 zero matches almost
-      // certainly means the page structure changed, not that nothing's
-      // happening. Fail loudly rather than silently doing nothing.
-      results.push({ source: "Longmont Public Library", status: "error", error: "0 events matched \u2014 check LONGMONT_EVENT_LINK_RE / title allowlist against the live page" });
-    } else {
-      results.push({ source: "Longmont Public Library", status: "ok", eventsUpserted: count });
-    }
-  } catch (err) {
-    results.push({ source: "Longmont Public Library", status: "error", error: String(err) });
-  }
-  await logJobRun(env, "longmont-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
-  return results;
-}
-
-// ---------------------------------------------------------------------
-// Louisville Public Library \u2014 CivicPlus/CivicEngage calendar. Event
-// permalinks (/Home/Components/Calendar/Event/{id}/{listId}) don't embed a
-// date, and the month-grid calendar view lays events out by grid position
-// rather than in a way that's safe to regex without seeing the real raw
-// markup \u2014 so rather than guess at that, this reads the site's own
-// "Children & Family Events Calendar" list page instead, which (per manual
-// inspection) renders each event with an explicit MM/DD/YYYY date range in
-// plain text next to the title \u2014 the same "MM/DD/YYYY H:MM AM - MM/DD/YYYY
-// H:MM PM" format used on every individual event page. Multi-day / date-
-// range listings are skipped on purpose (same reasoning as the Mead
-// scraper) \u2014 a single unambiguous day is required to auto-add.
-// ---------------------------------------------------------------------
-
-const LOUISVILLE_CHILDRENS_URL = "https://www.louisville-library.org/browse-find/children-s/children-s-programs";
-
-const LOUISVILLE_TITLE_ALLOWLIST = [
-  { match: /storytime/i, category: "library", age_min: 0, age_max: 5 },
-  { match: /read to rover/i, category: "library", age_min: 5, age_max: 12 },
-  { match: /messy art/i, category: "library", age_min: 2, age_max: 5 },
-  { match: /baby social hour/i, category: "library", age_min: 0, age_max: 1.92 },
-  { match: /stories in the park/i, category: "outdoor", age_min: 2, age_max: 5 },
-  { match: /music\s*(&|and)\s*movement/i, category: "library", age_min: 0, age_max: 5 }
-];
-
-function louisvilleMatchTitle(title) {
-  return LOUISVILLE_TITLE_ALLOWLIST.find((rule) => rule.match.test(title));
-}
-
-const LOUISVILLE_EVENT_LINK_RE = /<a\s+[^>]*href=["']([^"']*\/Home\/Components\/Calendar\/Event\/(\d+)\/(\d+)[^"']*)["'][^>]*>(.*?)<\/a>/gis;
-const LOUISVILLE_DATE_RE = /(\d{2}\/\d{2}\/\d{4})\s+(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*(\d{2}\/\d{2}\/\d{4})\s+(\d{1,2}:\d{2}\s*[AP]M)/i;
-
-function parseLouisvilleChildrensHtml(html) {
-  const events = [];
-  const needsReview = [];
-  let m;
-  while ((m = LOUISVILLE_EVENT_LINK_RE.exec(html)) !== null) {
-    const [fullMatch, href, id] = m;
-    const title = decodeHtmlEntities(stripTags(m[4]));
-    if (!title) continue;
-
-    const windowEnd = m.index + fullMatch.length + 300;
-    const nearbyText = decodeHtmlEntities(stripTags(html.slice(m.index + fullMatch.length, windowEnd)));
-    const dateMatch = nearbyText.match(LOUISVILLE_DATE_RE);
-    const rule = louisvilleMatchTitle(title);
-    const resolvedHref = href.startsWith("http") ? href : `https://www.louisville-library.org${href}`;
-
-    if (rule && dateMatch && dateMatch[1] === dateMatch[3]) {
-      const [, startDate, startLabel, , endLabel] = dateMatch;
-      const [mo, day, year] = startDate.split("/");
-      const eventDate = `${year}-${mo}-${day}`;
-      const startTime = to24HourFromLabel(startLabel);
-      if (startTime) {
-        events.push({
-          title,
-          source: "Louisville Public Library",
-          city: "Louisville",
-          category: rule.category,
-          cost: "free",
-          age_min: rule.age_min,
-          age_max: rule.age_max,
-          day_of_week: undefined,
-          start_time: startTime,
-          display_time: `${startLabel.toUpperCase()} \u2013 ${endLabel.toUpperCase()}`,
-          recurrence: "dated",
-          event_date: eventDate,
-          note: "Pulled from Louisville Public Library's Children & Family Events Calendar.",
-          source_url: resolvedHref,
-          verified: 1,
-          libcal_event_id: `louisville:${id}:${eventDate}`
-        });
-        continue;
-      }
-    }
-
-    // Everything on this page is already the library's own "Children &
-    // Family" category — so an unrecognized title, a multi-day/date-range
-    // listing (dateMatch[1] !== dateMatch[3]), or a missing time isn't
-    // irrelevant, it's just not confident enough to auto-add. Surface it
-    // for a human instead of dropping it. When a start date is at least
-    // extractable (even from a multi-day range), include it so the
-    // approval flow can auto-fill day_of_week later.
-    let reviewEventDate = null;
-    if (dateMatch) {
-      const [mo, day, year] = dateMatch[1].split("/");
-      reviewEventDate = `${year}-${mo}-${day}`;
-    }
-    needsReview.push({
-      title,
-      source: "Louisville Public Library",
-      city: "Louisville",
-      event_date: reviewEventDate,
-      note: (dateMatch ? dateMatch[0] : nearbyText).slice(0, 300) || "Couldn't confidently auto-parse this listing \u2014 see source link.",
-      source_url: resolvedHref,
-      dedup_key: `louisville-review:${id}`
-    });
-  }
-  return { events, needsReview };
-}
-
-async function fetchAndNormalizeLouisvilleChildrens() {
-  const res = await fetch(LOUISVILLE_CHILDRENS_URL, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" } });
-  if (!res.ok) throw new Error(`Louisville children's calendar fetch failed: ${res.status}`);
-  const html = await res.text();
-  return parseLouisvilleChildrensHtml(html);
-}
-
-async function runLouisvilleScrape(env) {
-  const results = [];
-  try {
-    const { events } = await fetchAndNormalizeLouisvilleChildrens();
-    let count = 0;
-    for (const ev of events) {
-      await upsertEvent(env, ev);
-      await logScrapeActivity(env, "louisville-scrape", ev);
-      count++;
-    }
-    if (count === 0) {
-      results.push({ source: "Louisville Public Library", status: "error", error: "0 events matched \u2014 check LOUISVILLE_EVENT_LINK_RE / LOUISVILLE_DATE_RE against the live page" });
-    } else {
-      results.push({ source: "Louisville Public Library", status: "ok", eventsUpserted: count });
-    }
-  } catch (err) {
-    results.push({ source: "Louisville Public Library", status: "error", error: String(err) });
-  }
-  await logJobRun(env, "louisville-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -1053,9 +758,7 @@ function meadDisplayTime(displayHour) {
 }
 
 async function fetchAndNormalizeMeadCalendar() {
-  const res = await fetch("https://www.townofmead.org/calendar/json", {
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" }
-  });
+  const res = await fetch("https://www.townofmead.org/calendar/json");
   if (!res.ok) throw new Error(`Mead calendar fetch failed: ${res.status}`);
   const items = await res.json();
 
@@ -1132,14 +835,12 @@ async function runMeadScrape(env) {
     let count = 0;
     for (const ev of events) {
       await upsertEvent(env, ev);
-      await logScrapeActivity(env, "mead-scrape", ev);
       count++;
     }
     results.push({ source: "Town of Mead", status: "ok", eventsUpserted: count });
   } catch (err) {
     results.push({ source: "Town of Mead", status: "error", error: String(err) });
   }
-  await logJobRun(env, "mead-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -1199,20 +900,6 @@ function mountainMidnightThisWeekUTC() {
   mtNow.setDate(mtNow.getDate() - day + 1);
   return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
 }
-// Same instant, but 24h/7d earlier \u2014 used as the trend-comparison baseline
-// so each stat card can show growth/decline vs the prior period rather than
-// just a raw current number.
-function mountainMidnightYesterdayUTC() {
-  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
-  mtNow.setDate(mtNow.getDate() - 1);
-  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
-}
-function mountainMidnightPriorWeekUTC() {
-  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
-  const day = mtNow.getDay() || 7;
-  mtNow.setDate(mtNow.getDate() - day + 1 - 7);
-  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
-}
 
 async function hashVisitor(request) {
   const ip = request.headers.get("CF-Connecting-IP") || "";
@@ -1233,63 +920,59 @@ async function handlePageView(request, env) {
     if (body && body.source) source = String(body.source).slice(0, 50);
   } catch { /* no body / not JSON — fine, organic visit */ }
   await env.DB.prepare(
-    `INSERT INTO page_views (visitor_hash, city, country, device_type, source) VALUES (?, ?, ?, ?, ?)`
-  ).bind(visitorHash, cf.city || null, cf.country || null, deviceType, source).run();
+    `INSERT INTO page_views (visitor_hash, city, country, region, device_type, source) VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(visitorHash, cf.city || null, cf.country || null, cf.regionCode || null, deviceType, source).run();
   return json({ ok: true });
 }
 
 async function handleStats(env) {
   const todayStart = mountainMidnightTodayUTC();
-  const yesterdayStart = mountainMidnightYesterdayUTC();
   const weekStart = mountainMidnightThisWeekUTC();
-  const priorWeekStart = mountainMidnightPriorWeekUTC();
+  // Filtering to US only — your product is Colorado-specific, but country-level
+  // geo data (from Cloudflare's edge) is reliable enough to use as the main
+  // filter; state-level data below is a bonus, finer-grained signal on top.
+  const US = `AND country = 'US'`;
 
   const dau = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ?`
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US}`
   ).bind(todayStart).first();
-  const dauPrev = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ?`
-  ).bind(yesterdayStart, todayStart).first();
-
   const wau = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ?`
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US}`
   ).bind(weekStart).first();
-  const wauPrev = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ?`
-  ).bind(priorWeekStart, weekStart).first();
-
   const totalViewsThisWeek = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ?`
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? ${US}`
   ).bind(weekStart).first();
-  const totalViewsPrevWeek = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ?`
-  ).bind(priorWeekStart, weekStart).first();
-
   const byDevice = await env.DB.prepare(
-    `SELECT device_type, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? GROUP BY device_type`
+    `SELECT device_type, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} GROUP BY device_type`
   ).bind(weekStart).all();
   const byCity = await env.DB.prepare(
-    `SELECT city, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND city IS NOT NULL GROUP BY city ORDER BY n DESC LIMIT 10`
+    `SELECT city, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND city IS NOT NULL GROUP BY city ORDER BY n DESC LIMIT 10`
+  ).bind(weekStart).all();
+
+  // Bonus, more precise signal: Cloudflare gives state-level geo for free
+  // (cf.regionCode), not just country. Since this product is Colorado-only,
+  // this tells you what fraction of "US" visits are actually in-state —
+  // useful for spotting e.g. VPN traffic or out-of-market curiosity clicks
+  // that a country-level filter alone can't catch.
+  const coloradoVisitors7d = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND region = 'CO'`
+  ).bind(weekStart).first();
+  const byRegion7d = await env.DB.prepare(
+    `SELECT region, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND region IS NOT NULL GROUP BY region ORDER BY n DESC LIMIT 10`
   ).bind(weekStart).all();
 
   // Visits that came specifically from clicking the link in a digest email
   // (tagged ?src=newsletter) — lets you see whether the newsletter is
   // actually driving people back into the app, separate from organic visits.
   const newsletterVisits1d = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND source = 'newsletter'`
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? ${US} AND source = 'newsletter'`
   ).bind(todayStart).first();
   const newsletterVisits7d = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND source = 'newsletter'`
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? ${US} AND source = 'newsletter'`
   ).bind(weekStart).first();
-  const newsletterVisits7dPrev = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? AND source = 'newsletter'`
-  ).bind(priorWeekStart, weekStart).first();
   const newsletterVisitors7d = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND source = 'newsletter'`
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND source = 'newsletter'`
   ).bind(weekStart).first();
-  const newsletterVisitors7dPrev = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? AND source = 'newsletter'`
-  ).bind(priorWeekStart, weekStart).first();
 
   // Click tracking (source links, "Open in Maps" on playgrounds/hikes, and
   // the support/feedback links) grouped by category — 1-day and 7-day windows.
@@ -1305,54 +988,36 @@ async function handleStats(env) {
   const totalClicks7d = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ?`
   ).bind(weekStart).first();
-  const totalClicks7dPrev = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ? AND clicked_at < ?`
-  ).bind(priorWeekStart, weekStart).first();
 
-  // Digest subscribers — current active total, plus how that total compared
-  // at the same point last week (subscribers who existed then and hadn't
-  // unsubscribed by then), so growth/decline is visible rather than just a
-  // raw headcount.
-  const subscribersTotal = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM subscribers WHERE active = 1`
+  // "Events discovered, all time" — a promotable number for the app itself.
+  // Counts every real signal someone found an event useful: expanding a card
+  // to read details, clicking through to the source, or adding it to their
+  // calendar. Deliberately excludes "Open in Maps" clicks on playgrounds/hikes
+  // and the coffee/feedback links, since those aren't about discovering an
+  // event. Note: this counts actions, not deduplicated unique events — someone
+  // expanding, then clicking source, then adding to calendar for the same
+  // event counts as 3, which is an honest reflection of engagement depth,
+  // not an inflated number pretending to be unique events.
+  const eventsDiscoveredAllTime = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM link_clicks WHERE category NOT IN ('playground','hike','support')`
   ).first();
-  const subscribersTotalPrev = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM subscribers WHERE created_at < ? AND (unsubscribed_at IS NULL OR unsubscribed_at >= ?)`
-  ).bind(weekStart, weekStart).first();
-  const subscribersNew7d = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM subscribers WHERE created_at >= ?`
-  ).bind(weekStart).first();
-  const subscribersNew7dPrev = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM subscribers WHERE created_at >= ? AND created_at < ?`
-  ).bind(priorWeekStart, weekStart).first();
-  const subscribersUnsubscribed7d = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM subscribers WHERE unsubscribed_at >= ?`
-  ).bind(weekStart).first();
 
   return json({
     weekly_active_users: wau?.n || 0,
-    weekly_active_users_prev: wauPrev?.n || 0,
     daily_active_users: dau?.n || 0,
-    daily_active_users_prev: dauPrev?.n || 0,
     page_views_7d: totalViewsThisWeek?.n || 0,
-    page_views_7d_prev: totalViewsPrevWeek?.n || 0,
     by_device_7d: byDevice.results || [],
     top_cities_7d: byCity.results || [],
+    colorado_visitors_7d: coloradoVisitors7d?.n || 0,
+    by_region_7d: byRegion7d.results || [],
     newsletter_visits_1d: newsletterVisits1d?.n || 0,
     newsletter_visits_7d: newsletterVisits7d?.n || 0,
-    newsletter_visits_7d_prev: newsletterVisits7dPrev?.n || 0,
     newsletter_unique_visitors_7d: newsletterVisitors7d?.n || 0,
-    newsletter_unique_visitors_7d_prev: newsletterVisitors7dPrev?.n || 0,
     link_clicks_1d: totalClicks1d?.n || 0,
     link_clicks_7d: totalClicks7d?.n || 0,
-    link_clicks_7d_prev: totalClicks7dPrev?.n || 0,
     link_clicks_by_type_1d: clicksByType1d.results || [],
     link_clicks_by_type_7d: clicksByType7d.results || [],
-    subscribers_total: subscribersTotal?.n || 0,
-    subscribers_total_prev: subscribersTotalPrev?.n || 0,
-    subscribers_new_7d: subscribersNew7d?.n || 0,
-    subscribers_new_7d_prev: subscribersNew7dPrev?.n || 0,
-    subscribers_unsubscribed_7d: subscribersUnsubscribed7d?.n || 0
+    events_discovered_all_time: eventsDiscoveredAllTime?.n || 0
   });
 }
 
@@ -1363,7 +1028,7 @@ async function upsertEvent(env, ev) {
        start_time, display_time, recurrence, event_date, note, source_url,
        verified, libcal_event_id, season_start, season_end, last_scraped_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(libcal_event_id) WHERE libcal_event_id IS NOT NULL DO UPDATE SET
+     ON CONFLICT(libcal_event_id) DO UPDATE SET
        title=excluded.title,
        source=excluded.source,
        city=excluded.city,
@@ -1418,7 +1083,6 @@ async function runScrape(env) {
       for (const raw of rawEvents) {
         const ev = normalizeEvent(raw, lib.city);
         await upsertEvent(env, ev);
-        await logScrapeActivity(env, "libcal-scrape", ev);
         count++;
       }
       results.push({ library: lib.key, status: "ok", eventsUpserted: count });
@@ -1426,7 +1090,6 @@ async function runScrape(env) {
       results.push({ library: lib.key, status: "error", error: String(err) });
     }
   }
-  await logJobRun(env, "libcal-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -1438,7 +1101,6 @@ async function runICalScrape(env) {
       let count = 0;
       for (const ev of events) {
         await upsertEvent(env, ev);
-        await logScrapeActivity(env, "ical-scrape", ev);
         count++;
       }
       results.push({ library: lib.city, status: "ok", eventsUpserted: count });
@@ -1446,7 +1108,6 @@ async function runICalScrape(env) {
       results.push({ library: lib.city, status: "error", error: String(err) });
     }
   }
-  await logJobRun(env, "ical-scrape", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -1512,128 +1173,6 @@ async function handleSources(env) {
   return json(results);
 }
 
-// Records that a scrape/scan job ran, so the admin page can always show
-// real last-run status instead of only what a manual "run now" button
-// happened to return in that one browser session. Logging failures are
-// swallowed on purpose — a broken job_runs insert should never take down
-// the actual scrape.
-async function logJobRun(env, jobName, status, details) {
-  try {
-    await env.DB.prepare(
-      `INSERT INTO job_runs (job_name, status, details) VALUES (?, ?, ?)`
-    ).bind(jobName, status, details ? JSON.stringify(details) : null).run();
-  } catch (err) {
-    console.error(`logJobRun failed for ${jobName}:`, err);
-  }
-}
-
-// Per-event audit trail, separate from job_runs' per-run summary — lets the
-// admin page answer "what exactly did the scrapers add/touch" as a plain
-// queryable table instead of digging through a JSON blob. Logging failures
-// are swallowed on purpose, same reasoning as logJobRun.
-async function logScrapeActivity(env, jobName, ev) {
-  try {
-    await env.DB.prepare(
-      `INSERT INTO scrape_activity (job_name, event_title, city, event_date, source_url) VALUES (?, ?, ?, ?, ?)`
-    ).bind(jobName, ev.title, ev.city ?? null, ev.event_date ?? null, ev.source_url ?? null).run();
-  } catch (err) {
-    console.error(`logScrapeActivity failed for ${jobName}:`, err);
-  }
-}
-
-// Single source of truth describing every scraper that's actually wired up
-// in code (as opposed to `scrape_sources`, which is a hand-maintained
-// registry of sources someone has looked at — some coded, many still
-// manual). Keep this in sync with LIBCAL_LIBRARIES / ICAL_LIBRARIES /
-// WOW_MUSEUM / the Mead scraper above whenever one of those changes.
-const AUTOMATED_SOURCES = [
-  {
-    job_name: "libcal-scrape",
-    label: "LibCal API",
-    cities: LIBCAL_LIBRARIES.map((l) => l.city),
-    scope: "Structured event feed via each library's LibCal API (birth\u20135 audience where the API supports filtering).",
-    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
-  },
-  {
-    job_name: "ical-scrape",
-    label: "iCal feed",
-    cities: ICAL_LIBRARIES.map((l) => l.city),
-    scope: "Same libraries as LibCal API, pulled via public .ics subscription feed as a second, independent pass.",
-    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
-  },
-  {
-    job_name: "html-scrape",
-    label: "HTML calendar scrape",
-    cities: [WOW_MUSEUM.city],
-    scope: "WOW Children's Museum \u2014 parses the museum's own calendar.html pages (current month + next 2).",
-    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
-  },
-  {
-    job_name: "mead-scrape",
-    label: "JSON calendar feed",
-    cities: ["Mead"],
-    scope: "Town of Mead \u2014 auto-adds only events with an unambiguous single date/time from /parksandrec/ posts; anything ambiguous or recurring is left for the pending-events check below instead of being guessed at.",
-    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
-  },
-  {
-    job_name: "longmont-scrape",
-    label: "HTML calendar scrape (Tribe Events Calendar)",
-    cities: ["Longmont"],
-    scope: "Reads the library category page's event links, which embed their date directly in the URL. Only auto-adds titles matching a known, pre-verified recurring program (storytimes, stay & play, Read to Rover, etc.) \u2014 one-off named specials are intentionally skipped and need a manual look. Confidence: written without access to this site's raw HTML in the build environment \u2014 first live run should be checked for a 0-result error before trusting it.",
-    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
-  },
-  {
-    job_name: "louisville-scrape",
-    label: "HTML calendar scrape (Children & Family list page)",
-    cities: ["Louisville"],
-    scope: "Reads the library's Children & Family Events Calendar list page, which prints an explicit MM/DD/YYYY date next to each title. Only auto-adds titles matching a known children's program name; multi-day listings and unrecognized titles are skipped. Confidence: written without access to this site's raw HTML in the build environment \u2014 first live run should be checked for a 0-result error before trusting it.",
-    cadence: "Daily (cron) + on-demand via \u201cRun all scrapers now\u201d"
-  },
-  {
-    job_name: "pending-events-scan",
-    label: "Pending-events review scan",
-    cities: ["Mead", "Longmont", "Louisville"],
-    scope: "Sweeps Mead, Longmont, and Louisville for anything their scrapers above couldn't confidently auto-add \u2014 recurring/multi-date listings, unrecognized-but-plausibly-family titles, missing times, etc. \u2014 and emails a review link for each candidate. Boulder/Erie and WOW aren't included here since they don't produce this kind of ambiguous candidate in the first place. Nothing in this scan is auto-added to the live events table without a manual Approve.",
-    cadence: "Sundays ~noon MT (cron) + on-demand via \u201cRun pending-events scan now\u201d"
-  }
-];
-
-async function handleScrapeActivity(env, url) {
-  const jobName = url.searchParams.get("job_name");
-  const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 200);
-  const query = jobName
-    ? env.DB.prepare(
-        `SELECT * FROM scrape_activity WHERE job_name = ? ORDER BY scraped_at DESC LIMIT ?`
-      ).bind(jobName, limit)
-    : env.DB.prepare(
-        `SELECT * FROM scrape_activity ORDER BY scraped_at DESC LIMIT ?`
-      ).bind(limit);
-  const { results } = await query.all();
-  return json(results);
-}
-
-async function handleSourceRegistry(env) {
-  const { results: manual } = await env.DB.prepare("SELECT * FROM scrape_sources ORDER BY city").all();
-  const jobNames = AUTOMATED_SOURCES.map((s) => s.job_name);
-  const placeholders = jobNames.map(() => "?").join(",");
-  const { results: lastRuns } = await env.DB.prepare(
-    `SELECT job_name, ran_at, status, details FROM job_runs
-     WHERE job_name IN (${placeholders})
-     AND id IN (SELECT MAX(id) FROM job_runs WHERE job_name IN (${placeholders}) GROUP BY job_name)`
-  ).bind(...jobNames, ...jobNames).all();
-  const lastRunByJob = Object.fromEntries(lastRuns.map((r) => [r.job_name, r]));
-  const automated = AUTOMATED_SOURCES.map((s) => {
-    const last = lastRunByJob[s.job_name];
-    return {
-      ...s,
-      last_run_at: last?.ran_at ?? null,
-      last_run_status: last?.status ?? "never run",
-      last_run_details: last?.details ? JSON.parse(last.details) : null
-    };
-  });
-  return json({ automated, manual });
-}
-
 async function handleTrackClick(request, env) {
   let body;
   try {
@@ -1695,25 +1234,7 @@ async function handleIngest(request, env) {
 
 const DIGEST_SITE_URL = "https://playroute.co";
 const DIGEST_MAX_PER_DAY = 6;
-const DIGEST_MAX_DAYS = 5;
-
-// Mirrors the category colors used in the app itself (see the --* and
-// .tag.* definitions in public/index.html) so the email feels like the same
-// product. Deliberately NOT using emoji here — color-emoji rendering is
-// inconsistent across email clients (some show monochrome outline glyphs,
-// some show tofu/missing-glyph boxes), so a plain color bar + text label is
-// the safer choice for something that has to look right everywhere.
-const DIGEST_CATEGORY_META = {
-  library:        { label: "Library",        color: "#7A5568" },
-  rec:            { label: "Rec & Fitness",  color: "#6E8B8A" },
-  museum:         { label: "Museum",         color: "#C79A4B" },
-  outdoor:        { label: "Outdoor",        color: "#B4805A" },
-  community:      { label: "Community",      color: "#9B8AAE" },
-  farmers_market: { label: "Farmers Market", color: "#B85C4A" }
-};
-function digestCategoryMeta(category) {
-  return DIGEST_CATEGORY_META[category] || { label: "Event", color: "#9B5C2A" };
-}
+const DIGEST_MAX_DAYS = 7;
 
 function escapeHtml(s) {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -1732,90 +1253,53 @@ async function getWeekAheadEvents(env) {
   }
   withOccurrence.sort((a, b) => a.occurrence - b.occurrence);
 
-  // Group by day, capping how many show per day so the email stays
-  // skimmable \u2014 but keep the real total too, so the email can honestly
-  // say "+N more today" instead of silently implying the shown list is
-  // everything happening.
+  // Group by day, capping how many show per day so the email stays skimmable.
   const byDay = new Map();
   for (const ev of withOccurrence) {
-    const entry = byDay.get(ev.occurrence_label) || { events: [], totalCount: 0 };
-    entry.totalCount++;
-    if (entry.events.length < DIGEST_MAX_PER_DAY) entry.events.push(ev);
-    byDay.set(ev.occurrence_label, entry);
+    const list = byDay.get(ev.occurrence_label) || [];
+    if (list.length < DIGEST_MAX_PER_DAY) list.push(ev);
+    byDay.set(ev.occurrence_label, list);
   }
   return byDay;
 }
 
 function buildDigestHtml(byDay, unsubscribeUrl) {
   const days = [...byDay.entries()];
-
-  const dayBlocks = days.map(([label, { events: evs, totalCount }]) => {
-    const cards = evs.map((ev) => {
-      const meta = digestCategoryMeta(ev.category);
-      const costPill = ev.cost === "free"
-        ? `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;background:#D4EBC9;color:#3A5C2A;">Free</span>`
-        : `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;background:#E8DED0;color:#5C4A38;">Paid</span>`;
-      const cityPill = `<span style="display:inline-block;font-family:'DM Sans',Arial,sans-serif;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:5px;background:#9B5C2A;color:#ffffff;margin-right:5px;">${escapeHtml(ev.city)}</span>`;
-      // A plain inline dot instead of a left-border/indent treatment \u2014
-      // some mail clients (Gmail especially) heuristically treat a colored
-      // vertical bar + indented block as quoted-reply formatting and fold
-      // it behind "Show quoted text", which is exactly what happened with
-      // the previous card design.
-      const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${meta.color};margin-right:7px;"></span>`;
-
-      return `
-      <div style="background:#EDE2CA;border:1px solid #C8BA9E;border-radius:8px;padding:9px 12px;margin-bottom:7px;">
-        <div style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:14.5px;color:#2C1F14;line-height:1.25;">${dot}${escapeHtml(ev.title)}</div>
-        <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:5px;">
-          <tr>
-            <td style="font-family:Consolas,'Courier New',monospace;font-weight:700;font-size:12px;color:#5C3A1E;padding-right:8px;white-space:nowrap;">${escapeHtml(ev.display_time)}</td>
-            <td>${cityPill}${costPill}</td>
-          </tr>
-        </table>
-      </div>`;
-    }).join("");
-
-    const overflow = totalCount > evs.length
-      ? `<div style="font-family:'DM Sans',Arial,sans-serif;font-size:11.5px;color:#7A6650;font-style:italic;margin:2px 0 4px 4px;">+${totalCount - evs.length} more that day in the app \u2192</div>`
-      : "";
-
+  const dayBlocks = days.map(([label, evs]) => {
+    const rows = evs.map((ev) => `
+      <tr>
+        <td style="padding:6px 0;font-family:sans-serif;font-size:14px;color:#2c1f14;">
+          <strong>${escapeHtml(ev.title)}</strong> \u2014 ${escapeHtml(ev.display_time)}
+          <span style="color:#8a7a63;">\u00B7 ${escapeHtml(ev.city)} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}</span>
+        </td>
+      </tr>`).join("");
     return `
-      <div style="font-family:'DM Sans',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#9B5C2A;border-bottom:1px solid #C8BA9E;padding-bottom:5px;margin:18px 0 9px;">${escapeHtml(label)}</div>
-      ${cards}${overflow}`;
+      <tr><td style="padding:18px 0 4px;font-family:sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#a68a5b;border-bottom:1px solid #eee;">${escapeHtml(label)}</td></tr>
+      ${rows}`;
   }).join("");
 
   const bodyContent = days.length
-    ? dayBlocks
-    : `<p style="font-family:'DM Sans',Arial,sans-serif;color:#7A6650;font-size:13px;">No events loaded for the next few days yet \u2014 check the app directly.</p>`;
-
-  const ctaButton = `<a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2C1F14;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:9px;font-family:'DM Sans',Arial,sans-serif;font-size:13.5px;font-weight:600;">Open Playroute \u2192</a>`;
+    ? `<table width="100%" cellpadding="0" cellspacing="0">${dayBlocks}</table>`
+    : `<p style="font-family:sans-serif;color:#8a7a63;">No events loaded for this week yet \u2014 check the app directly.</p>`;
 
   return `
-  <div style="background:#EDE2CA;padding:24px 12px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;">
-      <tr><td style="background:#F5EDD8;border-radius:16px;padding:22px 18px 18px;">
-        <div style="text-align:center;">
-          <span style="font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:22px;color:#2C1F14;">Playroute</span>
-        </div>
-        <p style="text-align:center;color:#7A6650;font-family:'DM Sans',Arial,sans-serif;font-size:12.5px;margin:3px 0 14px;">A sneak peek at what's coming up for the kids \u2014 see everything in the app.</p>
-        <div style="text-align:center;margin-bottom:18px;">${ctaButton}</div>
-        ${bodyContent}
-        <div style="text-align:center;margin:20px 0 12px;">${ctaButton}</div>
-        <p style="text-align:center;font-family:'DM Sans',Arial,sans-serif;font-size:11px;color:#B5A88F;margin-top:14px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#B5A88F;">Unsubscribe</a></p>
-      </td></tr>
-    </table>
+  <div style="max-width:520px;margin:0 auto;font-family:sans-serif;">
+    <h1 style="font-family:serif;font-size:22px;color:#2c1f14;margin-bottom:4px;">This week on Playroute</h1>
+    <p style="color:#8a7a63;font-size:13px;margin-top:0;">A quick look at what's coming up for the kids this week.</p>
+    ${bodyContent}
+    <div style="margin:28px 0;">
+      <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:14px;">Open Playroute \u2192</a>
+    </div>
+    <p style="font-size:11px;color:#b5a88f;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
   </div>`;
 }
 
 function buildDigestText(byDay) {
-  const lines = ["Playroute \u2014 a sneak peek at what's coming up for the kids (see everything in the app)", ""];
-  for (const [label, { events: evs, totalCount }] of byDay.entries()) {
+  const lines = ["This week on Playroute", ""];
+  for (const [label, evs] of byDay.entries()) {
     lines.push(label.toUpperCase());
     for (const ev of evs) {
       lines.push(`- ${ev.title} \u2014 ${ev.display_time} \u00B7 ${ev.city} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}`);
-    }
-    if (totalCount > evs.length) {
-      lines.push(`+${totalCount - evs.length} more that day in the app`);
     }
     lines.push("");
   }
@@ -1890,50 +1374,33 @@ function isNearNoonMountain(now) {
   return hourMT === 12;
 }
 
-// Sweeps every source that can produce genuinely-ambiguous-but-plausibly-
-// family-relevant listings (recurring/multi-date/unrecognized-title, etc.)
-// and stages them in pending_events for a manual look, instead of the
-// confident scrapers above silently dropping anything they're not sure
-// about. Boulder/Erie (structured LibCal/iCal feeds) and WOW (which has a
-// title-parsing fallback for everything, no ambiguous case) aren't in this
-// list because they don't produce this kind of "couldn't confidently
-// parse" candidate in the first place.
-const PENDING_REVIEW_SOURCES = [
-  { name: "Mead (needs review)", fetchFn: fetchAndNormalizeMeadCalendar },
-  { name: "Longmont (needs review)", fetchFn: fetchAndNormalizeLongmontLibrary },
-  { name: "Louisville (needs review)", fetchFn: fetchAndNormalizeLouisvilleChildrens }
-];
-
 async function runPendingEventsScan(env) {
   const results = [];
+  let newCandidates = 0;
+  try {
+    const { needsReview } = await fetchAndNormalizeMeadCalendar();
+    for (const item of needsReview) {
+      // Skip anything whose title+city already exists in the live events
+      // table — otherwise something already manually reviewed and added
+      // (e.g. because its real single date got buried among other unrelated
+      // dates on the page, like a vendor-registration deadline) would keep
+      // getting re-suggested every week.
+      const already = await env.DB.prepare(
+        `SELECT 1 FROM events WHERE title = ? AND city = ? LIMIT 1`
+      ).bind(item.title, item.city).first();
+      if (already) continue;
 
-  for (const { name, fetchFn } of PENDING_REVIEW_SOURCES) {
-    let newCandidates = 0;
-    try {
-      const { needsReview } = await fetchFn();
-      for (const item of needsReview) {
-        // Skip anything whose title+city already exists in the live events
-        // table — otherwise something already manually reviewed and added
-        // (e.g. because its real single date got buried among other unrelated
-        // dates on the page, like a vendor-registration deadline) would keep
-        // getting re-suggested every week.
-        const already = await env.DB.prepare(
-          `SELECT 1 FROM events WHERE title = ? AND city = ? LIMIT 1`
-        ).bind(item.title, item.city).first();
-        if (already) continue;
-
-        const token = crypto.randomUUID();
-        const res = await env.DB.prepare(
-          `INSERT INTO pending_events (title, source, city, event_date, note, source_url, raw_excerpt, dedup_key, approval_token)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(dedup_key) DO NOTHING`
-        ).bind(item.title, item.source, item.city, item.event_date ?? null, item.note, item.source_url, item.note, item.dedup_key, token).run();
-        if (res.meta.changes > 0) newCandidates++;
-      }
-      results.push({ source: name, status: "ok", newCandidates });
-    } catch (err) {
-      results.push({ source: name, status: "error", error: String(err) });
+      const token = crypto.randomUUID();
+      const res = await env.DB.prepare(
+        `INSERT INTO pending_events (title, source, city, note, source_url, raw_excerpt, dedup_key, approval_token)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(dedup_key) DO NOTHING`
+      ).bind(item.title, item.source, item.city, item.note, item.source_url, item.note, item.dedup_key, token).run();
+      if (res.meta.changes > 0) newCandidates++;
     }
+    results.push({ source: "Mead (needs review)", status: "ok", newCandidates });
+  } catch (err) {
+    results.push({ source: "Mead (needs review)", status: "error", error: String(err) });
   }
 
   // Only email if there's something to actually review — no empty "nothing
@@ -1950,7 +1417,6 @@ async function runPendingEventsScan(env) {
       results.push({ source: "pending-events-email", status: "error", error: String(err) });
     }
   }
-  await logJobRun(env, "pending-events-scan", results.some((r) => r.status === "error") ? "error" : "ok", results);
   return results;
 }
 
@@ -1979,29 +1445,6 @@ async function handleApprovePending(env, url) {
   const row = await env.DB.prepare(`SELECT * FROM pending_events WHERE approval_token = ? AND status = 'pending'`).bind(token).first();
   if (!row) return new Response("This item was already handled or doesn't exist.", { headers: { "Content-Type": "text/plain" } });
 
-  // The whole reason something lands here is the scraper couldn't
-  // confidently determine day_of_week/start_time/display_time — so unlike
-  // upsertEvent's other callers, this can't assume those are already
-  // filled in. Derive what we reasonably can from event_date (when the
-  // source at least had a date, just not a confident time), and only give
-  // up if there's truly nothing to go on.
-  let dayOfWeek = row.day_of_week;
-  if (!dayOfWeek && row.event_date) {
-    const d = new Date(`${row.event_date}T12:00:00Z`); // noon UTC avoids any date-shift-by-timezone edge cases
-    dayOfWeek = d.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
-  }
-  if (!dayOfWeek) {
-    // No event_date at all (e.g. a genuinely recurring/multi-session Mead
-    // listing) — there's nothing to derive a single day from. Rather than
-    // let the INSERT crash with a raw SQL error, say so plainly. The item
-    // stays pending so it isn't lost; add it manually once you've read the
-    // source link and decided what the actual recurring schedule is.
-    return new Response(
-      `"${row.title}" doesn't have a specific date attached (this usually means the source listing is recurring or spans multiple dates), so it can't be auto-approved into a single calendar slot. Check the source link (${row.source_url}) and add it manually with the right recurrence instead. It's still marked pending, not lost.`,
-      { headers: { "Content-Type": "text/plain" } }
-    );
-  }
-
   await upsertEvent(env, {
     title: row.title,
     source: row.source,
@@ -2010,9 +1453,9 @@ async function handleApprovePending(env, url) {
     cost: row.cost || "free",
     age_min: row.age_min ?? 0,
     age_max: row.age_max ?? 12,
-    day_of_week: dayOfWeek,
-    start_time: row.start_time || "09:00",
-    display_time: row.display_time || "See source link for exact time",
+    day_of_week: row.day_of_week,
+    start_time: row.start_time,
+    display_time: row.display_time,
     recurrence: row.recurrence || "dated",
     event_date: row.event_date,
     note: row.note,
@@ -2085,8 +1528,6 @@ export default {
     ctx.waitUntil(runICalScrape(env));
     ctx.waitUntil(runHtmlScrape(env));
     ctx.waitUntil(runMeadScrape(env));
-    ctx.waitUntil(runLongmontScrape(env));
-    ctx.waitUntil(runLouisvilleScrape(env));
   },
   // HTTP entry point — this is what the frontend fetches from instead of
   // using a hardcoded JS array.
@@ -2100,14 +1541,18 @@ export default {
       if (url.pathname === "/api/playgrounds") return await handlePlaygrounds(env, url);
       if (url.pathname === "/api/hikes") return await handleHikes(env, url);
       if (url.pathname === "/api/sources") return await handleSources(env);
-      if (url.pathname === "/api/source-registry") return await handleSourceRegistry(env);
-      if (url.pathname === "/api/scrape-activity") return await handleScrapeActivity(env, url);
       if (url.pathname.startsWith("/api/photos/")) {
         return await handlePhoto(env, decodeURIComponent(url.pathname.slice("/api/photos/".length)));
       }
       if (url.pathname === "/api/track-click" && request.method === "POST") return await handleTrackClick(request, env);
       if (url.pathname === "/api/pageview" && request.method === "POST") return await handlePageView(request, env);
       if (url.pathname === "/api/stats") return await handleStats(env);
+      if (url.pathname === "/api/public-stats") {
+        const row = await env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM link_clicks WHERE category NOT IN ('playground','hike','support')`
+        ).first();
+        return json({ events_discovered_all_time: row?.n || 0 });
+      }
       if (url.pathname === "/robots.txt") {
         return new Response(
           "User-agent: *\nAllow: /\nSitemap: https://playroute.co/sitemap.xml\n",
@@ -2121,15 +1566,13 @@ export default {
         );
       }
       if (url.pathname === "/api/scrape-now" && request.method === "POST") {
-        const [apiResults, icalResults, htmlResults, meadResults, longmontResults, louisvilleResults] = await Promise.all([
+        const [apiResults, icalResults, htmlResults, meadResults] = await Promise.all([
           runScrape(env),
           runICalScrape(env),
           runHtmlScrape(env),
-          runMeadScrape(env),
-          runLongmontScrape(env),
-          runLouisvilleScrape(env)
+          runMeadScrape(env)
         ]);
-        return json({ ranAt: new Date().toISOString(), apiResults, icalResults, htmlResults, meadResults, longmontResults, louisvilleResults });
+        return json({ ranAt: new Date().toISOString(), apiResults, icalResults, htmlResults, meadResults });
       }
       if (url.pathname === "/api/ingest" && request.method === "POST") {
         return await handleIngest(request, env);
