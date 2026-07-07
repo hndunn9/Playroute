@@ -728,6 +728,7 @@ footer{
       <div class="drawer-title">About &amp; Feedback</div>
     </div>
     <div class="drawer-body" style="text-align:center;font-size:13px;color:var(--ink-soft);line-height:1.6;">
+      <div id="discoveryStat" style="font-size:14px;font-weight:600;color:var(--clay);margin-bottom:14px;min-height:20px;"></div>
       Built by a mom of two in Boulder County who works in tech — married to the person who actually does the work of finding stuff to do with the kids every week. Playroute exists so she can get some of that mental load (and her evenings) back.
       <br><br>
       <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (About drawer)',category:'support'})">☕ Buy my wife a coffee (she's earned it)</a>
@@ -776,7 +777,8 @@ const ICONS = {
   ticket: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1.5a1.5 1.5 0 0 0 0 3V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2.5a1.5 1.5 0 0 0 0-3V8z"/><line x1="14" y1="6" x2="14" y2="17" stroke-dasharray="2,2"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/></svg>',
   calendarAdd: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="12" y1="13" x2="12" y2="17"/><line x1="10" y1="15" x2="14" y2="15"/></svg>',
-  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none"/></svg>'
+  info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none"/></svg>',
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>'
 };
 
 async function loadData(){
@@ -797,6 +799,7 @@ async function loadData(){
   }
   renderFreshnessNote();
   renderAll();
+  handleEventDeepLink();
 }
 
 function renderFreshnessNote(){
@@ -904,9 +907,13 @@ function passesFilters(ev){
 }
 
 /* ── PROGRESSIVE DISCLOSURE ── */
-function toggleCard(card){
+function toggleCard(card, ev){
   document.querySelectorAll('.event-card.expanded').forEach(c=>{ if(c!==card) c.classList.remove('expanded'); });
+  const willExpand = !card.classList.contains('expanded');
   card.classList.toggle('expanded');
+  if(willExpand && ev){
+    trackClick(ev.source_url||'', {id:ev.id, title:ev.title, city:ev.city, category:'card_expand'});
+  }
 }
 
 const ctaLabels = {
@@ -1003,6 +1010,18 @@ function closeDrawer(){
 function openAboutDrawer(){
   document.getElementById('aboutDrawerOverlay').classList.add('open');
   setTimeout(()=>document.getElementById('aboutDrawer').classList.add('open'),10);
+  const statEl = document.getElementById('discoveryStat');
+  if(statEl && !statEl.dataset.loaded){
+    fetch(`${API_BASE}/api/public-stats`)
+      .then(r=>r.json())
+      .then(d=>{
+        if(d && typeof d.events_discovered_all_time === 'number'){
+          statEl.textContent = `🎉 ${d.events_discovered_all_time.toLocaleString()} events discovered through Playroute so far`;
+          statEl.dataset.loaded = '1';
+        }
+      })
+      .catch(()=>{});
+  }
 }
 function closeAboutDrawer(){
   document.getElementById('aboutDrawerOverlay').classList.remove('open');
@@ -1039,7 +1058,8 @@ function renderFeed(){
     shown++;
     const card=document.createElement("div");
     card.className="event-card";
-    card.onclick=function(){ toggleCard(this); };
+    card.dataset.eventId=ev.id;
+    card.onclick=function(){ toggleCard(this, ev); };
     card.innerHTML=`
       <div class="card-summary">
         <div class="blaze">${blazeSvg(ev.category)}</div>
@@ -1060,6 +1080,7 @@ function renderFeed(){
           <div class="card-detail-actions">
             <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}'})">View source ↗</a>
             <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
+            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}')" title="Share" aria-label="Share">${ICONS.share}</a>
           </div>
         </div>
       </div>
@@ -1194,7 +1215,8 @@ function renderRecentlyPassed(){
 
     const card=document.createElement("div");
     card.className="event-card";
-    card.onclick=function(){ toggleCard(this); };
+    card.dataset.eventId=ev.id;
+    card.onclick=function(){ toggleCard(this, ev); };
     card.innerHTML=`
       <div class="card-summary">
         <div class="blaze">${blazeSvg(ev.category)}</div>
@@ -1215,6 +1237,7 @@ function renderRecentlyPassed(){
           <div class="card-detail-actions">
             <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();">View source ↗</a>
             <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
+            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}')" title="Share" aria-label="Share">${ICONS.share}</a>
           </div>
         </div>
       </div>
@@ -1246,6 +1269,57 @@ function updateActiveCount(){
   const badge=document.getElementById("activeCount");
   if(count>0){ badge.textContent=count; badge.classList.add("show"); } else { badge.classList.remove("show"); }
 }
+function shareEvent(id){
+  const ev = events.find(e=>String(e.id)===String(id));
+  if(!ev) return;
+  const shareUrl = `${location.origin}/?event=${ev.id}`;
+  const lines = [
+    ev.title,
+    `${ev.occurrence_label||ev.day_of_week} · ${ev.display_time}`,
+    ev.source,
+    ev.cost==='free' ? 'Free' : 'Paid',
+    '',
+    `Found via Playroute: ${shareUrl}`
+  ];
+  const shareText = lines.filter(Boolean).join('\n');
+  trackClick(shareUrl, {id:ev.id, title:ev.title, city:ev.city, category:'share'});
+
+  if(navigator.share){
+    navigator.share({title:ev.title, text:shareText, url:shareUrl}).catch(()=>{});
+  } else if(navigator.clipboard){
+    navigator.clipboard.writeText(shareText).then(()=>{
+      alert('Copied! Paste it anywhere to share this event.');
+    }).catch(()=>{});
+  }
+}
+
+// Deep-linking: if arriving via a shared ?event=ID link, scroll to and
+// expand that specific card. If it's not visible under the current filters
+// (e.g. wrong city selected), reset filters to show everything first.
+function handleEventDeepLink(){
+  const targetId = new URLSearchParams(location.search).get('event');
+  if(!targetId) return;
+
+  const tryFind = () => document.querySelector(`.event-card[data-event-id="${targetId}"]`);
+  let card = tryFind();
+
+  if(!card){
+    activeCities.clear(); activeAges.clear(); activeCats.clear();
+    activeCost = 'all'; activeWhen = 'all';
+    renderAll();
+    card = tryFind();
+  }
+
+  if(card){
+    const ev = events.find(e=>String(e.id)===String(targetId));
+    setTimeout(()=>{
+      card.scrollIntoView({behavior:'smooth', block:'center'});
+      if(ev) toggleCard(card, ev);
+    }, 250);
+  }
+}
+
+
 function trackClick(url,meta){
   try{
     fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category}),keepalive:true}).catch(()=>{});
