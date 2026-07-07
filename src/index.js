@@ -844,6 +844,174 @@ async function runMeadScrape(env) {
   return results;
 }
 
+// --- Westminster Public Library scraper (pending-review only) ---
+// Source: https://westminsterco.librarycalendar.com
+//
+// Different platform than Boulder/Erie (Ruby-based iCalendar generation,
+// confirmed via a manual .ics export showing PRODID:iCalendar-Ruby) and no
+// confirmed iCal subscribe endpoint, so this scrapes the public HTML
+// directly — plain fetch(), no browser rendering, since detail pages here
+// are server-rendered (confirmed by reading real page text).
+//
+// UNVERIFIED, on purpose: exact date/time markup and whether specific ages
+// ever appear in free text vs. only broad audience tags. Rather than guess
+// and risk silently inserting wrong dates/times into the live events table,
+// everything found here lands in pending_events for you to review and
+// approve/reject via the existing email flow — same as the Mead "needs
+// review" path. Once you've approved a few and are confident the parsing
+// is solid, this is a reasonable candidate to promote to auto-add later.
+const WESTMINSTER_LIBRARY_LIST_URL = "https://westminsterco.librarycalendar.com/events/upcoming";
+const WESTMINSTER_LIBRARY_BASE_URL = "https://westminsterco.librarycalendar.com";
+
+// Matches href="/event/<slug>-<id>" links in the list page's raw HTML.
+const WESTMINSTER_EVENT_LINK_RE = /href="(\/event\/[\w-]+)"/gi;
+
+function extractWestminsterEventPaths(html) {
+  const paths = new Set();
+  let m;
+  while ((m = WESTMINSTER_EVENT_LINK_RE.exec(html)) !== null) {
+    paths.add(m[1]);
+  }
+  return [...paths];
+}
+
+/**
+ * Parses a Westminster library event detail page from raw HTML text.
+ * Confirmed against real page text (via search-engine snippets, not a
+ * live render): location renders as "Branch · Street Address · City, ST
+ * ZIP", and category/audience tags appear as a plain comma-separated line
+ * before the description. Date/time markup is NOT confirmed — the regexes
+ * below are placeholders. Check raw_excerpt in the pending-review email
+ * against what's actually there before trusting this beyond manual review.
+ */
+function parseWestminsterLibraryDetail(html, url) {
+  const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+  const text = decodeHtmlEntities(stripTags(noScript));
+
+  const titleMatch = html.match(/<h1[^>]*>(.*?)<\/h1>/is);
+  const title = titleMatch ? decodeHtmlEntities(stripTags(titleMatch[1])).trim() : null;
+  const cancelled = /^CANCELLED/i.test(title || "");
+
+  const locationMatch = text.match(
+    /([\w\s]+?)\s*[·•]\s*(\d+[\w\s.]+?)\s*[·•]\s*(Westminster,\s*CO\s*\d{5})/i
+  );
+
+  const categoryAudienceMatch = text.match(
+    /([\w\s&,]+?)\s*[·•]\s*(Adults|Teens|Youth|Children|All Ages|Birth[\w\s-]*)/i
+  );
+  const categories = categoryAudienceMatch ? categoryAudienceMatch[1].trim() : null;
+  const audience = categoryAudienceMatch ? categoryAudienceMatch[2].trim() : null;
+
+  // UNVERIFIED placeholders — replace once you've seen a real detail page.
+  const dateMatch = text.match(/(\w+day),?\s+([A-Za-z]+\.?\s+\d{1,2}\.?,?\s+\d{4})/i);
+  const timeMatch = text.match(/(\d{1,2}:\d{2}\s*[ap]m)\s*[-–]\s*(\d{1,2}:\d{2}\s*[ap]m)/i);
+
+  return {
+    title,
+    cancelled,
+    source_url: url,
+    raw_day: dateMatch ? dateMatch[1] : null,
+    raw_date: dateMatch ? dateMatch[2] : null,
+    raw_start: timeMatch ? timeMatch[1] : null,
+    raw_end: timeMatch ? timeMatch[2] : null,
+    location: locationMatch
+      ? `${locationMatch[1].trim()} — ${locationMatch[2].trim()}, ${locationMatch[3].trim()}`
+      : null,
+    audience,
+    categories,
+    raw_excerpt: text.slice(0, 400)
+  };
+}
+
+function ageFromWestminsterLibraryText(audience) {
+  const a = (audience || "").toLowerCase();
+  if (a.includes("birth")) return { age_min: 0, age_max: 5 };
+  if (a.includes("youth") || a.includes("children")) return { age_min: 5, age_max: 12 };
+  if (a.includes("teen")) return { age_min: 12, age_max: 18 };
+  if (a.includes("all ages")) return { age_min: 0, age_max: 18 };
+  return null; // covers "adults" and anything unrecognized — not a kid event
+}
+
+async function fetchAndScanWestminsterLibrary() {
+  const needsReview = [];
+  const listRes = await fetch(WESTMINSTER_LIBRARY_LIST_URL, {
+    headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
+  });
+  if (!listRes.ok) throw new Error(`Westminster library list fetch failed: ${listRes.status}`);
+  const listHtml = await listRes.text();
+  const paths = extractWestminsterEventPaths(listHtml);
+
+  for (const path of paths) {
+    const detailUrl = `${WESTMINSTER_LIBRARY_BASE_URL}${path}`;
+    const res = await fetch(detailUrl, {
+      headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
+    });
+    if (!res.ok) continue;
+    const html = await res.text();
+    const detail = parseWestminsterLibraryDetail(html, detailUrl);
+    if (!detail.title || detail.cancelled) continue;
+
+    const ages = ageFromWestminsterLibraryText(detail.audience);
+    if (!ages) continue; // adult-only program — not relevant to Playroute
+
+    needsReview.push({
+      title: detail.title,
+      source: `Westminster Public Library${detail.location ? " — " + detail.location : ""}`,
+      city: "Westminster",
+      category: "library",
+      cost: "free",
+      age_min: ages.age_min,
+      age_max: ages.age_max,
+      day_of_week: detail.raw_day,
+      start_time: null, // unverified extraction — leave for the reviewer to fill in on approval
+      display_time: detail.raw_start
+        ? detail.raw_end
+          ? `${detail.raw_start} – ${detail.raw_end}`
+          : detail.raw_start
+        : "Check listing for time",
+      recurrence: "weekly",
+      note: detail.categories
+        ? `Category: ${detail.categories}. ${detail.raw_excerpt}`
+        : detail.raw_excerpt,
+      source_url: detailUrl,
+      dedup_key: `westminster-library:${path}`
+    });
+  }
+  return needsReview;
+}
+
+async function runWestminsterLibraryPendingScan(env) {
+  let newCandidates = 0;
+  try {
+    const needsReview = await fetchAndScanWestminsterLibrary();
+    for (const item of needsReview) {
+      const already = await env.DB.prepare(
+        `SELECT 1 FROM events WHERE title = ? AND city = ? LIMIT 1`
+      ).bind(item.title, item.city).first();
+      if (already) continue;
+
+      const token = crypto.randomUUID();
+      const res = await env.DB.prepare(
+        `INSERT INTO pending_events
+          (title, source, city, category, cost, age_min, age_max, day_of_week,
+           start_time, display_time, recurrence, note, source_url, raw_excerpt,
+           dedup_key, approval_token)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(dedup_key) DO NOTHING`
+      ).bind(
+        item.title, item.source, item.city, item.category, item.cost,
+        item.age_min, item.age_max, item.day_of_week, item.start_time,
+        item.display_time, item.recurrence, item.note, item.source_url,
+        item.note, item.dedup_key, token
+      ).run();
+      if (res.meta.changes > 0) newCandidates++;
+    }
+    return { source: "Westminster Library (needs review)", status: "ok", newCandidates };
+  } catch (err) {
+    return { source: "Westminster Library (needs review)", status: "error", error: String(err) };
+  }
+}
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -1402,6 +1570,8 @@ async function runPendingEventsScan(env) {
   } catch (err) {
     results.push({ source: "Mead (needs review)", status: "error", error: String(err) });
   }
+
+  results.push(await runWestminsterLibraryPendingScan(env));
 
   // Only email if there's something to actually review — no empty "nothing
   // found this week" noise.
