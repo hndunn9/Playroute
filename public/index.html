@@ -1114,7 +1114,7 @@ function renderFeed(){
 function hasConfirmedWater(pg){
   const text = ((pg.tags||"") + " " + (pg.detail||"")).toLowerCase();
   const uncertain = /(uncertain|check status|check hours|no water feature|does not appear|since closed|don't count on it|drained)/;
-  const waterTerms = /(splash pad|splash pool|water park|waterpark|sprayground|spray ground|lazy river|wading pool|water feature|zero-depth)/;
+  const waterTerms = /(splash pad|splash pool|water park|waterpark|sprayground|spray ground|lazy river|wading pool|water feature|zero-depth|outdoor pool|lap pool|kiddie pool)/;
   return waterTerms.test(text) && !uncertain.test(text);
 }
 
