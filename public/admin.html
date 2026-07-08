@@ -48,12 +48,26 @@
   .stat-box{background:#F5EFDF;border-radius:8px;padding:10px;text-align:center;}
   .stat-num{font-size:22px;font-weight:700;color:#9B5C2A;}
   .stat-label{font-size:10.5px;color:#7A6650;text-transform:uppercase;letter-spacing:0.04em;}
+  .stat-delta{font-size:11px;margin-top:3px;font-weight:600;}
+  .stat-delta.up{color:#3a5a2a;}
+  .stat-delta.down{color:#7a2a2a;}
+  .stat-delta.flat{color:#7A6650;}
   .breakdown{margin-top:12px;font-size:12.5px;}
   .breakdown-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #EDE2CA;}
   .warn{
     background:#F5EFDF;border:1px dashed #C8BA9E;border-radius:8px;
     padding:10px;font-size:11.5px;color:#7A6650;margin-bottom:16px;
   }
+  .pending-item{
+    border:1px solid #EDE2CA;border-radius:8px;padding:10px;margin-bottom:8px;
+  }
+  .pending-title{font-weight:600;font-size:13px;}
+  .pending-meta{font-size:11px;color:#7A6650;margin:2px 0 6px;}
+  .pending-note{font-size:11.5px;color:#5C4A38;margin-bottom:8px;line-height:1.4;}
+  .pending-actions{display:flex;gap:8px;}
+  .pending-actions button{width:auto;flex:1;padding:8px;font-size:12.5px;}
+  .pending-actions button.reject{background:#eee;color:#5C4A38;}
+  .pending-empty{font-size:12.5px;color:#7A6650;text-align:center;padding:10px 0;}
 </style>
 </head>
 <body>
@@ -86,26 +100,17 @@
   </div>
 
   <div class="card">
+    <h2>📋 Pending events</h2>
+    <p>Everything currently sitting in the review queue — approve or reject right here instead of waiting for the email.</p>
+    <button class="secondary" onclick="loadPendingEvents()">Refresh list</button>
+    <div id="pendingListOutput" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
     <h2>🔄 Run all scrapers now</h2>
     <p>Manually triggers the library iCal feeds, Mead's calendar, and everything else that normally runs daily.</p>
     <button class="secondary" onclick="runAction('/api/scrape-now', 'scrapeResult')">Run scrapers now</button>
     <div class="result" id="scrapeResult"></div>
-  </div>
-
-  <div class="card">
-    <h2>👀 Manual-check sources</h2>
-    <p>No reliable feed or stable structure exists for these — not worth a scraper, but worth a periodic glance.</p>
-    <div class="breakdown">
-      <div class="breakdown-row" style="flex-direction:column;align-items:flex-start;">
-        <strong>Play Street Museum Westminster</strong>
-        <span style="color:#7A6650;">Special events (Night at the Museum, monthly themes) live behind a third-party booking widget with no crawlable pattern. Recurring weekday Playtime by Reservation is already loaded as a static entry. Check monthly.</span>
-        <span style="margin-top:4px;">
-          <a href="https://www.westminster.playstreetmuseum.com/events" target="_blank" style="color:#9B5C2A;">Events page ↗</a>
-          &nbsp;·&nbsp;
-          <a href="https://www.facebook.com/psmwestminster/" target="_blank" style="color:#9B5C2A;">Facebook ↗</a>
-        </span>
-      </div>
-    </div>
   </div>
 
   <div class="card">
@@ -142,6 +147,19 @@ function sendRealDigest(){
   runAction('/api/digest-now', 'realDigestResult');
 }
 
+function deltaBadge(curr, prev, pct, label){
+  // pct is null when there's no prior-period data to compare against --
+  // show the raw prior number if we have one, otherwise nothing rather
+  // than a misleading "0%" or "+100%".
+  if(pct === null || pct === undefined){
+    return prev ? `<div class="stat-delta flat">was ${prev} ${label}</div>` : '';
+  }
+  const dir = pct > 0 ? 'up' : (pct < 0 ? 'down' : 'flat');
+  const arrow = pct > 0 ? '↑' : (pct < 0 ? '↓' : '→');
+  const sign = pct > 0 ? '+' : '';
+  return `<div class="stat-delta ${dir}">${arrow} ${sign}${pct}% (${prev} ${label})</div>`;
+}
+
 async function loadStats(){
   const out = document.getElementById('statsOutput');
   out.innerHTML = '<div class="result show loading">Loading…</div>';
@@ -150,12 +168,27 @@ async function loadStats(){
     const s = await res.json();
     out.innerHTML = `
       <div class="stats-grid">
-        <div class="stat-box"><div class="stat-num">${s.daily_active_users}</div><div class="stat-label">DAU</div></div>
-        <div class="stat-box"><div class="stat-num">${s.weekly_active_users}</div><div class="stat-label">WAU</div></div>
-        <div class="stat-box"><div class="stat-num">${s.page_views_7d}</div><div class="stat-label">Views (wk)</div></div>
-        <div class="stat-box"><div class="stat-num">${s.link_clicks_7d}</div><div class="stat-label">Clicks (wk)</div></div>
+        <div class="stat-box">
+          <div class="stat-num">${s.daily_active_users}</div><div class="stat-label">DAU</div>
+          ${deltaBadge(s.daily_active_users, s.daily_active_users_prev, s.daily_active_users_change_pct, 'yesterday')}
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${s.weekly_active_users}</div><div class="stat-label">WAU</div>
+          ${deltaBadge(s.weekly_active_users, s.weekly_active_users_prev, s.weekly_active_users_change_pct, 'last wk')}
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${s.page_views_7d}</div><div class="stat-label">Views (wk)</div>
+          ${deltaBadge(s.page_views_7d, s.page_views_7d_prev, s.page_views_7d_change_pct, 'last wk')}
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${s.link_clicks_7d}</div><div class="stat-label">Clicks (wk)</div>
+          ${deltaBadge(s.link_clicks_7d, s.link_clicks_7d_prev, s.link_clicks_7d_change_pct, 'last wk')}
+        </div>
         <div class="stat-box" style="grid-column:span 2;"><div class="stat-num">${(s.events_discovered_all_time||0).toLocaleString()}</div><div class="stat-label">Events discovered (all time)</div></div>
-        <div class="stat-box"><div class="stat-num">${s.newsletter_visits_7d}</div><div class="stat-label">Newsletter visits</div></div>
+        <div class="stat-box">
+          <div class="stat-num">${s.newsletter_visits_7d}</div><div class="stat-label">Newsletter visits</div>
+          ${deltaBadge(s.newsletter_visits_7d, s.newsletter_visits_7d_prev, s.newsletter_visits_7d_change_pct, 'last wk')}
+        </div>
         <div class="stat-box"><div class="stat-num">${s.newsletter_unique_visitors_7d}</div><div class="stat-label">Newsletter uniques</div></div>
       </div>
       <div class="breakdown">
@@ -177,7 +210,54 @@ async function loadStats(){
   }
 }
 
+function escapeHtml(s){
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function loadPendingEvents(){
+  const out = document.getElementById('pendingListOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/pending-events');
+    const data = await res.json();
+    const items = data.pending || [];
+    if(items.length === 0){
+      out.innerHTML = '<div class="pending-empty">Nothing waiting for review right now.</div>';
+      return;
+    }
+    out.innerHTML = items.map(item => `
+      <div class="pending-item" id="pending-${item.id}">
+        <div class="pending-title">${escapeHtml(item.title)}</div>
+        <div class="pending-meta">${escapeHtml(item.city||'')} ${item.source?'· '+escapeHtml(item.source):''} ${item.display_time?'· '+escapeHtml(item.display_time):''} ${item.event_date?'· '+escapeHtml(item.event_date):''}</div>
+        ${item.note?`<div class="pending-note">${escapeHtml(item.note).slice(0,220)}</div>`:''}
+        ${item.source_url?`<div class="pending-meta"><a href="${item.source_url}" target="_blank" rel="noopener noreferrer">View source ↗</a></div>`:''}
+        <div class="pending-actions">
+          <button onclick="decidePending('${item.approval_token}', 'approve', ${item.id})">Approve</button>
+          <button class="reject" onclick="decidePending('${item.approval_token}', 'reject', ${item.id})">Reject</button>
+        </div>
+      </div>
+    `).join('');
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
+async function decidePending(token, action, id){
+  const el = document.getElementById('pending-'+id);
+  if(el) el.style.opacity = '0.5';
+  try{
+    const path = action === 'approve' ? '/api/approve-pending' : '/api/reject-pending';
+    const res = await fetch(`${path}?token=${encodeURIComponent(token)}`);
+    if(!res.ok) throw new Error('Request failed');
+    if(el) el.remove();
+  }catch(err){
+    if(el) el.style.opacity = '1';
+    alert('Error: ' + err.message);
+  }
+}
+
 loadStats();
+loadPendingEvents();
 </script>
 </body>
 </html>
