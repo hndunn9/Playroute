@@ -999,6 +999,124 @@ async function runWestminsterLibraryPendingScan(env) {
   }
 }
 
+// --- My Nature Lab (Louisville) Story Time scraper (pending-review only) ---
+// Source: https://www.mynaturelab.org/story-time -- a Wix site. Confirmed
+// server-rendered (a plain fetch returns the actual dated listings, not an
+// empty JS shell), so no headless browser needed. Runs MONTHLY, not daily
+// (see wrangler.jsonc cron + scheduled() branch below) -- the page only ever
+// lists ~4 upcoming weeks of topics at a time, so a monthly check is enough
+// to catch each new batch as it's posted.
+//
+// IMPORTANT -- selectors below are a best-effort guess against the *rendered
+// text* of the page (via a markdown-style fetch), not the actual raw HTML,
+// which this environment couldn't access directly. The site's own copy is
+// also internally inconsistent -- meta tags and one paragraph say
+// "Wednesdays and Sundays", but the big on-page header and every single
+// dated listing pair Sunday with Thursday. This scraper trusts the dated
+// listings (Sunday + Thursday) since that's the pattern actually backed by
+// real per-topic dates, not the prose. Given the raw-HTML gap, this always
+// routes to pending_events regardless of INGEST_REVIEW_MODE -- don't
+// promote this to auto-publish without confirming the regex against a real
+// page fetch first (log _rawTextSample the way the Boulder scraper does).
+const MY_NATURE_LAB_URL = "https://www.mynaturelab.org/story-time";
+const MY_NATURE_LAB_MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December";
+
+function stripHtmlToText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Matches: "<Title> ... Sunday, <Month> <Day> and Thursday, <Month> <Day>
+// ... Story: <Book> by <Author> ... Animal Encounter: <Animal>" blocks,
+// repeated down the page. Title capture is greedy-limited and best-effort --
+// this is the part most likely to need adjusting against real HTML, since
+// heading tags don't survive stripHtmlToText the same way they did in the
+// markdown-style fetch this was drafted against.
+const MY_NATURE_LAB_BLOCK_RE = new RegExp(
+  `([A-Z][A-Za-z0-9:'!,.\\- ]{2,60}?)\\s*` +
+  `Sunday,\\s*(${MY_NATURE_LAB_MONTHS})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\s+and\\s+Thursday,\\s*(${MY_NATURE_LAB_MONTHS})?\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s*` +
+  `Story:\\s*(.+?)\\s+by\\s+(.+?)\\s*` +
+  `Animal Encounter:\\s*(.+?)(?=\\s[A-Z][A-Za-z0-9:'!,.\\- ]{2,60}?\\s*Sunday,|$)`,
+  "gi"
+);
+
+function nextDateForMonthDay(monthName, day, now) {
+  const monthIdx = MY_NATURE_LAB_MONTHS.split("|").findIndex(m => m.toLowerCase() === monthName.toLowerCase());
+  if (monthIdx < 0) return null;
+  let year = now.getFullYear();
+  let d = new Date(year, monthIdx, +day);
+  // If that date already passed by more than a week, assume it's next year's occurrence.
+  if (d < new Date(now.getTime() - 7 * 864e5)) d = new Date(year + 1, monthIdx, +day);
+  return d;
+}
+
+async function fetchAndScanMyNatureLab() {
+  const res = await fetch(MY_NATURE_LAB_URL, {
+    headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
+  });
+  if (!res.ok) throw new Error(`My Nature Lab fetch failed: ${res.status}`);
+  const html = await res.text();
+  const text = stripHtmlToText(html);
+  const now = new Date();
+  const needsReview = [];
+
+  let m;
+  while ((m = MY_NATURE_LAB_BLOCK_RE.exec(text)) !== null) {
+    const [, rawTitle, sunMonth, sunDay, thuMonthMaybe, thuDay, book, author, animal] = m;
+    const thuMonth = thuMonthMaybe || sunMonth; // "and Thursday, 9th" with no repeated month name
+    const title = `Story Time: ${rawTitle.trim()}`;
+
+    for (const [dow, month, day] of [["Sunday", sunMonth, sunDay], ["Thursday", thuMonth, thuDay]]) {
+      const d = nextDateForMonthDay(month, day, now);
+      if (!d) continue;
+      const eventDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      needsReview.push({
+        title,
+        source: "My Nature Lab",
+        city: "Louisville",
+        category: "museum",
+        cost: "free",
+        age_min: 0,
+        age_max: 18,
+        day_of_week: dow,
+        event_date: eventDateStr,
+        start_time: "09:15",
+        display_time: "9:15 AM – 9:45 AM",
+        recurrence: "dated",
+        note: `Story: ${book.trim()} by ${author.trim()}. Animal encounter: ${animal.trim()}. Doors open 9am; storytime runs 9:15-9:45. Free, all ages. UNVERIFIED SCRAPE -- selectors written against rendered text, not raw HTML; confirm this matches the live page before trusting it.`,
+        source_url: MY_NATURE_LAB_URL,
+        raw_excerpt: m[0].slice(0, 400),
+        dedup_key: `mynaturelab:${eventDateStr}:${rawTitle.trim().toLowerCase().replace(/\s+/g, "-")}`
+      });
+    }
+  }
+  return needsReview;
+}
+
+async function runMyNatureLabPendingScan(env) {
+  let newCandidates = 0;
+  try {
+    const needsReview = await fetchAndScanMyNatureLab();
+    for (const item of needsReview) {
+      const already = await env.DB.prepare(
+        `SELECT 1 FROM events WHERE title = ? AND city = ? AND event_date = ? LIMIT 1`
+      ).bind(item.title, item.city, item.event_date).first();
+      if (already) continue;
+
+      const queued = await queuePendingEvent(env, item);
+      if (queued) newCandidates++;
+    }
+    return { source: "My Nature Lab Story Time (needs review, monthly)", status: "ok", newCandidates };
+  } catch (err) {
+    return { source: "My Nature Lab Story Time (needs review, monthly)", status: "error", error: String(err) };
+  }
+}
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -1055,6 +1173,21 @@ function mountainMidnightThisWeekUTC() {
   mtNow.setDate(mtNow.getDate() - day + 1);
   return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
 }
+// Start of "yesterday" in Mountain Time -- for day-over-day comparisons.
+function mountainMidnightYesterdayUTC() {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  mtNow.setDate(mtNow.getDate() - 1);
+  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
+}
+// Start of "last week" (the Monday one week before this week's Monday) in
+// Mountain Time -- the start of the comparison window for week-over-week
+// stats. Paired with mountainMidnightThisWeekUTC as the window's end.
+function mountainMidnightPrevWeekUTC() {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  const day = mtNow.getDay() || 7;
+  mtNow.setDate(mtNow.getDate() - day + 1 - 7);
+  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
+}
 
 async function hashVisitor(request) {
   const ip = request.headers.get("CF-Connecting-IP") || "";
@@ -1080,9 +1213,16 @@ async function handlePageView(request, env) {
   return json({ ok: true });
 }
 
+function pctChange(curr, prev) {
+  if (!prev) return curr > 0 ? null : 0; // no prior data to compare against — don't claim a % change out of nowhere
+  return Math.round(((curr - prev) / prev) * 1000) / 10; // one decimal place
+}
+
 async function handleStats(env) {
   const todayStart = mountainMidnightTodayUTC();
   const weekStart = mountainMidnightThisWeekUTC();
+  const yesterdayStart = mountainMidnightYesterdayUTC();
+  const prevWeekStart = mountainMidnightPrevWeekUTC();
   // Filtering to US only — your product is Colorado-specific, but country-level
   // geo data (from Cloudflare's edge) is reliable enough to use as the main
   // filter; state-level data below is a bonus, finer-grained signal on top.
@@ -1091,12 +1231,23 @@ async function handleStats(env) {
   const dau = await env.DB.prepare(
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US}`
   ).bind(todayStart).first();
+  // "Yesterday" as a comparison window: from yesterday's midnight up to (not
+  // including) today's midnight -- a clean full-day window, not "last 24h".
+  const dauPrev = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US}`
+  ).bind(yesterdayStart, todayStart).first();
   const wau = await env.DB.prepare(
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US}`
   ).bind(weekStart).first();
+  const wauPrev = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US}`
+  ).bind(prevWeekStart, weekStart).first();
   const totalViewsThisWeek = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? ${US}`
   ).bind(weekStart).first();
+  const totalViewsPrevWeek = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US}`
+  ).bind(prevWeekStart, weekStart).first();
   const byDevice = await env.DB.prepare(
     `SELECT device_type, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} GROUP BY device_type`
   ).bind(weekStart).all();
@@ -1125,6 +1276,9 @@ async function handleStats(env) {
   const newsletterVisits7d = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? ${US} AND source = 'newsletter'`
   ).bind(weekStart).first();
+  const newsletterVisits7dPrev = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US} AND source = 'newsletter'`
+  ).bind(prevWeekStart, weekStart).first();
   const newsletterVisitors7d = await env.DB.prepare(
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND source = 'newsletter'`
   ).bind(weekStart).first();
@@ -1143,6 +1297,9 @@ async function handleStats(env) {
   const totalClicks7d = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ?`
   ).bind(weekStart).first();
+  const totalClicks7dPrev = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ? AND clicked_at < ?`
+  ).bind(prevWeekStart, weekStart).first();
 
   // "Events discovered, all time" — a promotable number for the app itself.
   // Counts every real signal someone found an event useful: expanding a card
@@ -1152,24 +1309,42 @@ async function handleStats(env) {
   // event. Note: this counts actions, not deduplicated unique events — someone
   // expanding, then clicking source, then adding to calendar for the same
   // event counts as 3, which is an honest reflection of engagement depth,
-  // not an inflated number pretending to be unique events.
+  // not an inflated number pretending to be unique events. No "previous
+  // period" here on purpose -- it's a cumulative all-time counter, so a
+  // period-over-period comparison wouldn't mean anything.
   const eventsDiscoveredAllTime = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM link_clicks WHERE category NOT IN ('playground','hike','support')`
   ).first();
 
+  const dauN = dau?.n || 0, dauPrevN = dauPrev?.n || 0;
+  const wauN = wau?.n || 0, wauPrevN = wauPrev?.n || 0;
+  const views7dN = totalViewsThisWeek?.n || 0, views7dPrevN = totalViewsPrevWeek?.n || 0;
+  const clicks7dN = totalClicks7d?.n || 0, clicks7dPrevN = totalClicks7dPrev?.n || 0;
+  const newsletter7dN = newsletterVisits7d?.n || 0, newsletter7dPrevN = newsletterVisits7dPrev?.n || 0;
+
   return json({
-    weekly_active_users: wau?.n || 0,
-    daily_active_users: dau?.n || 0,
-    page_views_7d: totalViewsThisWeek?.n || 0,
+    weekly_active_users: wauN,
+    weekly_active_users_prev: wauPrevN,
+    weekly_active_users_change_pct: pctChange(wauN, wauPrevN),
+    daily_active_users: dauN,
+    daily_active_users_prev: dauPrevN,
+    daily_active_users_change_pct: pctChange(dauN, dauPrevN),
+    page_views_7d: views7dN,
+    page_views_7d_prev: views7dPrevN,
+    page_views_7d_change_pct: pctChange(views7dN, views7dPrevN),
     by_device_7d: byDevice.results || [],
     top_cities_7d: byCity.results || [],
     colorado_visitors_7d: coloradoVisitors7d?.n || 0,
     by_region_7d: byRegion7d.results || [],
     newsletter_visits_1d: newsletterVisits1d?.n || 0,
-    newsletter_visits_7d: newsletterVisits7d?.n || 0,
+    newsletter_visits_7d: newsletter7dN,
+    newsletter_visits_7d_prev: newsletter7dPrevN,
+    newsletter_visits_7d_change_pct: pctChange(newsletter7dN, newsletter7dPrevN),
     newsletter_unique_visitors_7d: newsletterVisitors7d?.n || 0,
     link_clicks_1d: totalClicks1d?.n || 0,
-    link_clicks_7d: totalClicks7d?.n || 0,
+    link_clicks_7d: clicks7dN,
+    link_clicks_7d_prev: clicks7dPrevN,
+    link_clicks_7d_change_pct: pctChange(clicks7dN, clicks7dPrevN),
     link_clicks_by_type_1d: clicksByType1d.results || [],
     link_clicks_by_type_7d: clicksByType7d.results || [],
     events_discovered_all_time: eventsDiscoveredAllTime?.n || 0
@@ -1673,6 +1848,19 @@ async function handleRejectPending(env, url) {
   return new Response("Got it — dismissed and won't be suggested again.", { headers: { "Content-Type": "text/plain" } });
 }
 
+// JSON list for admin.html's "Pending events" card -- same underlying data
+// as the email digest (buildPendingEventsEmailHtml), just queryable on
+// demand instead of only arriving Sunday at noon or after a manual scan.
+async function handlePendingEventsList(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT id, title, source, city, category, cost, age_min, age_max, day_of_week,
+            event_date, start_time, display_time, note, source_url, dedup_key,
+            approval_token, discovered_at
+     FROM pending_events WHERE status = 'pending' ORDER BY discovered_at DESC`
+  ).all();
+  return json({ count: results.length, pending: results });
+}
+
 async function handleSubscribe(request, env) {
   let body;
   try {
@@ -1720,6 +1908,12 @@ export default {
         ctx.waitUntil(runWeeklyDigest(env));
         ctx.waitUntil(runPendingEventsScan(env));
       }
+      return;
+    }
+    if (event.cron === "0 9 1 * *") {
+      // Monthly only — My Nature Lab posts topics in ~4-week batches, so a
+      // daily check would just be re-scanning the same page for nothing.
+      ctx.waitUntil(runMyNatureLabPendingScan(env));
       return;
     }
     ctx.waitUntil(runScrape(env));
@@ -1795,6 +1989,9 @@ export default {
       if (url.pathname === "/api/pending-scan-now" && request.method === "POST") {
         const results = await runPendingEventsScan(env);
         return json({ ranAt: new Date().toISOString(), results });
+      }
+      if (url.pathname === "/api/pending-events" && request.method === "GET") {
+        return await handlePendingEventsList(env);
       }
     } catch (err) {
       return errorResponse(err);
