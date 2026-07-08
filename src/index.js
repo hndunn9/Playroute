@@ -1372,7 +1372,17 @@ async function handleIngest(request, env) {
     return json({ error: "No events provided \u2014 expected { events: [...] }" }, 400);
   }
   const required = ["title", "source", "city", "category", "cost", "age_min", "age_max", "start_time", "recurrence", "note", "source_url"];
+
+  // TEMPORARY: while the Boulder Library scraper's detail-page parsing is
+  // unverified (see scrape.js — grabbed the wrong Time: value for at least
+  // one event), route everything through /api/ingest into pending_events
+  // for manual review instead of auto-publishing straight to `events`.
+  // Toggle off (INGEST_REVIEW_MODE=false or unset) once parsing is trusted
+  // again — same review-queue pattern already used for Westminster Library.
+  const reviewMode = env.INGEST_REVIEW_MODE === "true";
+
   let upserted = 0;
+  let queued = 0;
   const errors = [];
   for (const ev of events) {
     const missing = required.filter((k) => ev[k] === undefined || ev[k] === null);
@@ -1382,13 +1392,31 @@ async function handleIngest(request, env) {
     }
     try {
       const dedupKey = ev.libcal_event_id || `ingest:${ev.source_url}:${ev.event_date || ev.day_of_week}`;
-      await upsertEvent(env, { ...ev, libcal_event_id: dedupKey, verified: ev.verified ?? 1 });
-      upserted++;
+      if (reviewMode) {
+        const token = crypto.randomUUID();
+        const res = await env.DB.prepare(
+          `INSERT INTO pending_events
+            (title, source, city, category, cost, age_min, age_max, day_of_week,
+             event_date, start_time, display_time, recurrence, note, source_url,
+             raw_excerpt, dedup_key, approval_token)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(dedup_key) DO NOTHING`
+        ).bind(
+          ev.title, ev.source, ev.city, ev.category, ev.cost,
+          ev.age_min, ev.age_max, ev.day_of_week ?? null, ev.event_date ?? null,
+          ev.start_time, ev.display_time ?? null, ev.recurrence, ev.note,
+          ev.source_url, ev.note, dedupKey, token
+        ).run();
+        if (res.meta.changes > 0) queued++;
+      } else {
+        await upsertEvent(env, { ...ev, libcal_event_id: dedupKey, verified: ev.verified ?? 1 });
+        upserted++;
+      }
     } catch (err) {
       errors.push({ title: ev.title, error: String(err) });
     }
   }
-  return json({ upserted, errors });
+  return json({ upserted, queued, reviewMode, errors });
 }
 
 // ---------------------------------------------------------------------
