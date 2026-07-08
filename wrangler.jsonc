@@ -24,5 +24,13 @@
 
   "triggers": {
     "crons": ["0 9 * * *", "0 18 * * 7", "0 19 * * 7"]
+  },
+
+  // TEMPORARY: forces /api/ingest to queue into pending_events instead of
+  // auto-publishing to `events`, while the Boulder Library scraper's
+  // time-parsing is being verified. Set to "false" (or remove) to go back
+  // to normal auto-publish once you're confident in the parsing again.
+  "vars": {
+    "INGEST_REVIEW_MODE": "true"
   }
 }
