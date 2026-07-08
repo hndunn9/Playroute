@@ -239,28 +239,48 @@ async function fetchLibCalEvents(base, token, calId, days = 14) {
   return Array.isArray(data) ? data : data.events || [];
 }
 
-function normalizeEvent(raw, cityName, timeZone = "America/Denver") {
-  const start = new Date(raw.start);
-  const dayOfWeek = start.toLocaleDateString("en-US", { weekday: "long", timeZone });
-  const startTime = start.toLocaleTimeString("en-GB", {
+// Extracts Mountain-Time wall-clock parts from a UTC Date instant, using
+// the same Intl.DateTimeFormat().formatToParts() technique as
+// toMountainDate() above -- which is already relied on elsewhere in this
+// file (getOccurrence's date-boundary math) and known to work correctly in
+// this runtime. normalizeEvent() previously used start.toLocaleTimeString/
+// toLocaleDateString(..., { timeZone }) directly, which was silently
+// returning UTC wall-clock time instead of the Mountain-converted time in
+// production -- every Boulder/Erie LibCal-API event queued into
+// pending_events came out exactly 6 hours later than its real Mountain
+// time (confirmed against 3 independently-verified real event times, all
+// off by precisely +6h, matching the UTC-6 MDT offset). Switching to the
+// same formatToParts-based approach used by toMountainDate avoids
+// whatever toLocaleTimeString-specific behavior caused that.
+function mountainParts(date, timeZone = TZ) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "long",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false,
-    timeZone
-  });
-  const displayStart = start.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone
-  });
+    hour12: false
+  }).formatToParts(date);
+  const p = Object.fromEntries(parts.filter(x => x.type !== "literal").map(x => [x.type, x.value]));
+  return { weekday: p.weekday, hour: +p.hour, minute: p.minute };
+}
+
+function mountainDisplayTime(date, timeZone = TZ) {
+  const { hour, minute } = mountainParts(date, timeZone);
+  const period = hour >= 12 ? "PM" : "AM";
+  let h12 = hour % 12;
+  if (h12 === 0) h12 = 12;
+  return `${h12}:${minute} ${period}`;
+}
+
+function normalizeEvent(raw, cityName, timeZone = "America/Denver") {
+  const start = new Date(raw.start);
+  const { weekday: dayOfWeek, hour: startHour, minute: startMinute } = mountainParts(start, timeZone);
+  const startTime = `${String(startHour).padStart(2, "0")}:${startMinute}`;
+  const displayStart = mountainDisplayTime(start, timeZone);
   let displayTime = displayStart;
   if (raw.end) {
     const end = new Date(raw.end);
-    const displayEnd = end.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone
-    });
+    const displayEnd = mountainDisplayTime(end, timeZone);
     displayTime = `${displayStart} \u2013 ${displayEnd}`;
   }
   const audience = (raw.audience || []).map((a) => typeof a === "string" ? a : a.name || "").join(",").toLowerCase();
