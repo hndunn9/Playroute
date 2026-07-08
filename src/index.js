@@ -640,7 +640,7 @@ async function runHtmlScrape(env) {
     const events = await fetchAndNormalizeWowCalendar();
     let count = 0;
     for (const ev of events) {
-      await upsertEvent(env, ev);
+      await publishEvent(env, ev);
       count++;
     }
     results.push({ source: "WOW Children's Museum", status: "ok", eventsUpserted: count });
@@ -834,7 +834,7 @@ async function runMeadScrape(env) {
     const { events } = await fetchAndNormalizeMeadCalendar();
     let count = 0;
     for (const ev of events) {
-      await upsertEvent(env, ev);
+      await publishEvent(env, ev);
       count++;
     }
     results.push({ source: "Town of Mead", status: "ok", eventsUpserted: count });
@@ -990,21 +990,8 @@ async function runWestminsterLibraryPendingScan(env) {
       ).bind(item.title, item.city).first();
       if (already) continue;
 
-      const token = crypto.randomUUID();
-      const res = await env.DB.prepare(
-        `INSERT INTO pending_events
-          (title, source, city, category, cost, age_min, age_max, day_of_week,
-           start_time, display_time, recurrence, note, source_url, raw_excerpt,
-           dedup_key, approval_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(dedup_key) DO NOTHING`
-      ).bind(
-        item.title, item.source, item.city, item.category, item.cost,
-        item.age_min, item.age_max, item.day_of_week, item.start_time,
-        item.display_time, item.recurrence, item.note, item.source_url,
-        item.note, item.dedup_key, token
-      ).run();
-      if (res.meta.changes > 0) newCandidates++;
+      const queued = await queuePendingEvent(env, item);
+      if (queued) newCandidates++;
     }
     return { source: "Westminster Library (needs review)", status: "ok", newCandidates };
   } catch (err) {
@@ -1235,6 +1222,41 @@ async function upsertEvent(env, ev) {
   ).run();
 }
 
+// TEMPORARY: shared pending-review queue for scrapers other than
+// Westminster (which already had its own version of this). Reuses the same
+// pending_events table / approval-token / email-review flow. See
+// INGEST_REVIEW_MODE in wrangler.jsonc — flip that back to "false" once
+// you're confident in a given scraper's parsing and want it auto-publishing
+// straight to `events` again.
+async function queuePendingEvent(env, ev) {
+  const dedupKey = ev.libcal_event_id || ev.dedup_key || `queue:${ev.source_url}:${ev.event_date || ev.day_of_week}`;
+  const token = crypto.randomUUID();
+  const res = await env.DB.prepare(
+    `INSERT INTO pending_events
+      (title, source, city, category, cost, age_min, age_max, day_of_week,
+       event_date, start_time, display_time, recurrence, note, source_url,
+       raw_excerpt, dedup_key, approval_token)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(dedup_key) DO NOTHING`
+  ).bind(
+    ev.title, ev.source ?? null, ev.city ?? null, ev.category ?? null, ev.cost ?? null,
+    ev.age_min ?? null, ev.age_max ?? null, ev.day_of_week ?? null, ev.event_date ?? null,
+    ev.start_time ?? null, ev.display_time ?? null, ev.recurrence ?? null, ev.note ?? null,
+    ev.source_url ?? null, ev.note ?? null, dedupKey, token
+  ).run();
+  return res.meta.changes > 0;
+}
+
+// Every scraper below calls this instead of upsertEvent directly, so the
+// review-mode toggle applies uniformly across all of them.
+async function publishEvent(env, ev) {
+  if (env.INGEST_REVIEW_MODE === "true") {
+    return queuePendingEvent(env, ev);
+  }
+  await upsertEvent(env, ev);
+  return true;
+}
+
 async function runScrape(env) {
   const results = [];
   for (const lib of LIBCAL_LIBRARIES) {
@@ -1250,7 +1272,7 @@ async function runScrape(env) {
       let count = 0;
       for (const raw of rawEvents) {
         const ev = normalizeEvent(raw, lib.city);
-        await upsertEvent(env, ev);
+        await publishEvent(env, ev);
         count++;
       }
       results.push({ library: lib.key, status: "ok", eventsUpserted: count });
@@ -1268,7 +1290,7 @@ async function runICalScrape(env) {
       const events = await fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
       let count = 0;
       for (const ev of events) {
-        await upsertEvent(env, ev);
+        await publishEvent(env, ev);
         count++;
       }
       results.push({ library: lib.city, status: "ok", eventsUpserted: count });
@@ -1373,12 +1395,9 @@ async function handleIngest(request, env) {
   }
   const required = ["title", "source", "city", "category", "cost", "age_min", "age_max", "start_time", "recurrence", "note", "source_url"];
 
-  // TEMPORARY: while the Boulder Library scraper's detail-page parsing is
-  // unverified (see scrape.js — grabbed the wrong Time: value for at least
-  // one event), route everything through /api/ingest into pending_events
+  // See INGEST_REVIEW_MODE in wrangler.jsonc / publishEvent() above — while
+  // it's "true", this (and every other scraper) queues into pending_events
   // for manual review instead of auto-publishing straight to `events`.
-  // Toggle off (INGEST_REVIEW_MODE=false or unset) once parsing is trusted
-  // again — same review-queue pattern already used for Westminster Library.
   const reviewMode = env.INGEST_REVIEW_MODE === "true";
 
   let upserted = 0;
@@ -1392,24 +1411,10 @@ async function handleIngest(request, env) {
     }
     try {
       const dedupKey = ev.libcal_event_id || `ingest:${ev.source_url}:${ev.event_date || ev.day_of_week}`;
+      await publishEvent(env, { ...ev, libcal_event_id: dedupKey, verified: ev.verified ?? 1 });
       if (reviewMode) {
-        const token = crypto.randomUUID();
-        const res = await env.DB.prepare(
-          `INSERT INTO pending_events
-            (title, source, city, category, cost, age_min, age_max, day_of_week,
-             event_date, start_time, display_time, recurrence, note, source_url,
-             raw_excerpt, dedup_key, approval_token)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(dedup_key) DO NOTHING`
-        ).bind(
-          ev.title, ev.source, ev.city, ev.category, ev.cost,
-          ev.age_min, ev.age_max, ev.day_of_week ?? null, ev.event_date ?? null,
-          ev.start_time, ev.display_time ?? null, ev.recurrence, ev.note,
-          ev.source_url, ev.note, dedupKey, token
-        ).run();
-        if (res.meta.changes > 0) queued++;
+        queued++;
       } else {
-        await upsertEvent(env, { ...ev, libcal_event_id: dedupKey, verified: ev.verified ?? 1 });
         upserted++;
       }
     } catch (err) {
@@ -1586,13 +1591,8 @@ async function runPendingEventsScan(env) {
       ).bind(item.title, item.city).first();
       if (already) continue;
 
-      const token = crypto.randomUUID();
-      const res = await env.DB.prepare(
-        `INSERT INTO pending_events (title, source, city, note, source_url, raw_excerpt, dedup_key, approval_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(dedup_key) DO NOTHING`
-      ).bind(item.title, item.source, item.city, item.note, item.source_url, item.note, item.dedup_key, token).run();
-      if (res.meta.changes > 0) newCandidates++;
+      const queued = await queuePendingEvent(env, item);
+      if (queued) newCandidates++;
     }
     results.push({ source: "Mead (needs review)", status: "ok", newCandidates });
   } catch (err) {
