@@ -337,8 +337,16 @@ main{
   border-radius:var(--radius-md);overflow:hidden;
   box-shadow:0 2px 8px rgba(44,31,20,0.07);
 }
-.pg-photo{height:88px;display:flex;align-items:center;justify-content:center;}
+.pg-photo{height:88px;display:flex;align-items:center;justify-content:center;position:relative;}
 .pg-photo svg{width:54%;height:54%;}
+.pg-water-badge{
+  position:absolute;top:6px;right:6px;
+  width:22px;height:22px;border-radius:50%;
+  background:#3b8fa3;color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 1px 4px rgba(0,0,0,0.25);
+}
+.pg-water-badge svg{width:13px;height:13px;}
 .pg-body{padding:9px 11px 11px;}
 .pg-name{font-weight:600;font-size:13px;line-height:1.25;color:var(--ink);}
 .pg-city{
@@ -779,7 +787,8 @@ const ICONS = {
   calendarAdd: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/><line x1="12" y1="13" x2="12" y2="17"/><line x1="10" y1="15" x2="14" y2="15"/></svg>',
   info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none"/></svg>',
   share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>',
-  sparkle: '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15" style="vertical-align:-2px;"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg>'
+  sparkle: '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15" style="vertical-align:-2px;"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg>',
+  drop: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c-3.5 4.5-7 8.9-7 12.7a7 7 0 0 0 14 0c0-3.8-3.5-8.2-7-12.7z"/></svg>'
 };
 
 async function loadData(){
@@ -1098,6 +1107,17 @@ function renderFeed(){
   }
 }
 
+// Shows a water-drop badge on a playground card only when the tags/detail
+// confidently indicate a real water feature -- not just "check status" or
+// "uncertain" call-outs we've deliberately left in the data as a caveat for
+// the reader. Those caveats mean we don't actually know, so no badge.
+function hasConfirmedWater(pg){
+  const text = ((pg.tags||"") + " " + (pg.detail||"")).toLowerCase();
+  const uncertain = /(uncertain|check status|check hours|no water feature|does not appear|since closed|don't count on it|drained)/;
+  const waterTerms = /(splash pad|splash pool|water park|waterpark|sprayground|spray ground|lazy river|wading pool|water feature|zero-depth)/;
+  return waterTerms.test(text) && !uncertain.test(text);
+}
+
 function renderPlaygrounds(){
   const grid=document.getElementById("pgGrid");
   const navWrap=document.getElementById("pgCityNavWrap");
@@ -1124,6 +1144,7 @@ function renderPlaygrounds(){
         ${pg.image_key
           ? `<img src="${API_BASE}/api/photos/${encodeURIComponent(pg.image_key)}" alt="${pg.name}" style="width:100%;height:100%;object-fit:cover;">`
           : `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes.outdoor}</svg>`}
+        ${hasConfirmedWater(pg) ? `<div class="pg-water-badge" title="Confirmed water feature">${ICONS.drop}</div>` : ""}
       </div>
       <div class="pg-body">
         <div class="pg-name">${pg.name}</div>
