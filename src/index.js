@@ -1342,6 +1342,41 @@ async function handleStats(env) {
   const clicks7dN = totalClicks7d?.n || 0, clicks7dPrevN = totalClicks7dPrev?.n || 0;
   const newsletter7dN = newsletterVisits7d?.n || 0, newsletter7dPrevN = newsletterVisits7dPrev?.n || 0;
 
+  // --- All-time metrics ---------------------------------------------------
+  // Meant for advertiser-facing numbers, not day-to-day monitoring. Pulls
+  // from the same page_views/link_clicks tables, just with no date filter.
+  // IMPORTANT: "all time" really means "since analytics tracking started"
+  // (see tracking_since below) — the README already notes tracking doesn't
+  // cover the app's full history, so don't quote these as if they do.
+  const trackingSince = await env.DB.prepare(
+    `SELECT MIN(viewed_at) AS d FROM page_views WHERE country = 'US'`
+  ).first();
+  const pageViewsAllTime = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE country = 'US'`
+  ).first();
+  const uniqueVisitorsAllTime = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE country = 'US'`
+  ).first();
+  const coloradoVisitorsAllTime = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE country = 'US' AND region = 'CO'`
+  ).first();
+  const linkClicksAllTime = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM link_clicks`
+  ).first();
+  const activeSubscribers = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM subscribers WHERE active = 1`
+  ).first();
+  const contentCounts = await env.DB.prepare(
+    `SELECT
+      (SELECT COUNT(*) FROM events) AS events,
+      (SELECT COUNT(*) FROM playgrounds) AS playgrounds,
+      (SELECT COUNT(*) FROM hikes) AS hikes,
+      (SELECT COUNT(*) FROM (SELECT city FROM playgrounds UNION SELECT city FROM hikes UNION SELECT city FROM events)) AS cities`
+  ).first();
+
+  const uniqueAllTimeN = uniqueVisitorsAllTime?.n || 0;
+  const coloradoAllTimeN = coloradoVisitorsAllTime?.n || 0;
+
   return json({
     weekly_active_users: wauN,
     weekly_active_users_prev: wauPrevN,
@@ -1367,7 +1402,20 @@ async function handleStats(env) {
     link_clicks_7d_change_pct: pctChange(clicks7dN, clicks7dPrevN),
     link_clicks_by_type_1d: clicksByType1d.results || [],
     link_clicks_by_type_7d: clicksByType7d.results || [],
-    events_discovered_all_time: eventsDiscoveredAllTime?.n || 0
+    events_discovered_all_time: eventsDiscoveredAllTime?.n || 0,
+    all_time: {
+      tracking_since: trackingSince?.d || null,
+      page_views: pageViewsAllTime?.n || 0,
+      unique_visitors: uniqueAllTimeN,
+      colorado_visitors: coloradoAllTimeN,
+      colorado_visitor_pct: uniqueAllTimeN > 0 ? Math.round((coloradoAllTimeN / uniqueAllTimeN) * 100) : null,
+      link_clicks: linkClicksAllTime?.n || 0,
+      active_subscribers: activeSubscribers?.n || 0,
+      total_events: contentCounts?.events || 0,
+      total_playgrounds: contentCounts?.playgrounds || 0,
+      total_hikes: contentCounts?.hikes || 0,
+      cities_covered: contentCounts?.cities || 0
+    }
   });
 }
 
@@ -1920,20 +1968,12 @@ async function handlePhoto(env, key) {
   return new Response(obj.body, { headers });
 }
 
-// Reuses the same INGEST_SECRET already used to gate /api/ingest, so no new
-// secret needs to be provisioned. Accepts multipart/form-data with fields
+// No auth on this, matching the rest of admin.html (README already accepts
+// that risk for a solo pilot). Accepts multipart/form-data with fields
 // `park_id` (playgrounds.id) and `file` (image), uploads to the PHOTOS R2
 // bucket under a slugified-name key matching the existing image_key
 // convention (e.g. "scott-carpenter-park.jpg"), and updates playgrounds.image_key.
 async function handlePhotoUpload(request, env) {
-  if (!env.INGEST_SECRET) {
-    return json({ error: "INGEST_SECRET not configured on this Worker — see README" }, 500);
-  }
-  const auth = request.headers.get("Authorization") || "";
-  if (auth !== `Bearer ${env.INGEST_SECRET}`) {
-    return json({ error: "Unauthorized" }, 401);
-  }
-
   let form;
   try {
     form = await request.formData();
