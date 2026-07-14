@@ -22,9 +22,12 @@
   }
   .card h2{font-size:15px;margin-bottom:4px;}
   .card p{font-size:12.5px;color:#7A6650;margin-bottom:12px;line-height:1.5;}
-  .card input[type=email]{
+  .card input[type=email],
+  .card input[type=password],
+  .card input[type=file],
+  .card select{
     width:100%;padding:10px;border:1px solid #C8BA9E;border-radius:8px;
-    font-size:14px;margin-bottom:10px;font-family:inherit;
+    font-size:14px;margin-bottom:10px;font-family:inherit;background:#fff;
   }
   button{
     width:100%;padding:11px;border:none;border-radius:8px;
@@ -104,6 +107,16 @@
     <p>Everything currently sitting in the review queue — approve or reject right here instead of waiting for the email.</p>
     <button class="secondary" onclick="loadPendingEvents()">Refresh list</button>
     <div id="pendingListOutput" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>📸 Upload playground photo</h2>
+    <p>Uploads straight to R2 and links it to the park in one step. Requires the ingest secret (same one scrape.js uses) — it's never saved on this page, just held in memory while it's open.</p>
+    <select id="photoParkSelect"><option value="">Loading playgrounds…</option></select>
+    <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp">
+    <input type="password" id="photoSecret" placeholder="Ingest secret" autocomplete="off">
+    <button class="secondary" onclick="uploadPhoto()">Upload photo</button>
+    <div class="result" id="photoResult"></div>
   </div>
 
   <div class="card">
@@ -256,8 +269,58 @@ async function decidePending(token, action, id){
   }
 }
 
+async function loadPlaygroundsForPhoto(){
+  const sel = document.getElementById('photoParkSelect');
+  try{
+    const res = await fetch('/api/playgrounds');
+    const parks = await res.json();
+    parks.sort((a,b) => (a.city+a.name).localeCompare(b.city+b.name));
+    sel.innerHTML = parks.map(p =>
+      `<option value="${p.id}">${p.image_key ? '✅' : '📷'} ${escapeHtml(p.city)} — ${escapeHtml(p.name)}</option>`
+    ).join('');
+  }catch(err){
+    sel.innerHTML = '<option value="">Failed to load — refresh page</option>';
+  }
+}
+
+async function uploadPhoto(){
+  const parkId = document.getElementById('photoParkSelect').value;
+  const fileInput = document.getElementById('photoFile');
+  const secret = document.getElementById('photoSecret').value.trim();
+  const el = document.getElementById('photoResult');
+
+  if(!parkId){ alert('Pick a playground first'); return; }
+  if(!fileInput.files[0]){ alert('Choose a photo first'); return; }
+  if(!secret){ alert('Enter the ingest secret first'); return; }
+
+  const form = new FormData();
+  form.append('park_id', parkId);
+  form.append('file', fileInput.files[0]);
+
+  el.className = 'result show loading';
+  el.textContent = 'Uploading…';
+  try{
+    const res = await fetch('/api/photos/upload', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${secret}` },
+      body: form
+    });
+    const data = await res.json();
+    el.className = 'result show ' + (res.ok ? 'ok' : 'err');
+    el.textContent = JSON.stringify(data, null, 2);
+    if(res.ok){
+      fileInput.value = '';
+      loadPlaygroundsForPhoto();
+    }
+  }catch(err){
+    el.className = 'result show err';
+    el.textContent = 'Error: ' + err.message;
+  }
+}
+
 loadStats();
 loadPendingEvents();
+loadPlaygroundsForPhoto();
 </script>
 </body>
 </html>
