@@ -96,15 +96,22 @@
   </div>
 
   <div class="card">
-    <h2>🔍 Run pending-events scan now</h2>
-    <p>Normally runs Sunday at noon MT. Re-checks known sources and emails you if anything new turns up for review.</p>
-    <button class="secondary" onclick="runAction('/api/pending-scan-now', 'pendingResult')">Run scan now</button>
-    <div class="result" id="pendingResult"></div>
+    <h2>🗂️ Sources</h2>
+    <p>Every source, split by what's automated vs. what still needs your eyes. Automated sources show their cadence and confidence.</p>
+    <button class="secondary" onclick="loadSources()">Load sources</button>
+    <div id="sourcesListOutput" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>🔄 Run all sources → review queue</h2>
+    <p>Replaces the old two separate buttons — everything (daily, weekly, and monthly sources alike) now flows into the same review queue below. Nothing publishes automatically.</p>
+    <button class="secondary" onclick="runAction('/api/run-sources', 'sourcesResult')">Run all sources now</button>
+    <div class="result" id="sourcesResult"></div>
   </div>
 
   <div class="card">
     <h2>📋 Pending events</h2>
-    <p>Everything currently sitting in the review queue — approve or reject right here instead of waiting for the email.</p>
+    <p>Everything currently sitting in the review queue — approve or reject right here instead of waiting for the email. ⛔ marks items missing required info (blocked from approval until fixed); ⚠️ marks judgment calls that are still approvable.</p>
     <button class="secondary" onclick="loadPendingEvents()">Refresh list</button>
     <div id="pendingListOutput" style="margin-top:12px;"></div>
   </div>
@@ -116,13 +123,6 @@
     <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp">
     <button class="secondary" onclick="uploadPhoto()">Upload photo</button>
     <div class="result" id="photoResult"></div>
-  </div>
-
-  <div class="card">
-    <h2>🔄 Run all scrapers now</h2>
-    <p>Manually triggers the library iCal feeds, Mead's calendar, and everything else that normally runs daily.</p>
-    <button class="secondary" onclick="runAction('/api/scrape-now', 'scrapeResult')">Run scrapers now</button>
-    <div class="result" id="scrapeResult"></div>
   </div>
 
   <div class="card">
@@ -240,6 +240,23 @@ function escapeHtml(s){
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function severityBadge(item){
+  if(item.severity === 'error') return '<span style="color:#7a2a2a;font-weight:700;">⛔ needs info</span>';
+  if(item.severity === 'warn') return '<span style="color:#9b7a1f;font-weight:700;">⚠️ double-check</span>';
+  return '<span style="color:#3a5a2a;font-weight:700;">✅ clean</span>';
+}
+
+function validationReasons(item){
+  if(!item.validation_notes) return '';
+  try{
+    const issues = JSON.parse(item.validation_notes);
+    if(!issues.length) return '';
+    return '<div class="pending-note" style="margin-top:6px;">' +
+      issues.map(i => `${i.level === 'error' ? '⛔' : '⚠️'} ${escapeHtml(i.reason)}`).join('<br>') +
+      '</div>';
+  }catch(e){ return ''; }
+}
+
 async function loadPendingEvents(){
   const out = document.getElementById('pendingListOutput');
   out.innerHTML = '<div class="result show loading">Loading…</div>';
@@ -253,12 +270,13 @@ async function loadPendingEvents(){
     }
     out.innerHTML = items.map(item => `
       <div class="pending-item" id="pending-${item.id}">
-        <div class="pending-title">${escapeHtml(item.title)}</div>
+        <div class="pending-title">${escapeHtml(item.title)} &nbsp; ${severityBadge(item)}</div>
         <div class="pending-meta">${escapeHtml(item.city||'')} ${item.source?'· '+escapeHtml(item.source):''} ${item.display_time?'· '+escapeHtml(item.display_time):''} ${item.event_date?'· '+escapeHtml(item.event_date):''}</div>
         ${item.note?`<div class="pending-note">${escapeHtml(item.note).slice(0,220)}</div>`:''}
+        ${validationReasons(item)}
         ${item.source_url?`<div class="pending-meta"><a href="${item.source_url}" target="_blank" rel="noopener noreferrer">View source ↗</a></div>`:''}
         <div class="pending-actions">
-          <button onclick="decidePending('${item.approval_token}', 'approve', ${item.id})">Approve</button>
+          <button onclick="decidePending('${item.approval_token}', 'approve', ${item.id})" ${item.severity==='error'?'disabled title="Blocked — missing required info, see above"':''}>Approve</button>
           <button class="reject" onclick="decidePending('${item.approval_token}', 'reject', ${item.id})">Reject</button>
         </div>
       </div>
@@ -274,11 +292,14 @@ async function decidePending(token, action, id){
   try{
     const path = action === 'approve' ? '/api/approve-pending' : '/api/reject-pending';
     const res = await fetch(`${path}?token=${encodeURIComponent(token)}`);
-    if(!res.ok) throw new Error('Request failed');
+    if(!res.ok){
+      const text = await res.text();
+      throw new Error(text || 'Request failed');
+    }
     if(el) el.remove();
   }catch(err){
     if(el) el.style.opacity = '1';
-    alert('Error: ' + err.message);
+    alert(err.message);
   }
 }
 
@@ -325,9 +346,43 @@ async function uploadPhoto(){
   }
 }
 
+async function loadSources(){
+  const out = document.getElementById('sourcesListOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/sources');
+    const sources = await res.json();
+    const auto = sources.filter(s => s.mode === 'auto').sort((a,b) => (a.cadence||'').localeCompare(b.cadence||''));
+    const manual = sources.filter(s => s.mode !== 'auto').sort((a,b) => (a.city||'').localeCompare(b.city||''));
+
+    const autoRows = auto.map(s => `
+      <div class="breakdown-row">
+        <span>${escapeHtml(s.city)} — ${escapeHtml(s.platform)} <span style="color:#7A6650;">(${escapeHtml(s.cadence)}${s.confidence?', '+escapeHtml(s.confidence):''})</span></span>
+        <span style="font-size:10.5px;color:${s.last_run_status==='error'?'#7a2a2a':'#7A6650'};">${s.last_run_at ? new Date(s.last_run_at).toLocaleDateString() : 'never run'}</span>
+      </div>`).join('') || '<div class="breakdown-row">None</div>';
+
+    const manualRows = manual.map(s => `
+      <div class="breakdown-row"><span>${escapeHtml(s.city)} — ${escapeHtml(s.platform)}</span></div>`).join('') || '<div class="breakdown-row">None</div>';
+
+    out.innerHTML = `
+      <div class="breakdown">
+        <strong>🤖 Automated (${auto.length})</strong>
+        ${autoRows}
+      </div>
+      <div class="breakdown" style="margin-top:14px;">
+        <strong>✋ Manual-only (${manual.length})</strong>
+        ${manualRows}
+      </div>
+    `;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
 loadStats();
 loadPendingEvents();
 loadPlaygroundsForPhoto();
+loadSources();
 </script>
 </body>
 </html>
