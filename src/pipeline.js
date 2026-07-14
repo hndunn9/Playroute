@@ -59,7 +59,7 @@ function validateCandidate(ev, sourceRow) {
   const warn = (reason) => issues.push({ level: "warn", reason });
 
   // Required fields, mirroring the events table's NOT NULL columns.
-  const required = ["title", "city", "category", "cost", "start_time", "display_time", "recurrence", "source_url"];
+  const required = ["title", "city", "category", "cost", "start_time", "display_time", "recurrence", "source_url", "day_of_week"];
   for (const field of required) {
     if (ev[field] === undefined || ev[field] === null || ev[field] === "") {
       err(`Missing required field: ${field}`);
@@ -67,11 +67,16 @@ function validateCandidate(ev, sourceRow) {
   }
 
   // Recurrence / day-of-week / event_date must agree with each other.
+  // Real gap found 2026-07-14: day_of_week is NOT NULL on the real `events`
+  // table for every row, including dated ones (used for display, e.g.
+  // "Saturday, July 11") — a WOW Museum candidate with day_of_week left
+  // unset made it all the way through validation and only failed at the
+  // database itself when approved. Moved day_of_week into the universally-
+  // required list above so this is now caught the moment a candidate is
+  // queued, not silently deferred to approval time.
   const recurrence = ev.recurrence || "";
   const isDated = recurrence === "dated";
-  const isWeeklyOrMonthly = recurrence === "weekly" || recurrence.startsWith("monthly-");
   if (isDated && !ev.event_date) err(`recurrence is "dated" but event_date is missing`);
-  if (isWeeklyOrMonthly && !ev.day_of_week) err(`recurrence is "${recurrence}" but day_of_week is missing`);
   if (ev.event_date && !isDated) err(`event_date is set but recurrence is "${recurrence || "(empty)"}", not "dated"`);
   if (recurrence && !VALID_RECURRENCE_PREFIXES.some((p) => recurrence === p || recurrence.startsWith(p))) {
     warn(`recurrence "${recurrence}" doesn't match a known pattern`);

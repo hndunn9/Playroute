@@ -481,7 +481,14 @@ function parseWowCalendarHtml(html, city) {
       cost: isPaid ? "paid" : "free",
       age_min,
       age_max,
-      day_of_week: undefined,
+      // FIX (2026-07-14): this was `undefined`, which crashed at approval
+      // time with "NOT NULL constraint failed: events.day_of_week" — the
+      // real table requires day_of_week on every row, even dated ones (used
+      // for display, e.g. "Saturday, July 11"). Anchored at noon UTC, same
+      // safe pattern used elsewhere in this file, since eventDate here is
+      // already the museum's own local calendar date, not a UTC instant
+      // needing conversion.
+      day_of_week: DAY_NAMES[new Date(`${eventDate}T12:00:00Z`).getUTCDay()],
       start_time: finalStartTime,
       display_time: displayTime,
       recurrence: "dated",
