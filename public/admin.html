@@ -111,10 +111,9 @@
 
   <div class="card">
     <h2>📸 Upload playground photo</h2>
-    <p>Uploads straight to R2 and links it to the park in one step. Requires the ingest secret (same one scrape.js uses) — it's never saved on this page, just held in memory while it's open.</p>
+    <p>Uploads straight to R2 and links it to the park in one step.</p>
     <select id="photoParkSelect"><option value="">Loading playgrounds…</option></select>
     <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp">
-    <input type="password" id="photoSecret" placeholder="Ingest secret" autocomplete="off">
     <button class="secondary" onclick="uploadPhoto()">Upload photo</button>
     <div class="result" id="photoResult"></div>
   </div>
@@ -217,6 +216,20 @@ async function loadStats(){
         <div class="breakdown-row"><span>${s.colorado_visitors_7d} of ${s.weekly_active_users} US visitors</span></div>
         ${(s.by_region_7d||[]).map(r=>`<div class="breakdown-row"><span>${r.region}</span><span>${r.n}</span></div>`).join('') || ''}
       </div>
+      <div class="breakdown" style="margin-top:16px;padding-top:14px;border-top:1px solid #EDE2CA;">
+        <strong>📈 All-time (since ${s.all_time.tracking_since ? new Date(s.all_time.tracking_since+'Z').toLocaleDateString() : 'tracking started'}) — for advertiser pitches</strong>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-box"><div class="stat-num">${s.all_time.unique_visitors.toLocaleString()}</div><div class="stat-label">Unique visitors</div></div>
+        <div class="stat-box"><div class="stat-num">${s.all_time.page_views.toLocaleString()}</div><div class="stat-label">Page views</div></div>
+        <div class="stat-box"><div class="stat-num">${s.all_time.link_clicks.toLocaleString()}</div><div class="stat-label">Link clicks</div></div>
+        <div class="stat-box"><div class="stat-num">${s.events_discovered_all_time.toLocaleString()}</div><div class="stat-label">Events discovered</div></div>
+        <div class="stat-box"><div class="stat-num">${s.all_time.colorado_visitor_pct !== null ? s.all_time.colorado_visitor_pct+'%' : '—'}</div><div class="stat-label">In-state (CO)</div></div>
+        <div class="stat-box"><div class="stat-num">${s.all_time.active_subscribers.toLocaleString()}</div><div class="stat-label">Newsletter subs</div></div>
+        <div class="stat-box" style="grid-column:span 2;"><div class="stat-num">${s.all_time.cities_covered}</div><div class="stat-label">Towns covered</div></div>
+        <div class="stat-box" style="grid-column:span 2;"><div class="stat-num">${s.all_time.total_events + s.all_time.total_playgrounds + s.all_time.total_hikes}</div><div class="stat-label">Total listings (${s.all_time.total_events} events, ${s.all_time.total_playgrounds} parks, ${s.all_time.total_hikes} hikes)</div></div>
+      </div>
+      <p style="font-size:11px;color:#7A6650;margin-top:8px;">⚠️ "All-time" only covers what's been tracked since analytics went live — not the app's full history. Fine for a growth trendline, not for claiming a longer track record than you have.</p>
     `;
   }catch(err){
     out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
@@ -286,12 +299,10 @@ async function loadPlaygroundsForPhoto(){
 async function uploadPhoto(){
   const parkId = document.getElementById('photoParkSelect').value;
   const fileInput = document.getElementById('photoFile');
-  const secret = document.getElementById('photoSecret').value.trim();
   const el = document.getElementById('photoResult');
 
   if(!parkId){ alert('Pick a playground first'); return; }
   if(!fileInput.files[0]){ alert('Choose a photo first'); return; }
-  if(!secret){ alert('Enter the ingest secret first'); return; }
 
   const form = new FormData();
   form.append('park_id', parkId);
@@ -300,11 +311,7 @@ async function uploadPhoto(){
   el.className = 'result show loading';
   el.textContent = 'Uploading…';
   try{
-    const res = await fetch('/api/photos/upload', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${secret}` },
-      body: form
-    });
+    const res = await fetch('/api/photos/upload', { method: 'POST', body: form });
     const data = await res.json();
     el.className = 'result show ' + (res.ok ? 'ok' : 'err');
     el.textContent = JSON.stringify(data, null, 2);
