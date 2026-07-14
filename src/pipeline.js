@@ -32,10 +32,17 @@ const VALID_RECURRENCE_PREFIXES = ["dated", "weekly", "irregular", "monthly-"];
 // stays constant across rescans of "the same" program.
 function buildStableDedupKey(sourceKey, ev) {
   const norm = (s) => String(s || "").toLowerCase().trim().replace(/\s+/g, "-");
+  // Real gap found 2026-07-14: title+city+day alone isn't a unique enough
+  // identity — generic titles like "Storytime" legitimately recur at
+  // several different times/locations under the exact same name. Without
+  // start_time and location in the key, two genuinely distinct sessions
+  // would collide and one would silently vanish via ON CONFLICT DO NOTHING.
+  const time = norm(ev.start_time) || "?";
+  const location = norm(ev.source) || "?";
   if (ev.recurrence === "dated" && ev.event_date) {
-    return `${sourceKey}:${norm(ev.title)}:${norm(ev.city)}:${ev.event_date}`;
+    return `${sourceKey}:${norm(ev.title)}:${norm(ev.city)}:${ev.event_date}:${time}:${location}`;
   }
-  return `${sourceKey}:${norm(ev.title)}:${norm(ev.city)}:${norm(ev.day_of_week) || "?"}`;
+  return `${sourceKey}:${norm(ev.title)}:${norm(ev.city)}:${norm(ev.day_of_week) || "?"}:${time}:${location}`;
 }
 
 // Validates one candidate event against the real `events` table constraints
@@ -128,9 +135,31 @@ function validateCandidate(ev, sourceRow) {
 // repeatedly). This catches the case where something was already approved
 // under a slightly different dedup_key history, or manually entered by hand.
 async function checkDuplicateRisk(env, ev) {
+  // Real gap found 2026-07-14: title+city alone is far too loose — a
+  // generic recurring title (e.g. "Storytime") legitimately has many
+  // distinct real sessions at different days/times/locations under the
+  // exact same city+title. Matching only on title+city meant a genuinely
+  // new session would get silently treated as "already exists" and never
+  // even reach the review queue. Now matches on the same identity that
+  // actually determines "is this the same real-world event slot": title,
+  // city, day-or-date, start_time, and source (location).
+  const isDated = ev.recurrence === "dated" && ev.event_date;
+  const conditions = ["title = ?", "city = ?", "start_time = ?"];
+  const binds = [ev.title, ev.city, ev.start_time];
+  if (isDated) {
+    conditions.push("event_date = ?");
+    binds.push(ev.event_date);
+  } else if (ev.day_of_week) {
+    conditions.push("day_of_week = ?");
+    binds.push(ev.day_of_week);
+  }
+  if (ev.source) {
+    conditions.push("source = ?");
+    binds.push(ev.source);
+  }
   const row = await env.DB.prepare(
-    `SELECT 1 FROM events WHERE title = ? AND city = ? LIMIT 1`
-  ).bind(ev.title, ev.city).first();
+    `SELECT 1 FROM events WHERE ${conditions.join(" AND ")} LIMIT 1`
+  ).bind(...binds).first();
   return !!row;
 }
 
