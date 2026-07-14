@@ -1140,7 +1140,7 @@ async function runMyNatureLabPendingScan(env) {
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type"
+  "Access-Control-Allow-Headers": "Content-Type, Authorization"
 };
 
 function json(data, status = 200) {
@@ -1920,6 +1920,75 @@ async function handlePhoto(env, key) {
   return new Response(obj.body, { headers });
 }
 
+// Reuses the same INGEST_SECRET already used to gate /api/ingest, so no new
+// secret needs to be provisioned. Accepts multipart/form-data with fields
+// `park_id` (playgrounds.id) and `file` (image), uploads to the PHOTOS R2
+// bucket under a slugified-name key matching the existing image_key
+// convention (e.g. "scott-carpenter-park.jpg"), and updates playgrounds.image_key.
+async function handlePhotoUpload(request, env) {
+  if (!env.INGEST_SECRET) {
+    return json({ error: "INGEST_SECRET not configured on this Worker — see README" }, 500);
+  }
+  const auth = request.headers.get("Authorization") || "";
+  if (auth !== `Bearer ${env.INGEST_SECRET}`) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+
+  let form;
+  try {
+    form = await request.formData();
+  } catch {
+    return json({ error: "Expected multipart/form-data body" }, 400);
+  }
+
+  const parkId = form.get("park_id");
+  const file = form.get("file");
+
+  if (!parkId) return json({ error: "park_id is required" }, 400);
+  if (!(file instanceof File)) return json({ error: "file is required" }, 400);
+
+  const ALLOWED_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  const ext = ALLOWED_TYPES[file.type];
+  if (!ext) {
+    return json({ error: `Unsupported file type: ${file.type || "unknown"} — use JPEG, PNG, or WebP` }, 400);
+  }
+
+  const MAX_BYTES = 8 * 1024 * 1024; // 8MB
+  if (file.size > MAX_BYTES) {
+    return json({ error: `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB) — 8MB max` }, 400);
+  }
+
+  const playground = await env.DB.prepare(
+    "SELECT id, name, image_key FROM playgrounds WHERE id = ?"
+  ).bind(parkId).first();
+  if (!playground) return json({ error: `No playground found with id ${parkId}` }, 404);
+
+  const slug = playground.name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const key = `${slug}.${ext}`;
+
+  await env.PHOTOS.put(key, file, { httpMetadata: { contentType: file.type } });
+
+  // Avoid leaving an orphaned object in R2 if the extension changed
+  // (e.g. replacing a .jpg with a .png for the same park).
+  if (playground.image_key && playground.image_key !== key) {
+    await env.PHOTOS.delete(playground.image_key).catch(() => {});
+  }
+
+  await env.DB.prepare("UPDATE playgrounds SET image_key = ? WHERE id = ?").bind(key, parkId).run();
+
+  return json({
+    ok: true,
+    park_id: Number(parkId),
+    park_name: playground.name,
+    key,
+    url: `/api/photos/${encodeURIComponent(key)}`,
+    replaced_existing: !!playground.image_key
+  });
+}
+
 export default {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
@@ -1953,6 +2022,9 @@ export default {
       if (url.pathname === "/api/playgrounds") return await handlePlaygrounds(env, url);
       if (url.pathname === "/api/hikes") return await handleHikes(env, url);
       if (url.pathname === "/api/sources") return await handleSources(env);
+      if (url.pathname === "/api/photos/upload" && request.method === "POST") {
+        return await handlePhotoUpload(request, env);
+      }
       if (url.pathname.startsWith("/api/photos/")) {
         return await handlePhoto(env, decodeURIComponent(url.pathname.slice("/api/photos/".length)));
       }
