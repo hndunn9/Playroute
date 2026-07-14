@@ -1282,7 +1282,7 @@ async function upsertEvent(env, ev) {
        start_time, display_time, recurrence, event_date, note, source_url,
        verified, libcal_event_id, season_start, season_end, last_scraped_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(libcal_event_id) DO UPDATE SET
+     ON CONFLICT(libcal_event_id) WHERE libcal_event_id IS NOT NULL DO UPDATE SET
        title=excluded.title,
        source=excluded.source,
        city=excluded.city,
@@ -1296,6 +1296,19 @@ async function upsertEvent(env, ev) {
        note=excluded.note,
        source_url=excluded.source_url,
        verified=excluded.verified,
+       season_start=excluded.season_start,
+       season_end=excluded.season_end,
+       last_scraped_at=CURRENT_TIMESTAMP
+     ON CONFLICT(title, city, source, day_of_week, start_time, COALESCE(event_date,'')) DO UPDATE SET
+       category=excluded.category,
+       cost=excluded.cost,
+       age_min=excluded.age_min,
+       age_max=excluded.age_max,
+       recurrence=excluded.recurrence,
+       note=excluded.note,
+       source_url=excluded.source_url,
+       verified=excluded.verified,
+       libcal_event_id=excluded.libcal_event_id,
        season_start=excluded.season_start,
        season_end=excluded.season_end,
        last_scraped_at=CURRENT_TIMESTAMP`
@@ -1657,24 +1670,36 @@ async function handleApprovePending(env, url) {
     );
   }
 
-  await upsertEvent(env, {
-    title: row.title,
-    source: row.source,
-    city: row.city,
-    category: row.category,
-    cost: row.cost,
-    age_min: row.age_min,
-    age_max: row.age_max,
-    day_of_week: row.day_of_week,
-    start_time: row.start_time,
-    display_time: row.display_time,
-    recurrence: row.recurrence,
-    event_date: row.event_date,
-    note: row.note,
-    source_url: row.source_url,
-    verified: 0,
-    libcal_event_id: row.dedup_key
-  });
+  try {
+    await upsertEvent(env, {
+      title: row.title,
+      source: row.source,
+      city: row.city,
+      category: row.category,
+      cost: row.cost,
+      age_min: row.age_min,
+      age_max: row.age_max,
+      day_of_week: row.day_of_week,
+      start_time: row.start_time,
+      display_time: row.display_time,
+      recurrence: row.recurrence,
+      event_date: row.event_date,
+      note: row.note,
+      source_url: row.source_url,
+      verified: 0,
+      libcal_event_id: row.dedup_key
+    });
+  } catch (err) {
+    // Belt-and-suspenders: upsertEvent's two chained ON CONFLICT clauses
+    // (2026-07-14 fix) should already handle both real unique constraints
+    // on `events` gracefully, but if some future schema change introduces
+    // a third one, fail with something you can actually act on instead of
+    // a raw D1 error.
+    return new Response(
+      `Couldn't publish "${row.title}" — the database rejected it: ${String(err)}\n\nThis pending item is still sitting in the queue, untouched, so nothing was lost. Worth flagging if you see this.`,
+      { status: 500, headers: { "Content-Type": "text/plain" } }
+    );
+  }
   await env.DB.prepare(`UPDATE pending_events SET status = 'approved', decided_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
   const warnings = issues.filter(i => i.level === "warn");
   const warnNote = warnings.length ? ` (heads up: ${warnings.map(w => w.reason).join("; ")})` : "";
