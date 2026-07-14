@@ -267,14 +267,26 @@ function isKidRelevant(ev) {
   return false;
 }
 
-function to24Hour(date) {
-  return `${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}`;
+// FIX (2026-07-14): the previous to24Hour()/formatDisplayTime() used raw
+// date.getUTCHours() / timeZone:"UTC" — meaning every Boulder/Erie iCal
+// event's stored time was the literal UTC clock time, not the Mountain
+// Time it actually happens at. A real 10:30am MT event (exported as
+// 16:30 UTC) was being stored and displayed as "16:30" / "4:30 PM" —
+// exactly 6 hours later than reality during MDT. Same formatToParts-based
+// technique as toMountainDate() above, which is already known-correct.
+function to24Hour(date, timeZone = TZ) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone, hour: "2-digit", minute: "2-digit", hour12: false
+  }).formatToParts(date);
+  const p = Object.fromEntries(parts.filter((x) => x.type !== "literal").map((x) => [x.type, x.value]));
+  const hh = String(Number(p.hour) % 24).padStart(2, "0"); // guards the rare "24:00" formatToParts quirk
+  return `${hh}:${p.minute}`;
 }
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-function formatDisplayTime(start, end) {
-  const fmt = (d) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+function formatDisplayTime(start, end, timeZone = TZ) {
+  const fmt = (d) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone });
   return end ? `${fmt(start)} \u2013 ${fmt(end)}` : fmt(start);
 }
 
@@ -296,6 +308,11 @@ function ageFromText(description) {
 function normalizeICalEvent(ev, city) {
   if (!ev.summary || !ev.dtstart) return null;
   const { age_min, age_max } = ageFromText(ev.description);
+  // day_of_week and event_date must also be computed in Mountain Time, not
+  // UTC — an event at, say, 11pm MT Tuesday is already Wednesday in UTC,
+  // so using .getUTCDay()/.toISOString() directly would mislabel it.
+  const mtDateStr = toMountainDateStr(ev.dtstart);
+  const mtDayOfWeek = DAY_NAMES[new Date(`${mtDateStr}T12:00:00Z`).getUTCDay()];
   return {
     title: ev.summary,
     source: `${city} Public Library${ev.location ? " \u2014 " + ev.location : ""}`,
@@ -304,11 +321,11 @@ function normalizeICalEvent(ev, city) {
     cost: "free",
     age_min,
     age_max,
-    day_of_week: DAY_NAMES[ev.dtstart.getUTCDay()],
+    day_of_week: mtDayOfWeek,
     start_time: to24Hour(ev.dtstart),
     display_time: formatDisplayTime(ev.dtstart, ev.dtend),
     recurrence: "dated",
-    event_date: ev.dtstart.toISOString().slice(0, 10),
+    event_date: mtDateStr,
     note: (ev.description || "").replace(/<[^>]+>/g, "").slice(0, 300) || `Pulled from ${city} library's public iCal feed.`,
     source_url: ev.url || "",
     verified: 1,
