@@ -1,3 +1,5 @@
+import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SOURCE_RUNNERS } from "./pipeline.js";
+
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
 const TZ = "America/Denver";
 
@@ -199,122 +201,6 @@ function ageMatchesBucket(ev, bucketId) {
   return ev.age_max >= lo && ev.age_min <= hi;
 }
 
-async function getAccessToken(env, base, clientId, clientSecret, cacheKey) {
-  if (env.TOKEN_CACHE) {
-    const cached = await env.TOKEN_CACHE.get(cacheKey, { type: "json" });
-    if (cached && cached.expires > Date.now()) return cached.token;
-  }
-  const res = await fetch(`${base}/1.1/oauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: clientId,
-      client_secret: clientSecret
-    })
-  });
-  if (!res.ok) {
-    throw new Error(`LibCal auth failed for ${base}: ${res.status} ${await res.text()}`);
-  }
-  const data = await res.json();
-  const token = data.access_token;
-  const expiresInMs = (data.expires_in || 3600) * 1000;
-  if (env.TOKEN_CACHE) {
-    await env.TOKEN_CACHE.put(
-      cacheKey,
-      JSON.stringify({ token, expires: Date.now() + expiresInMs - 30000 }),
-      { expirationTtl: Math.max(60, Math.floor(expiresInMs / 1000)) }
-    );
-  }
-  return token;
-}
-
-async function fetchLibCalEvents(base, token, calId, days = 14) {
-  const url = `${base}/1.1/events?cal_id=${encodeURIComponent(calId)}&days=${days}`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) {
-    throw new Error(`LibCal events fetch failed for cal_id=${calId}: ${res.status} ${await res.text()}`);
-  }
-  const data = await res.json();
-  return Array.isArray(data) ? data : data.events || [];
-}
-
-// Extracts Mountain-Time wall-clock parts from a UTC Date instant, using
-// the same Intl.DateTimeFormat().formatToParts() technique as
-// toMountainDate() above -- which is already relied on elsewhere in this
-// file (getOccurrence's date-boundary math) and known to work correctly in
-// this runtime. normalizeEvent() previously used start.toLocaleTimeString/
-// toLocaleDateString(..., { timeZone }) directly, which was silently
-// returning UTC wall-clock time instead of the Mountain-converted time in
-// production -- every Boulder/Erie LibCal-API event queued into
-// pending_events came out exactly 6 hours later than its real Mountain
-// time (confirmed against 3 independently-verified real event times, all
-// off by precisely +6h, matching the UTC-6 MDT offset). Switching to the
-// same formatToParts-based approach used by toMountainDate avoids
-// whatever toLocaleTimeString-specific behavior caused that.
-function mountainParts(date, timeZone = TZ) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false
-  }).formatToParts(date);
-  const p = Object.fromEntries(parts.filter(x => x.type !== "literal").map(x => [x.type, x.value]));
-  return { weekday: p.weekday, hour: +p.hour, minute: p.minute };
-}
-
-function mountainDisplayTime(date, timeZone = TZ) {
-  const { hour, minute } = mountainParts(date, timeZone);
-  const period = hour >= 12 ? "PM" : "AM";
-  let h12 = hour % 12;
-  if (h12 === 0) h12 = 12;
-  return `${h12}:${minute} ${period}`;
-}
-
-function normalizeEvent(raw, cityName, timeZone = "America/Denver") {
-  const start = new Date(raw.start);
-  const { weekday: dayOfWeek, hour: startHour, minute: startMinute } = mountainParts(start, timeZone);
-  const startTime = `${String(startHour).padStart(2, "0")}:${startMinute}`;
-  const displayStart = mountainDisplayTime(start, timeZone);
-  let displayTime = displayStart;
-  if (raw.end) {
-    const end = new Date(raw.end);
-    const displayEnd = mountainDisplayTime(end, timeZone);
-    displayTime = `${displayStart} \u2013 ${displayEnd}`;
-  }
-  const audience = (raw.audience || []).map((a) => typeof a === "string" ? a : a.name || "").join(",").toLowerCase();
-  let ageMin = 0;
-  let ageMax = 8;
-  if (audience.includes("baby") || audience.includes("toddler")) {
-    ageMin = 0;
-    ageMax = 2;
-  } else if (audience.includes("preschool")) {
-    ageMin = 2;
-    ageMax = 5;
-  } else if (audience.includes("elementary")) {
-    ageMin = 5;
-    ageMax = 10;
-  }
-  const description = (raw.description || "").replace(/<[^>]+>/g, "").trim().slice(0, 300);
-  return {
-    title: raw.title,
-    source: raw.location?.name || `${cityName} Public Library`,
-    city: cityName,
-    category: "library",
-    cost: "free",
-    age_min: ageMin,
-    age_max: ageMax,
-    day_of_week: dayOfWeek,
-    start_time: startTime,
-    display_time: displayTime,
-    recurrence: "weekly",
-    note: description || "Pulled from LibCal \u2014 confirm registration requirements on the source page.",
-    source_url: raw.url || raw.public_url || "",
-    verified: 1,
-    libcal_event_id: String(raw.id)
-  };
-}
 
 function unfoldICal(text) {
   return text.replace(/\r\n/g, "\n").replace(/\n[ \t]/g, "");
@@ -444,11 +330,6 @@ async function fetchAndNormalizeICalFeed(icalUrl, city, { daysAhead = 60, trustS
     .map((ev) => normalizeICalEvent(ev, city))
     .filter(Boolean);
 }
-
-const LIBCAL_LIBRARIES = [
-  { key: "boulder", city: "Boulder", base: "https://calendar.boulderlibrary.org", calId: "12892" },
-  { key: "erie", city: "Erie", base: "https://highplains.libcal.com", calId: "8181" }
-];
 
 const ICAL_LIBRARIES = [
   {
@@ -654,22 +535,9 @@ async function fetchAndNormalizeWowCalendar() {
   });
 }
 
-async function runHtmlScrape(env) {
-  const results = [];
-  try {
-    const events = await fetchAndNormalizeWowCalendar();
-    let count = 0;
-    for (const ev of events) {
-      await publishEvent(env, ev);
-      count++;
-    }
-    results.push({ source: "WOW Children's Museum", status: "ok", eventsUpserted: count });
-  } catch (err) {
-    results.push({ source: "WOW Children's Museum", status: "error", error: String(err) });
-  }
-  return results;
-}
-
+// Registered below (after SOURCE_RUNNERS import target exists) as the
+// wow_museum runner — just returns candidates, ingestCandidate handles the rest.
+SOURCE_RUNNERS.wow_museum = async () => fetchAndNormalizeWowCalendar();
 
 // --- Town of Mead scraper ---
 // Source feed: https://www.townofmead.org/calendar/json
@@ -842,27 +710,24 @@ async function fetchAndNormalizeMeadCalendar() {
       note: plainBody.slice(0, 300),
       source_url: `https://www.townofmead.org${item.link}`,
       verified: 0, // auto-parsed from prose — flagged unverified, unlike hand-curated entries
-      libcal_event_id: `mead:${item.id}`
+      libcal_event_id: `mead:${item.id}`,
+      _assumedTime: !parsed.startTime // true when no real time was found and we fell back to 9am
     });
   }
   return { events, needsReview };
 }
 
-async function runMeadScrape(env) {
-  const results = [];
-  try {
-    const { events } = await fetchAndNormalizeMeadCalendar();
-    let count = 0;
-    for (const ev of events) {
-      await publishEvent(env, ev);
-      count++;
-    }
-    results.push({ source: "Town of Mead", status: "ok", eventsUpserted: count });
-  } catch (err) {
-    results.push({ source: "Town of Mead", status: "error", error: String(err) });
-  }
-  return results;
-}
+// Both halves — confidently-parsed single-date events AND the
+// couldn't-parse-confidently "needs review" items — now flow through the
+// same pending_events path (per your instruction: everything automated
+// goes to review for now). The needsReview items are missing several
+// required fields on purpose (category/cost/age/time were never guessed at)
+// so validateCandidate will correctly flag them as needing your attention
+// rather than silently showing up looking complete.
+SOURCE_RUNNERS.mead_json = async () => {
+  const { events, needsReview } = await fetchAndNormalizeMeadCalendar();
+  return [...events, ...needsReview];
+};
 
 // --- Westminster Public Library scraper (pending-review only) ---
 // Source: https://westminsterco.librarycalendar.com
@@ -993,31 +858,18 @@ async function fetchAndScanWestminsterLibrary() {
       note: detail.categories
         ? `Category: ${detail.categories}. ${detail.raw_excerpt}`
         : detail.raw_excerpt,
-      source_url: detailUrl,
-      dedup_key: `westminster-library:${path}`
+      source_url: detailUrl
+      // No dedup_key here on purpose — this platform mints a new URL per
+      // date instance of a recurring program (confirmed bug, 2026-07-14),
+      // so keying on `path` meant the same weekly program got queued as a
+      // "new" candidate every week. Letting the pipeline compute a stable
+      // title+city+day key instead is the actual fix.
     });
   }
   return needsReview;
 }
 
-async function runWestminsterLibraryPendingScan(env) {
-  let newCandidates = 0;
-  try {
-    const needsReview = await fetchAndScanWestminsterLibrary();
-    for (const item of needsReview) {
-      const already = await env.DB.prepare(
-        `SELECT 1 FROM events WHERE title = ? AND city = ? LIMIT 1`
-      ).bind(item.title, item.city).first();
-      if (already) continue;
-
-      const queued = await queuePendingEvent(env, item);
-      if (queued) newCandidates++;
-    }
-    return { source: "Westminster Library (needs review)", status: "ok", newCandidates };
-  } catch (err) {
-    return { source: "Westminster Library (needs review)", status: "error", error: String(err) };
-  }
-}
+SOURCE_RUNNERS.westminster_library = async () => fetchAndScanWestminsterLibrary();
 
 // --- My Nature Lab (Louisville) Story Time scraper (pending-review only) ---
 // Source: https://www.mynaturelab.org/story-time -- a Wix site. Confirmed
@@ -1034,10 +886,12 @@ async function runWestminsterLibraryPendingScan(env) {
 // "Wednesdays and Sundays", but the big on-page header and every single
 // dated listing pair Sunday with Thursday. This scraper trusts the dated
 // listings (Sunday + Thursday) since that's the pattern actually backed by
-// real per-topic dates, not the prose. Given the raw-HTML gap, this always
-// routes to pending_events regardless of INGEST_REVIEW_MODE -- don't
-// promote this to auto-publish without confirming the regex against a real
-// page fetch first (log _rawTextSample the way the Boulder scraper does).
+// real per-topic dates, not the prose. Given the raw-HTML gap, this source
+// is registered with confidence='review' in scrape_sources, so every
+// candidate it produces gets a validation warning regardless of how clean
+// it looks -- don't flip that to 'trusted' without confirming the regex
+// against a real page fetch first (log _rawTextSample the way the Boulder
+// scraper does).
 const MY_NATURE_LAB_URL = "https://www.mynaturelab.org/story-time";
 const MY_NATURE_LAB_MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December";
 
@@ -1111,31 +965,16 @@ async function fetchAndScanMyNatureLab() {
         note: `Story: ${book.trim()} by ${author.trim()}. Animal encounter: ${animal.trim()}. Doors open 9am; storytime runs 9:15-9:45. Free, all ages. UNVERIFIED SCRAPE -- selectors written against rendered text, not raw HTML; confirm this matches the live page before trusting it.`,
         source_url: MY_NATURE_LAB_URL,
         raw_excerpt: m[0].slice(0, 400),
-        dedup_key: `mynaturelab:${eventDateStr}:${rawTitle.trim().toLowerCase().replace(/\s+/g, "-")}`
+        dedup_key: `mynaturelab:${eventDateStr}:${rawTitle.trim().toLowerCase().replace(/\s+/g, "-")}`,
+        _assumedTime: true, // 09:15 is always hardcoded here, never actually parsed from the page
+        _ageGuessed: true   // 0-18 is a broad fallback, not derived from real per-topic age info
       });
     }
   }
   return needsReview;
 }
 
-async function runMyNatureLabPendingScan(env) {
-  let newCandidates = 0;
-  try {
-    const needsReview = await fetchAndScanMyNatureLab();
-    for (const item of needsReview) {
-      const already = await env.DB.prepare(
-        `SELECT 1 FROM events WHERE title = ? AND city = ? AND event_date = ? LIMIT 1`
-      ).bind(item.title, item.city, item.event_date).first();
-      if (already) continue;
-
-      const queued = await queuePendingEvent(env, item);
-      if (queued) newCandidates++;
-    }
-    return { source: "My Nature Lab Story Time (needs review, monthly)", status: "ok", newCandidates };
-  } catch (err) {
-    return { source: "My Nature Lab Story Time (needs review, monthly)", status: "error", error: String(err) };
-  }
-}
+SOURCE_RUNNERS.my_nature_lab = async () => fetchAndScanMyNatureLab();
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -1465,84 +1304,17 @@ async function upsertEvent(env, ev) {
   ).run();
 }
 
-// TEMPORARY: shared pending-review queue for scrapers other than
-// Westminster (which already had its own version of this). Reuses the same
-// pending_events table / approval-token / email-review flow. See
-// INGEST_REVIEW_MODE in wrangler.jsonc — flip that back to "false" once
-// you're confident in a given scraper's parsing and want it auto-publishing
-// straight to `events` again.
-async function queuePendingEvent(env, ev) {
-  const dedupKey = ev.libcal_event_id || ev.dedup_key || `queue:${ev.source_url}:${ev.event_date || ev.day_of_week}`;
-  const token = crypto.randomUUID();
-  const res = await env.DB.prepare(
-    `INSERT INTO pending_events
-      (title, source, city, category, cost, age_min, age_max, day_of_week,
-       event_date, start_time, display_time, recurrence, note, source_url,
-       raw_excerpt, dedup_key, approval_token)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(dedup_key) DO NOTHING`
-  ).bind(
-    ev.title, ev.source ?? null, ev.city ?? null, ev.category ?? null, ev.cost ?? null,
-    ev.age_min ?? null, ev.age_max ?? null, ev.day_of_week ?? null, ev.event_date ?? null,
-    ev.start_time ?? null, ev.display_time ?? null, ev.recurrence ?? null, ev.note ?? null,
-    ev.source_url ?? null, ev.note ?? null, dedupKey, token
-  ).run();
-  return res.meta.changes > 0;
-}
-
-// Every scraper below calls this instead of upsertEvent directly, so the
-// review-mode toggle applies uniformly across all of them.
-async function publishEvent(env, ev) {
-  if (env.INGEST_REVIEW_MODE === "true") {
-    return queuePendingEvent(env, ev);
-  }
-  await upsertEvent(env, ev);
-  return true;
-}
-
-async function runScrape(env) {
-  const results = [];
-  for (const lib of LIBCAL_LIBRARIES) {
-    const clientId = env[`LIBCAL_${lib.key.toUpperCase()}_CLIENT_ID`];
-    const clientSecret = env[`LIBCAL_${lib.key.toUpperCase()}_CLIENT_SECRET`];
-    if (!clientId || !clientSecret) {
-      results.push({ library: lib.key, status: "skipped", reason: "missing API credentials \u2014 see README" });
-      continue;
-    }
-    try {
-      const token = await getAccessToken(env, lib.base, clientId, clientSecret, `token:${lib.key}`);
-      const rawEvents = await fetchLibCalEvents(lib.base, token, lib.calId, 14);
-      let count = 0;
-      for (const raw of rawEvents) {
-        const ev = normalizeEvent(raw, lib.city);
-        await publishEvent(env, ev);
-        count++;
-      }
-      results.push({ library: lib.key, status: "ok", eventsUpserted: count });
-    } catch (err) {
-      results.push({ library: lib.key, status: "error", error: String(err) });
-    }
-  }
-  return results;
-}
-
-async function runICalScrape(env) {
-  const results = [];
-  for (const lib of ICAL_LIBRARIES) {
-    try {
-      const events = await fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
-      let count = 0;
-      for (const ev of events) {
-        await publishEvent(env, ev);
-        count++;
-      }
-      results.push({ library: lib.city, status: "ok", eventsUpserted: count });
-    } catch (err) {
-      results.push({ library: lib.city, status: "error", error: String(err) });
-    }
-  }
-  return results;
-}
+// Boulder and Erie each get their own runner (rather than one runner
+// looping both) so they're tracked and error-isolated separately in
+// scrape_sources — one failing shouldn't obscure the other's last_run_at.
+SOURCE_RUNNERS.boulder_ical = async () => {
+  const lib = ICAL_LIBRARIES.find((l) => l.city === "Boulder");
+  return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
+};
+SOURCE_RUNNERS.erie_ical = async () => {
+  const lib = ICAL_LIBRARIES.find((l) => l.city === "Erie");
+  return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
+};
 
 async function handleEvents(env, url) {
   const city = url.searchParams.get("city");
@@ -1636,35 +1408,23 @@ async function handleIngest(request, env) {
   if (events.length === 0) {
     return json({ error: "No events provided \u2014 expected { events: [...] }" }, 400);
   }
-  const required = ["title", "source", "city", "category", "cost", "age_min", "age_max", "start_time", "recurrence", "note", "source_url"];
 
-  // See INGEST_REVIEW_MODE in wrangler.jsonc / publishEvent() above — while
-  // it's "true", this (and every other scraper) queues into pending_events
-  // for manual review instead of auto-publishing straight to `events`.
-  const reviewMode = env.INGEST_REVIEW_MODE === "true";
-
-  let upserted = 0;
-  let queued = 0;
-  const errors = [];
+  // Same pipeline as every other source now — validate, dedupe (on a
+  // stable key, not whatever the caller happened to pass), queue into
+  // pending_events. No more INGEST_REVIEW_MODE branch; this always queues.
+  const queued = [];
+  const skipped = [];
   for (const ev of events) {
-    const missing = required.filter((k) => ev[k] === undefined || ev[k] === null);
-    if (missing.length) {
-      errors.push({ title: ev.title || "(untitled)", error: `Missing fields: ${missing.join(", ")}` });
-      continue;
-    }
-    try {
-      const dedupKey = ev.libcal_event_id || `ingest:${ev.source_url}:${ev.event_date || ev.day_of_week}`;
-      await publishEvent(env, { ...ev, libcal_event_id: dedupKey, verified: ev.verified ?? 1 });
-      if (reviewMode) {
-        queued++;
-      } else {
-        upserted++;
-      }
-    } catch (err) {
-      errors.push({ title: ev.title, error: String(err) });
+    const result = await ingestCandidate(env, { source_key: "external_ingest", confidence: "review" }, ev);
+    if (result.reason === "duplicate-in-events") {
+      skipped.push({ title: ev.title, reason: "already exists in events" });
+    } else if (result.queued) {
+      queued.push({ title: ev.title, severity: result.severity });
+    } else {
+      skipped.push({ title: ev.title, reason: "duplicate pending candidate" });
     }
   }
-  return json({ upserted, queued, reviewMode, errors });
+  return json({ queued: queued.length, skipped: skipped.length, details: { queued, skipped } });
 }
 
 // ---------------------------------------------------------------------
@@ -1818,47 +1578,18 @@ function isNearNoonMountain(now) {
   return hourMT === 12;
 }
 
-async function runPendingEventsScan(env) {
-  const results = [];
-  let newCandidates = 0;
-  try {
-    const { needsReview } = await fetchAndNormalizeMeadCalendar();
-    for (const item of needsReview) {
-      // Skip anything whose title+city already exists in the live events
-      // table — otherwise something already manually reviewed and added
-      // (e.g. because its real single date got buried among other unrelated
-      // dates on the page, like a vendor-registration deadline) would keep
-      // getting re-suggested every week.
-      const already = await env.DB.prepare(
-        `SELECT 1 FROM events WHERE title = ? AND city = ? LIMIT 1`
-      ).bind(item.title, item.city).first();
-      if (already) continue;
-
-      const queued = await queuePendingEvent(env, item);
-      if (queued) newCandidates++;
-    }
-    results.push({ source: "Mead (needs review)", status: "ok", newCandidates });
-  } catch (err) {
-    results.push({ source: "Mead (needs review)", status: "error", error: String(err) });
-  }
-
-  results.push(await runWestminsterLibraryPendingScan(env));
-
-  // Only email if there's something to actually review — no empty "nothing
-  // found this week" noise.
+// Decoupled from any specific scan — call this after any runSources() run
+// (daily, weekly, monthly, or the admin panel's "run everything" button) to
+// notify you if anything new is sitting in the review queue. Only emails if
+// there's something to actually review, no empty "nothing found" noise.
+async function emailPendingReviewIfAny(env) {
   const { results: pending } = await env.DB.prepare(
     `SELECT * FROM pending_events WHERE status = 'pending' ORDER BY discovered_at DESC`
   ).all();
-  if (pending.length > 0 && env.ADMIN_EMAIL) {
-    const html = buildPendingEventsEmailHtml(pending);
-    try {
-      await sendDigestEmail(env, env.ADMIN_EMAIL, html, null, "New events to review on Playroute");
-      results.push({ source: "pending-events-email", status: "sent", count: pending.length });
-    } catch (err) {
-      results.push({ source: "pending-events-email", status: "error", error: String(err) });
-    }
-  }
-  return results;
+  if (pending.length === 0 || !env.ADMIN_EMAIL) return { sent: false, count: pending.length };
+  const html = buildPendingEventsEmailHtml(pending);
+  await sendDigestEmail(env, env.ADMIN_EMAIL, html, null, "New events to review on Playroute");
+  return { sent: true, count: pending.length };
 }
 
 function buildPendingEventsEmailHtml(pending) {
@@ -1886,18 +1617,41 @@ async function handleApprovePending(env, url) {
   const row = await env.DB.prepare(`SELECT * FROM pending_events WHERE approval_token = ? AND status = 'pending'`).bind(token).first();
   if (!row) return new Response("This item was already handled or doesn't exist.", { headers: { "Content-Type": "text/plain" } });
 
+  // Re-validate server-side rather than trusting whatever severity was
+  // stamped when this was first queued — a stale/tampered token shouldn't
+  // be able to skip this check. This is also where the old code used to
+  // silently fill in guessed defaults (category||"outdoor", cost||"free",
+  // age_min??0, recurrence||"dated") for anything missing — exactly the
+  // "Westminster queues start_time: null and nothing flags it before you
+  // approve it live" problem. No more silent fallbacks: if it's missing
+  // something required, you get told, not a guessed value.
+  const candidate = {
+    title: row.title, source: row.source, city: row.city, category: row.category,
+    cost: row.cost, age_min: row.age_min, age_max: row.age_max, day_of_week: row.day_of_week,
+    start_time: row.start_time, display_time: row.display_time, recurrence: row.recurrence,
+    event_date: row.event_date, note: row.note, source_url: row.source_url
+  };
+  const { severity, issues } = validateCandidate(candidate);
+  if (severity === "error") {
+    const reasons = issues.filter(i => i.level === "error").map(i => `- ${i.reason}`).join("\n");
+    return new Response(
+      `Can't approve "${row.title}" yet — it's missing information a real event needs:\n\n${reasons}\n\nEdit the row directly in D1 (or reject it) rather than publishing something incomplete.`,
+      { status: 422, headers: { "Content-Type": "text/plain" } }
+    );
+  }
+
   await upsertEvent(env, {
     title: row.title,
     source: row.source,
     city: row.city,
-    category: row.category || "outdoor",
-    cost: row.cost || "free",
-    age_min: row.age_min ?? 0,
-    age_max: row.age_max ?? 12,
+    category: row.category,
+    cost: row.cost,
+    age_min: row.age_min,
+    age_max: row.age_max,
     day_of_week: row.day_of_week,
     start_time: row.start_time,
     display_time: row.display_time,
-    recurrence: row.recurrence || "dated",
+    recurrence: row.recurrence,
     event_date: row.event_date,
     note: row.note,
     source_url: row.source_url,
@@ -1905,7 +1659,9 @@ async function handleApprovePending(env, url) {
     libcal_event_id: row.dedup_key
   });
   await env.DB.prepare(`UPDATE pending_events SET status = 'approved', decided_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
-  return new Response(`"${row.title}" has been added to Playroute. Thanks for reviewing!`, { headers: { "Content-Type": "text/plain" } });
+  const warnings = issues.filter(i => i.level === "warn");
+  const warnNote = warnings.length ? ` (heads up: ${warnings.map(w => w.reason).join("; ")})` : "";
+  return new Response(`"${row.title}" has been added to Playroute. Thanks for reviewing!${warnNote}`, { headers: { "Content-Type": "text/plain" } });
 }
 
 async function handleRejectPending(env, url) {
@@ -1923,8 +1679,9 @@ async function handlePendingEventsList(env) {
   const { results } = await env.DB.prepare(
     `SELECT id, title, source, city, category, cost, age_min, age_max, day_of_week,
             event_date, start_time, display_time, note, source_url, dedup_key,
-            approval_token, discovered_at
-     FROM pending_events WHERE status = 'pending' ORDER BY discovered_at DESC`
+            approval_token, discovered_at, severity, validation_notes
+     FROM pending_events WHERE status = 'pending'
+     ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, discovered_at DESC`
   ).all();
   return json({ count: results.length, pending: results });
 }
@@ -2035,20 +1792,20 @@ export default {
     if (event.cron === "0 18 * * 7" || event.cron === "0 19 * * 7") {
       if (isNearNoonMountain(new Date())) {
         ctx.waitUntil(runWeeklyDigest(env));
-        ctx.waitUntil(runPendingEventsScan(env));
+        ctx.waitUntil(runSources(env, { cadence: "weekly" }).then(() => emailPendingReviewIfAny(env)));
       }
       return;
     }
     if (event.cron === "0 9 1 * *") {
-      // Monthly only — My Nature Lab posts topics in ~4-week batches, so a
-      // daily check would just be re-scanning the same page for nothing.
-      ctx.waitUntil(runMyNatureLabPendingScan(env));
+      // Monthly — My Nature Lab posts topics in ~4-week batches, so a daily
+      // check would just be re-scanning the same page for nothing. This
+      // trigger previously existed in code but was never actually
+      // registered in wrangler.jsonc, so it had never fired — fixed
+      // alongside this redesign.
+      ctx.waitUntil(runSources(env, { cadence: "monthly" }).then(() => emailPendingReviewIfAny(env)));
       return;
     }
-    ctx.waitUntil(runScrape(env));
-    ctx.waitUntil(runICalScrape(env));
-    ctx.waitUntil(runHtmlScrape(env));
-    ctx.waitUntil(runMeadScrape(env));
+    ctx.waitUntil(runSources(env, { cadence: "daily" }).then(() => emailPendingReviewIfAny(env)));
   },
   // HTTP entry point — this is what the frontend fetches from instead of
   // using a hardcoded JS array.
@@ -2089,14 +1846,16 @@ export default {
           { headers: { "Content-Type": "application/xml", ...CORS_HEADERS } }
         );
       }
-      if (url.pathname === "/api/scrape-now" && request.method === "POST") {
-        const [apiResults, icalResults, htmlResults, meadResults] = await Promise.all([
-          runScrape(env),
-          runICalScrape(env),
-          runHtmlScrape(env),
-          runMeadScrape(env)
-        ]);
-        return json({ ranAt: new Date().toISOString(), apiResults, icalResults, htmlResults, meadResults });
+      // Single run entrypoint, replacing the old /api/scrape-now +
+      // /api/pending-scan-now split — everything goes to the review queue
+      // now, so there's nothing left to meaningfully split between. Optional
+      // ?cadence=daily|weekly|monthly filters; omit it to run everything
+      // (that's what the admin panel's one button does).
+      if (url.pathname === "/api/run-sources" && request.method === "POST") {
+        const cadence = url.searchParams.get("cadence");
+        const results = await runSources(env, cadence ? { cadence } : {});
+        const emailResult = await emailPendingReviewIfAny(env);
+        return json({ ranAt: new Date().toISOString(), cadence: cadence || "all", results, emailResult });
       }
       if (url.pathname === "/api/ingest" && request.method === "POST") {
         return await handleIngest(request, env);
@@ -2118,10 +1877,6 @@ export default {
       if (url.pathname === "/api/reject-pending") {
         return await handleRejectPending(env, url);
       }
-      if (url.pathname === "/api/pending-scan-now" && request.method === "POST") {
-        const results = await runPendingEventsScan(env);
-        return json({ ranAt: new Date().toISOString(), results });
-      }
       if (url.pathname === "/api/pending-events" && request.method === "GET") {
         return await handlePendingEventsList(env);
       }
@@ -2129,7 +1884,7 @@ export default {
       return errorResponse(err);
     }
     return new Response(
-      "Playroute API \u2014 try /api/events, /api/playgrounds, /api/hikes, /api/sources, or POST /api/scrape-now\n\n/api/events supports ?city=&category=&cost=free&age=0-1.5|2-4|5-8&includeIrregular=1",
+      "Playroute API \u2014 try /api/events, /api/playgrounds, /api/hikes, /api/sources, or POST /api/run-sources[?cadence=daily|weekly|monthly]\n\n/api/events supports ?city=&category=&cost=free&age=0-1.5|2-4|5-8&includeIrregular=1",
       { headers: CORS_HEADERS }
     );
   }
