@@ -1409,10 +1409,25 @@ async function handleEvents(env, url) {
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const { results } = await env.DB.prepare(`SELECT * FROM events ${where}`).bind(...binds).all();
+
+  // Attach this week's engagement badge, if any. Computed weekly by
+  // runWeeklyEngagementDigest (see the Sunday cron branch below) —
+  // 'trending' means this week's clicks/calendar-adds/shares are running
+  // well above that event's own recent average, 'popular' means it's in the
+  // top slice by raw volume this week regardless of trend direction. Most
+  // events get neither, which is the point — a badge on everything means
+  // nothing.
+  const badgeRows = await env.DB.prepare(
+    `SELECT event_id, badge FROM engagement_digests
+     WHERE week_start = (SELECT MAX(week_start) FROM engagement_digests) AND badge IS NOT NULL`
+  ).all();
+  const badgeByEventId = new Map(badgeRows.results.map((r) => [r.event_id, r.badge]));
+
   const now = new Date();
   const withOccurrence = [];
   const irregular = [];
   for (const ev of results) {
+    ev.badge = badgeByEventId.get(ev.id) || null;
     if (!ageMatchesBucket(ev, ageBucket)) continue;
     if (ev.recurrence === "irregular") {
       if (includeIrregular) irregular.push({ ...ev, occurrence: null, occurrence_label: "Check dates \u2014 no fixed schedule" });
@@ -1449,6 +1464,15 @@ async function handleSources(env) {
   return json(results);
 }
 
+// Recognized action_type values. 'category' historically also carried these
+// same strings for a few click sites (card_expand/calendar/share/support),
+// which meant a single column did double duty as both "what type of click
+// was this" and "what category is this event" depending on which button was
+// clicked — that made cross-event engagement analysis unreliable. action_type
+// is now the dedicated field for that; category (when sent) stays the real
+// event category throughout.
+const KNOWN_ACTION_TYPES = new Set(["view_details", "add_to_calendar", "share", "support_click", "source_click"]);
+
 async function handleTrackClick(request, env) {
   let body;
   try {
@@ -1459,10 +1483,18 @@ async function handleTrackClick(request, env) {
   if (!body.source_url || !body.event_title) {
     return json({ error: "event_title and source_url are required" }, 400);
   }
+  // Back-compat: older cached frontend bundles may still send an
+  // action-type string in `category` and no `action` at all. Prefer the
+  // explicit `action` field; fall back to inferring it from `category` so
+  // in-flight clients don't silently stop being tracked during rollout.
+  const action = KNOWN_ACTION_TYPES.has(body.action)
+    ? body.action
+    : (KNOWN_ACTION_TYPES.has(body.category) ? body.category : "source_click");
+  const category = KNOWN_ACTION_TYPES.has(body.category) ? null : (body.category ?? null);
   await env.DB.prepare(
-    `INSERT INTO link_clicks (event_id, event_title, city, category, source_url)
-     VALUES (?, ?, ?, ?, ?)`
-  ).bind(body.event_id ?? null, body.event_title, body.city ?? null, body.category ?? null, body.source_url).run();
+    `INSERT INTO link_clicks (event_id, event_title, city, category, source_url, action_type)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(body.event_id ?? null, body.event_title, body.city ?? null, category, body.source_url, action).run();
   return json({ ok: true });
 }
 
@@ -1603,6 +1635,83 @@ async function sendDigestEmail(env, toEmail, html, text, subject = "This week on
   if (!res.ok) {
     throw new Error(`Resend send failed for ${toEmail}: ${res.status} ${await res.text()}`);
   }
+}
+
+// ---------------------------------------------------------------------
+// WEEKLY ENGAGEMENT DIGEST — separate from the subscriber email digest
+// above. Scores each event's link_clicks (views/calendar-adds/shares) for
+// the trailing 7 days into engagement_digests, then assigns a badge:
+//   'trending' — this week's total is >=1.5x that event's own prior
+//                3-week average, with a floor of 5 interactions so a
+//                1->2 click jump doesn't get flagged
+//   'popular'  — top ~12% by raw volume this week, regardless of trend
+// Runs off the same Sunday cron as the subscriber digest (see scheduled()
+// below). handleEvents() reads the latest week's badges and attaches them
+// to the /api/events response for the frontend to render.
+// ---------------------------------------------------------------------
+async function runWeeklyEngagementDigest(env) {
+  await env.DB.prepare(
+    `INSERT INTO engagement_digests
+      (event_id, event_title, event_category, event_city,
+       week_start, week_end, views, calendar_adds, shares, source_clicks,
+       total_interactions, prior_avg_interactions, trend_ratio, badge)
+     SELECT
+       lc.event_id, lc.event_title, e.category, e.city,
+       date('now','-7 days'), date('now'),
+       SUM(CASE WHEN lc.action_type='view_details' THEN 1 ELSE 0 END),
+       SUM(CASE WHEN lc.action_type='add_to_calendar' THEN 1 ELSE 0 END),
+       SUM(CASE WHEN lc.action_type='share' THEN 1 ELSE 0 END),
+       SUM(CASE WHEN lc.action_type='source_click' THEN 1 ELSE 0 END),
+       COUNT(*), NULL, NULL, NULL
+     FROM link_clicks lc
+     LEFT JOIN events e ON e.id = lc.event_id
+     WHERE lc.clicked_at >= datetime('now','-7 days')
+     GROUP BY lc.event_id, lc.event_title`
+  ).run();
+
+  await env.DB.prepare(
+    `UPDATE engagement_digests
+     SET prior_avg_interactions = (
+       SELECT AVG(total_interactions) FROM engagement_digests prev
+       WHERE prev.event_id = engagement_digests.event_id
+         AND prev.week_start < date('now','-7 days')
+         AND prev.week_start >= date('now','-28 days')
+     )
+     WHERE week_start = date('now','-7 days')`
+  ).run();
+
+  await env.DB.prepare(
+    `UPDATE engagement_digests
+     SET trend_ratio = CASE WHEN prior_avg_interactions > 0
+           THEN CAST(total_interactions AS REAL) / prior_avg_interactions ELSE NULL END
+     WHERE week_start = date('now','-7 days')`
+  ).run();
+
+  await env.DB.prepare(
+    `UPDATE engagement_digests
+     SET badge = CASE
+       WHEN trend_ratio >= 1.5 AND total_interactions >= 5 THEN 'trending'
+       WHEN total_interactions >= (
+         SELECT total_interactions FROM engagement_digests
+         WHERE week_start = date('now','-7 days')
+         ORDER BY total_interactions DESC
+         LIMIT 1 OFFSET (SELECT CAST(COUNT(*) * 0.12 AS INTEGER) FROM engagement_digests WHERE week_start = date('now','-7 days'))
+       ) THEN 'popular'
+       ELSE NULL
+     END
+     WHERE week_start = date('now','-7 days')`
+  ).run();
+
+  const scored = await env.DB.prepare(`SELECT COUNT(*) n FROM engagement_digests WHERE week_start = date('now','-7 days')`).first();
+  const trending = await env.DB.prepare(`SELECT COUNT(*) n FROM engagement_digests WHERE week_start = date('now','-7 days') AND badge='trending'`).first();
+  const popular = await env.DB.prepare(`SELECT COUNT(*) n FROM engagement_digests WHERE week_start = date('now','-7 days') AND badge='popular'`).first();
+
+  await env.DB.prepare(`INSERT INTO job_runs (job_name, status, details) VALUES (?, 'success', ?)`)
+    .bind("weekly_engagement_digest", JSON.stringify({
+      week_start: "last 7 days", events_scored: scored.n, trending_count: trending.n, popular_count: popular.n
+    })).run();
+
+  return { events_scored: scored.n, trending_count: trending.n, popular_count: popular.n };
 }
 
 async function runWeeklyDigest(env, testEmail = null) {
@@ -1908,6 +2017,7 @@ export default {
     if (event.cron === "0 18 * * 7" || event.cron === "0 19 * * 7") {
       if (isNearNoonMountain(new Date())) {
         ctx.waitUntil(runWeeklyDigest(env));
+        ctx.waitUntil(runWeeklyEngagementDigest(env));
         ctx.waitUntil(runSources(env, { cadence: "weekly" }).then(() => emailPendingReviewIfAny(env)));
       }
       return;
@@ -1991,6 +2101,10 @@ export default {
         const testEmail = url.searchParams.get("email");
         const results = await runWeeklyDigest(env, testEmail);
         return json({ ranAt: new Date().toISOString(), mode: testEmail ? "test" : "all-subscribers", results });
+      }
+      if (url.pathname === "/api/engagement-digest-now" && request.method === "POST") {
+        const results = await runWeeklyEngagementDigest(env);
+        return json({ ranAt: new Date().toISOString(), results });
       }
       if (url.pathname === "/api/approve-pending") {
         return await handleApprovePending(env, url);
