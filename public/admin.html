@@ -105,7 +105,7 @@
   <div class="card">
     <h2>🔄 Run all sources → review queue</h2>
     <p>Replaces the old two separate buttons — everything (daily, weekly, and monthly sources alike) now flows into the same review queue below. Nothing publishes automatically.</p>
-    <button class="secondary" onclick="runAction('/api/run-sources', 'sourcesResult')">Run all sources now</button>
+    <button class="secondary" onclick="runAllSourcesAndRefresh()">Run all sources now</button>
     <div class="result" id="sourcesResult"></div>
   </div>
 
@@ -133,6 +133,17 @@
   </div>
 
 <script>
+async function runAllSourcesAndRefresh(){
+  await runAction('/api/run-sources', 'sourcesResult');
+  // Run all sources now used to leave the sources list (last_run_at /
+  // "never run") and pending queue stale until you manually clicked
+  // "Load sources" / "Refresh list" again — looked like the button did
+  // nothing even when it worked. Auto-refresh both so results are visible
+  // immediately.
+  loadSources();
+  loadPendingEvents();
+}
+
 async function runAction(path, resultId, method='POST'){
   const el = document.getElementById(resultId);
   el.className = 'result show loading';
