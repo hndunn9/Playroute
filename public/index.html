@@ -93,9 +93,10 @@ body{
 }
 .about-btn{
   flex-shrink:0;align-self:center;
-  width:26px;height:26px;border-radius:50%;
+  width:34px;height:34px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
-  color:var(--clay);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  color:#fff;background:var(--clay);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  box-shadow:0 2px 6px rgba(0,0,0,0.18);
 }
 .support-callout{
   margin:20px 16px 4px;
@@ -599,7 +600,7 @@ footer{
       <div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M6 3v8l-3 4v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1c0-2-1.5-3-4-3.5L11 13.5V3"/><line x1="6" y1="6" x2="9" y2="6"/><line x1="6" y1="9" x2="9" y2="9"/></svg></div>
       <div class="tab-label">Hikes</div>
     </div>
-    <div class="about-btn" onclick="openAboutDrawer()" aria-label="About and feedback"><svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M12 20s-7-4.5-9.5-9C.8 7.8 2 4 5.5 4c2 0 3.5 1.2 4.5 3 1-1.8 2.5-3 4.5-3 3.5 0 4.7 3.8 3 7-2.5 4.5-9.5 9-9.5 9z"/></svg></div>
+    <div class="about-btn" onclick="openAboutDrawer()" aria-label="About and feedback"><svg viewBox="0 0 24 24" fill="currentColor" width="19" height="19"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg></div>
   </div>
 
   <!-- Filters -->
@@ -766,6 +767,10 @@ footer{
   <div class="bottom-nav-item" onclick="scrollToSection('section-hikes')">
     <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><path d="M6 3v8l-3 4v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1c0-2-1.5-3-4-3.5L11 13.5V3"/><line x1="6" y1="6" x2="9" y2="6"/><line x1="6" y1="9" x2="9" y2="9"/></svg></div>
     <div class="nav-label">Hikes</div>
+  </div>
+  <div class="bottom-nav-item" onclick="openAboutDrawer()">
+    <div class="nav-icon"><svg viewBox="0 0 24 24" fill="currentColor" width="19" height="19"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg></div>
+    <div class="nav-label">About</div>
   </div>
 </div>
 
