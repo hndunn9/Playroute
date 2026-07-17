@@ -49,6 +49,8 @@
   --ink:       #1F2A22;
   --ink-soft:  #5F6C5F;
   --sky:       #2F5850;
+  --ember:     #C1502E;
+  --gold:      #A6791E;
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
@@ -297,6 +299,14 @@ main{
 .tag.free{background:#D4EBC9;color:#3A5C2A;}
 .tag.paid{background:#E8DED0;color:#5C4A38;}
 .tag.age{background:#D8E8D8;color:#3A5438;}
+.tag.badge-trending{
+  background:var(--ember);color:#fff;font-weight:700;
+  letter-spacing:0.01em;order:-1;
+}
+.tag.badge-popular{
+  background:var(--gold);color:#fff;font-weight:700;
+  letter-spacing:0.01em;order:-1;
+}
 
 /* expand chevron */
 .expand-chevron{
@@ -637,7 +647,7 @@ footer{
   <div class="support-callout">
     <div class="support-row">
       <div class="support-callout-text" id="coffeeCalloutText">🧡 I built this app — buy my wife, the stay-at-home parent who inspired it, a coffee.</div>
-      <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (footer callout)',category:'support'})">☕ Wife's coffee fund</a>
+      <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (footer callout)',category:'support',action:'support_click'})">☕ Wife's coffee fund</a>
     </div>
     <div class="support-row">
       <div class="support-callout-text" id="feedbackCalloutText">💬 Got a tip, a typo, or a wish-list item? We'd love to hear it.</div>
@@ -747,7 +757,7 @@ footer{
       <div id="discoveryStat" style="font-size:14px;font-weight:600;color:var(--clay);margin-bottom:14px;min-height:20px;"></div>
       Built by a mom of two in Boulder County who works in tech — married to the person who actually does the work of finding stuff to do with the kids every week. Playroute exists so she can get some of that mental load (and her evenings) back.
       <br><br>
-      <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (About drawer)',category:'support'})">☕ Buy my wife a coffee (she's earned it)</a>
+      <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (About drawer)',category:'support',action:'support_click'})">☕ Buy my wife a coffee (she's earned it)</a>
       <br><br>
       <a href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A" style="color:var(--ink-soft);text-decoration:underline;">💬 Send feedback</a>
     </div>
@@ -934,7 +944,7 @@ function toggleCard(card, ev){
   const willExpand = !card.classList.contains('expanded');
   card.classList.toggle('expanded');
   if(willExpand && ev){
-    trackClick(ev.source_url||'', {id:ev.id, title:ev.title, city:ev.city, category:'card_expand'});
+    trackClick(ev.source_url||'', {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'view_details'});
   }
 }
 
@@ -1001,7 +1011,7 @@ function wireInlineCalendar(ev, cardEl){
   const icsBlob = new Blob([buildICS(ev)], {type:'text/calendar;charset=utf-8'});
   btn.href = URL.createObjectURL(icsBlob);
   btn.download = (ev.title||'event').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.ics';
-  btn.onclick = () => trackClick('add-to-calendar', {id:ev.id, title:ev.title, city:ev.city, category:'calendar'});
+  btn.onclick = () => trackClick('add-to-calendar', {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'add_to_calendar'});
 }
 
 function openDrawer(ev){
@@ -1014,7 +1024,7 @@ function openDrawer(ev){
   cta.href = ev.source_url || '#';
   cta.textContent = ctaLabels[ev.category] || 'View original site ↗';
   wireCalendarButton(ev);
-  window._drawerMeta = {id:ev.id, title:ev.title, city:ev.city, category:ev.category};
+  window._drawerMeta = {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'source_click'};
   const body = document.getElementById('drawerBody');
   body.innerHTML = `
     <div class="drawer-row"><div class="drawer-row-icon">${ICONS.calendar}</div><div class="drawer-row-text"><strong>${ev.occurrence_label||ev.day_of_week}</strong> · ${ev.display_time}</div></div>
@@ -1092,6 +1102,8 @@ function renderFeed(){
           <div class="event-title">${ev.title}</div>
           <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
           <div class="tag-row">
+            ${ev.badge==="trending"?'<span class="tag badge-trending">🔥 Trending</span>':""}
+            ${ev.badge==="popular"?'<span class="tag badge-popular">⭐ Popular</span>':""}
             <span class="tag city">${ev.city}</span>
             <span class="tag ${ev.cost}">${ev.cost==="free"?"Free":"Paid"}</span>
             <span class="tag age">Ages ${formatAgeRange(ev.age_min,ev.age_max)}</span>
@@ -1103,7 +1115,7 @@ function renderFeed(){
         <div class="card-detail-inner">
           <div class="card-detail-note">${ev.note||""}</div>
           <div class="card-detail-actions">
-            <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}'})">View source ↗</a>
+            <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}',action:'source_click'})">View source ↗</a>
             <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
             <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}')" title="Share" aria-label="Share">${ICONS.share}</a>
           </div>
@@ -1319,7 +1331,7 @@ function shareEvent(id){
     `Found via Playroute: ${shareUrl}`
   ];
   const shareText = lines.filter(Boolean).join('\n');
-  trackClick(shareUrl, {id:ev.id, title:ev.title, city:ev.city, category:'share'});
+  trackClick(shareUrl, {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'share'});
 
   if(navigator.share){
     navigator.share({title:ev.title, text:shareText, url:shareUrl}).catch(()=>{});
@@ -1357,9 +1369,14 @@ function handleEventDeepLink(){
 }
 
 
+// meta.action is the click TYPE (view_details/add_to_calendar/share/
+// source_click/support_click) — kept separate from meta.category, which is
+// the event's real category. Older code sent action-type strings through
+// `category` alone; that's fixed at each call site below, but the server
+// still tolerates the old shape from any stale cached page.
 function trackClick(url,meta){
   try{
-    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category}),keepalive:true}).catch(()=>{});
+    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action}),keepalive:true}).catch(()=>{});
   }catch(err){}
 }
 function showLinkPopover(anchorEl,url){
