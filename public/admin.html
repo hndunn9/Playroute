@@ -56,12 +56,13 @@
   .stat-delta.down{color:#7a2a2a;}
   .stat-delta.flat{color:#7A6650;}
   .breakdown{margin-top:12px;font-size:12.5px;}
-  .wau-chart{display:flex;align-items:flex-end;gap:4px;height:140px;margin-top:8px;padding-top:20px;}
-  .wau-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;}
-  .wau-bar{width:100%;background:#9B5C2A;border-radius:4px 4px 0 0;min-height:2px;position:relative;}
+  .wau-chart{display:flex;align-items:flex-end;gap:4px;margin-top:8px;}
+  .wau-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;}
+  .wau-bar-val{font-size:10px;color:#7A6650;margin-bottom:3px;font-weight:600;height:14px;}
+  .wau-bar-track{height:110px;width:100%;display:flex;align-items:flex-end;background:linear-gradient(to top, rgba(122,102,80,0.08) 1px, transparent 1px) bottom;background-size:100% 1px;border-bottom:1.5px solid #C8BA9E;}
+  .wau-bar{width:100%;background:#9B5C2A;border-radius:4px 4px 0 0;min-height:2px;}
   .wau-bar.current{background:#D4A96A;}
-  .wau-bar-val{font-size:10px;color:#7A6650;margin-bottom:3px;font-weight:600;}
-  .wau-bar-label{font-size:8.5px;color:#7A6650;margin-top:4px;writing-mode:vertical-rl;text-orientation:mixed;height:34px;}
+  .wau-bar-label{font-size:8.5px;color:#7A6650;margin-top:5px;writing-mode:vertical-rl;text-orientation:mixed;height:34px;}
   .breakdown-row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #EDE2CA;}
   .warn{
     background:#F5EFDF;border:1px dashed #C8BA9E;border-radius:8px;
@@ -414,14 +415,21 @@ async function loadWauTrend(){
       out.innerHTML = '<div class="pending-empty">No data yet.</div>';
       return;
     }
+    const TRACK_PX = 110;
     const max = Math.max(...trend.map(w => w.weekly_active_users), 1);
     const bars = trend.map(w => {
-      const heightPct = Math.max((w.weekly_active_users / max) * 100, 2);
+      // Pixel height against a fixed-height track, not a percentage inside
+      // the flex column — percentages there were resolving inconsistently
+      // depending on the value-label's rendered size, which is what made
+      // the zero-baseline appear to drift between bars.
+      const heightPx = Math.max(Math.round((w.weekly_active_users / max) * TRACK_PX), 2);
       const label = new Date(w.week_start + 'T12:00:00Z').toLocaleDateString('en-US', {month:'short', day:'numeric'});
       return `
         <div class="wau-bar-wrap">
           <div class="wau-bar-val">${w.weekly_active_users}</div>
-          <div class="wau-bar ${w.is_current_week ? 'current' : ''}" style="height:${heightPct}%;" title="Week of ${label}${w.is_current_week ? ' (in progress)' : ''}: ${w.weekly_active_users} WAU"></div>
+          <div class="wau-bar-track">
+            <div class="wau-bar ${w.is_current_week ? 'current' : ''}" style="height:${heightPx}px;" title="Week of ${label}${w.is_current_week ? ' (in progress)' : ''}: ${w.weekly_active_users} WAU"></div>
+          </div>
           <div class="wau-bar-label">${label}</div>
         </div>`;
     }).join('');
