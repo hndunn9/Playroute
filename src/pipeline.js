@@ -165,7 +165,26 @@ async function checkDuplicateRisk(env, ev) {
   const row = await env.DB.prepare(
     `SELECT 1 FROM events WHERE ${conditions.join(" AND ")} LIMIT 1`
   ).bind(...binds).first();
-  return !!row;
+  if (row) return { isDuplicate: true };
+
+  // Second gap found 2026-07-17: the exact-time match above is correct for
+  // telling genuinely different sessions apart, but it has a side effect --
+  // if a source's reported time for the SAME real date changes (schedule
+  // change, or us correcting a past scraper bug like the 6-hour timezone
+  // issue), the new time doesn't match the old row and sails through as a
+  // clean "new" candidate, creating an invisible duplicate once approved
+  // (this exact thing happened to "Erie Tales for Tots Storytime"). Flag
+  // it as a warning instead of silently missing it, without fully blocking
+  // approval -- it might be a legitimate schedule change, not a bug.
+  if (isDated) {
+    const sameDayDifferentTime = await env.DB.prepare(
+      `SELECT start_time FROM events WHERE title = ? AND city = ? AND event_date = ? LIMIT 1`
+    ).bind(ev.title, ev.city, ev.event_date).first();
+    if (sameDayDifferentTime) {
+      return { isDuplicate: false, possibleTimeConflict: sameDayDifferentTime.start_time };
+    }
+  }
+  return { isDuplicate: false };
 }
 
 // normalize -> validate -> dedupe -> insert into pending_events.
@@ -174,12 +193,19 @@ async function checkDuplicateRisk(env, ev) {
 async function ingestCandidate(env, sourceRow, ev) {
   const sourceKey = (sourceRow && sourceRow.source_key) || "unknown";
 
-  const alreadyLive = await checkDuplicateRisk(env, ev);
-  if (alreadyLive) {
+  const dupCheck = await checkDuplicateRisk(env, ev);
+  if (dupCheck.isDuplicate) {
     return { queued: false, reason: "duplicate-in-events" };
   }
 
   const { severity, issues } = validateCandidate(ev, sourceRow);
+  if (dupCheck.possibleTimeConflict) {
+    issues.push({
+      level: "warn",
+      reason: `Same title/city/date already exists in events at a different time (${dupCheck.possibleTimeConflict}) -- could be a legitimate schedule change, or a leftover from a since-corrected scrape. Worth checking before approving.`
+    });
+  }
+  const finalSeverity = issues.some((i) => i.level === "error") ? "error" : issues.length ? "warn" : "clean";
   const dedupKey = ev.dedup_key || buildStableDedupKey(sourceKey, ev);
   const token = crypto.randomUUID();
 
@@ -194,11 +220,11 @@ async function ingestCandidate(env, sourceRow, ev) {
     ev.title, ev.source ?? null, ev.city ?? null, ev.category ?? null, ev.cost ?? null,
     ev.age_min ?? null, ev.age_max ?? null, ev.day_of_week ?? null, ev.event_date ?? null,
     ev.start_time ?? null, ev.display_time ?? null, ev.recurrence ?? null, ev.note ?? null,
-    ev.source_url ?? null, ev.note ?? null, dedupKey, token, severity,
+    ev.source_url ?? null, ev.note ?? null, dedupKey, token, finalSeverity,
     JSON.stringify(issues), sourceRow ? sourceRow.id : null
   ).run();
 
-  return { queued: res.meta.changes > 0, severity, issues };
+  return { queued: res.meta.changes > 0, severity: finalSeverity, issues };
 }
 
 // Registered by index.js: sourceKey -> async fn(env, sourceRow) -> array of
