@@ -208,7 +208,21 @@ function unfoldICal(text) {
 
 function unescapeICalText(s) {
   if (!s) return s;
-  return s.replace(/\\n/g, "\n").replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\\\/g, "\\");
+  // Real bug found 2026-07-18: some source feeds (High Plains Library
+  // District, Erie Chamber of Commerce, City of Louisville all confirmed)
+  // encode punctuation like em/en dashes as literal `\u2014`/`\u2013`
+  // sequences in the raw ICS text. That's not standard iCal TEXT escaping
+  // (which only defines \n \, \; \\), so it was passing straight through
+  // into title/source/display_time/note as literal backslash-u-XXXX
+  // characters instead of the real glyph. Decode those first, before the
+  // \\ -> \ unescape below would otherwise leave them looking like a
+  // dangling escaped backslash + "uXXXX" text.
+  return s
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\n/g, "\n")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\");
 }
 
 function parseICalDate(raw) {
@@ -1793,9 +1807,17 @@ function buildPendingEventsEmailHtml(pending) {
 
 async function handleApprovePending(env, url) {
   const token = url.searchParams.get("token");
-  if (!token) return new Response("Missing token", { status: 400 });
+  if (!token || token === "null" || token === "undefined") {
+    return new Response(
+      "Missing or invalid approval token — this pending row likely has approval_token = NULL " +
+      "(happens if it was inserted directly rather than through ingestCandidate()/the /api/ingest " +
+      "pipeline, which always generates one). Nothing was changed. Backfill a token for this row " +
+      "before it can be approved or rejected.",
+      { status: 400, headers: { "Content-Type": "text/plain" } }
+    );
+  }
   const row = await env.DB.prepare(`SELECT * FROM pending_events WHERE approval_token = ? AND status = 'pending'`).bind(token).first();
-  if (!row) return new Response("This item was already handled or doesn't exist.", { headers: { "Content-Type": "text/plain" } });
+  if (!row) return new Response("This item was already handled or doesn't exist.", { status: 404, headers: { "Content-Type": "text/plain" } });
 
   // Re-validate server-side rather than trusting whatever severity was
   // stamped when this was first queued — a stale/tampered token shouldn't
@@ -1858,9 +1880,15 @@ async function handleApprovePending(env, url) {
 
 async function handleRejectPending(env, url) {
   const token = url.searchParams.get("token");
-  if (!token) return new Response("Missing token", { status: 400 });
+  if (!token || token === "null" || token === "undefined") {
+    return new Response(
+      "Missing or invalid approval token — this pending row likely has approval_token = NULL. " +
+      "Nothing was changed. Backfill a token for this row before it can be approved or rejected.",
+      { status: 400, headers: { "Content-Type": "text/plain" } }
+    );
+  }
   const res = await env.DB.prepare(`UPDATE pending_events SET status = 'rejected', decided_at = CURRENT_TIMESTAMP WHERE approval_token = ? AND status = 'pending'`).bind(token).run();
-  if (res.meta.changes === 0) return new Response("This item was already handled or doesn't exist.", { headers: { "Content-Type": "text/plain" } });
+  if (res.meta.changes === 0) return new Response("This item was already handled or doesn't exist.", { status: 404, headers: { "Content-Type": "text/plain" } });
   return new Response("Got it — dismissed and won't be suggested again.", { headers: { "Content-Type": "text/plain" } });
 }
 
