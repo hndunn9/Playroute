@@ -38,17 +38,17 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600&display=swap">
 <style>
 :root {
-  --soil:      #2C1F14;
-  --bark:      #5C3A1E;
-  --clay:      #9B5C2A;
-  --wheat:     #D4A96A;
-  --sage:      #6B7C5E;
-  --cream:     #F5EDD8;
-  --parchment: #EDE2CA;
-  --fog:       #C8BA9E;
-  --ink:       #2C1F14;
-  --ink-soft:  #7A6650;
-  --sky:       #6E8B8A;
+  --soil:      #1B3630;
+  --bark:      #3C5548;
+  --clay:      #A8623A;
+  --wheat:     #F0D6B3;
+  --sage:      #6B7C63;
+  --cream:     #FBF6EC;
+  --parchment: #F1E7D2;
+  --fog:       #D3D8C8;
+  --ink:       #1F2A22;
+  --ink-soft:  #5F6C5F;
+  --sky:       #2F5850;
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
@@ -118,15 +118,17 @@ body{
 .support-btn-secondary{background:var(--wheat);color:var(--ink);}
 .hero-wordmark{
   position:absolute;top:14px;left:14px;
-  color:#FFFDF8;
+  color:#FFFFFF;
   font-family:'Playfair Display',serif;
-  font-size:28px;font-weight:700;
+  font-size:29px;font-weight:800;
   letter-spacing:0.02em;
+  text-shadow:0 1px 4px rgba(0,0,0,0.55);
   display:flex;align-items:center;gap:10px;
-  background:rgba(18,14,10,0.62);
-  padding:6px 14px 6px 12px;
+  background:#10201A;
+  padding:7px 16px 7px 13px;
   border-radius:10px;
-  backdrop-filter:blur(3px);
+  border-left:4px solid var(--clay);
+  box-shadow:0 4px 16px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08) inset;
 }
 .hero-beta{
   font-family:'DM Sans',sans-serif;
