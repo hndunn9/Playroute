@@ -1071,6 +1071,17 @@ function mountainMidnightPrevWeekUTC() {
   mtNow.setDate(mtNow.getDate() - day + 1 - 7);
   return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
 }
+// Generalized version of the two helpers above -- the Monday-midnight-MT
+// boundary for any week offset (0 = this week's Monday, 1 = last week's,
+// 2 = two weeks back, etc; negative values work too, giving a future
+// Monday). Built for the WAU trend below, which needs many week boundaries
+// rather than just "this" and "last".
+function mountainMondayOffsetUTC(weeksAgo) {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  const day = mtNow.getDay() || 7;
+  mtNow.setDate(mtNow.getDate() - day + 1 - 7 * weeksAgo);
+  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
+}
 
 async function hashVisitor(request) {
   const ip = request.headers.get("CF-Connecting-IP") || "";
@@ -1099,6 +1110,29 @@ async function handlePageView(request, env) {
 function pctChange(curr, prev) {
   if (!prev) return curr > 0 ? null : 0; // no prior data to compare against — don't claim a % change out of nowhere
   return Math.round(((curr - prev) / prev) * 1000) / 10; // one decimal place
+}
+
+// Weekly-active-users for each of the last `weeks` weeks, oldest first --
+// lets you actually see a trend over time instead of just this-week-vs-
+// last-week. Kept as its own endpoint rather than folded into handleStats,
+// since that runs on every dashboard load and doesn't need N extra queries
+// every time -- this is a deliberate drill-down the admin panel fetches
+// separately.
+async function getWauTrend(env, weeks = 12) {
+  const trend = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const weekStart = mountainMondayOffsetUTC(i);
+    const weekEnd = mountainMondayOffsetUTC(i - 1);
+    const row = await env.DB.prepare(
+      `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE country = 'US' AND viewed_at >= ? AND viewed_at < ?`
+    ).bind(weekStart, weekEnd).first();
+    trend.push({
+      week_start: weekStart.slice(0, 10),
+      is_current_week: i === 0,
+      weekly_active_users: row?.n || 0
+    });
+  }
+  return trend;
 }
 
 async function handleStats(env) {
@@ -1877,6 +1911,11 @@ export default {
       if (url.pathname === "/api/track-click" && request.method === "POST") return await handleTrackClick(request, env);
       if (url.pathname === "/api/pageview" && request.method === "POST") return await handlePageView(request, env);
       if (url.pathname === "/api/stats") return await handleStats(env);
+      if (url.pathname === "/api/wau-trend") {
+        const weeks = Math.min(Math.max(parseInt(url.searchParams.get("weeks")) || 12, 1), 26);
+        const trend = await getWauTrend(env, weeks);
+        return json({ weeks, trend });
+      }
       if (url.pathname === "/api/public-stats") {
         const row = await env.DB.prepare(
           `SELECT COUNT(*) AS n FROM link_clicks WHERE category NOT IN ('playground','hike','support')`
