@@ -131,6 +131,13 @@
   </div>
 
   <div class="card">
+    <h2>🔎 Check pending against what's already live</h2>
+    <p>Cross-checks every item in the review queue against your real calendar (same title/city/day-or-date/location). Exact matches get a one-tap bulk-reject; same-slot-different-time gets flagged for you to look at rather than auto-resolved either direction.</p>
+    <button class="secondary" onclick="checkPendingDuplicates()">Run check</button>
+    <div id="dupCheckOutput" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
     <h2>📸 Upload playground photo</h2>
     <p>Uploads straight to R2 and links it to the park in one step.</p>
     <select id="photoParkSelect"><option value="">Loading playgrounds…</option></select>
@@ -445,6 +452,62 @@ async function loadWauTrend(){
     `;
   }catch(err){
     out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
+async function checkPendingDuplicates(){
+  const out = document.getElementById('dupCheckOutput');
+  out.innerHTML = '<div class="result show loading">Checking…</div>';
+  try{
+    const res = await fetch('/api/check-pending-duplicates');
+    const data = await res.json();
+    const exact = data.exact_duplicates || [];
+    const conflicts = data.time_conflicts || [];
+
+    if(exact.length === 0 && conflicts.length === 0){
+      out.innerHTML = '<div class="pending-empty">✅ Checked — nothing in the pending queue duplicates what\'s already on your calendar.</div>';
+      return;
+    }
+
+    let html = '';
+    if(exact.length){
+      html += `
+        <div style="margin-bottom:10px;">
+          <strong>${exact.length} exact duplicate${exact.length===1?'':'s'}</strong> — same title, city, day/date, location, AND time as something already live.
+          <button style="margin-top:6px;" onclick="bulkRejectDuplicates(this)">Reject all ${exact.length} now</button>
+        </div>
+        ${exact.map(d => `<div class="pending-meta">${escapeHtml(d.title)} — ${escapeHtml(d.city)} · ${d.event_date||d.day_of_week} · ${d.pending_time} <span style="color:#7A6650;">(matches live event #${d.live_event_id})</span></div>`).join('')}
+      `;
+    }
+    if(conflicts.length){
+      html += `
+        <div style="margin:${exact.length?'16px':'0'} 0 10px;">
+          <strong>${conflicts.length} same-slot, different time</strong> — could be a real schedule change, or a leftover artifact. Worth a look before deciding either way, not auto-resolved here.
+        </div>
+        ${conflicts.map(d => `<div class="pending-meta">${escapeHtml(d.title)} — ${escapeHtml(d.city)} · ${d.event_date||d.day_of_week} · pending says ${d.pending_time}, live event #${d.live_event_id} says ${d.live_time}</div>`).join('')}
+      `;
+    }
+    out.innerHTML = html;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
+async function bulkRejectDuplicates(btn){
+  btn.disabled = true;
+  btn.textContent = 'Rejecting…';
+  try{
+    const res = await fetch('/api/check-pending-duplicates');
+    const data = await res.json();
+    const tokens = (data.exact_duplicates || []).map(d => d.approval_token);
+    for(const token of tokens){
+      await fetch(`/api/reject-pending?token=${encodeURIComponent(token)}`).catch(()=>{});
+    }
+    checkPendingDuplicates();
+    loadPendingEvents();
+  }catch(err){
+    alert('Error: ' + err.message);
+    btn.disabled = false;
   }
 }
 
