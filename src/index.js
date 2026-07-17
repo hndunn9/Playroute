@@ -1769,6 +1769,39 @@ async function handlePendingEventsList(env) {
   return json({ count: results.length, pending: results });
 }
 
+// Self-service answer to "how do I know the pending queue doesn't already
+// duplicate something live?" -- cross-checks every current pending item
+// against `events` using the same title+city+day-or-date+source identity
+// checkDuplicateRisk uses at ingest time. Two buckets:
+//   exact: same time too -- an unambiguous duplicate, safe to bulk-reject
+//   time_conflict: same everything except time -- needs a look (could be
+//     a real schedule change, or a leftover artifact like the ones found
+//     2026-07-17) rather than being auto-resolved either direction
+async function handleCheckPendingDuplicates(env) {
+  const { results } = await env.DB.prepare(`
+    SELECT p.id as pending_id, p.title, p.city, p.event_date, p.day_of_week,
+           p.start_time as pending_time, p.source, p.approval_token,
+           e.id as live_event_id, e.start_time as live_time
+    FROM pending_events p
+    JOIN events e ON p.title = e.title AND p.city = e.city AND p.source = e.source
+      AND (
+        (p.event_date IS NOT NULL AND p.event_date = e.event_date)
+        OR (p.event_date IS NULL AND p.day_of_week = e.day_of_week)
+      )
+    WHERE p.status = 'pending'
+    ORDER BY p.title
+  `).all();
+
+  const exact = results.filter(r => r.pending_time === r.live_time);
+  const timeConflict = results.filter(r => r.pending_time !== r.live_time);
+  return json({
+    checked_at: new Date().toISOString(),
+    exact_duplicates: exact,
+    time_conflicts: timeConflict,
+    summary: `${exact.length} exact duplicate(s) already live, ${timeConflict.length} same-slot-different-time conflict(s) needing a look`
+  });
+}
+
 async function handleSubscribe(request, env) {
   let body;
   try {
@@ -1967,6 +2000,9 @@ export default {
       }
       if (url.pathname === "/api/pending-events" && request.method === "GET") {
         return await handlePendingEventsList(env);
+      }
+      if (url.pathname === "/api/check-pending-duplicates" && request.method === "GET") {
+        return await handleCheckPendingDuplicates(env);
       }
     } catch (err) {
       return errorResponse(err);
