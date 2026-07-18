@@ -300,10 +300,12 @@ main{
 .tag.paid{background:#E8DED0;color:#5C4A38;}
 .tag.age{background:#D8E8D8;color:#3A5438;}
 .tag.badge-trending{
+  display:inline-flex;align-items:center;gap:3px;
   background:var(--ember);color:#fff;font-weight:700;
   letter-spacing:0.01em;order:-1;
 }
 .tag.badge-popular{
+  display:inline-flex;align-items:center;gap:3px;
   background:var(--gold);color:#fff;font-weight:700;
   letter-spacing:0.01em;order:-1;
 }
@@ -810,7 +812,9 @@ const ICONS = {
   info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" style="flex-shrink:0;"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="7.5" r="1" fill="currentColor" stroke="none"/></svg>',
   share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>',
   sparkle: '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15" style="vertical-align:-2px;"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg>',
-  drop: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c-3.5 4.5-7 8.9-7 12.7a7 7 0 0 0 14 0c0-3.8-3.5-8.2-7-12.7z"/></svg>'
+  drop: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c-3.5 4.5-7 8.9-7 12.7a7 7 0 0 0 14 0c0-3.8-3.5-8.2-7-12.7z"/></svg>',
+  trendUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" width="12" height="12" style="flex-shrink:0;"><polyline points="3 17 9.5 10.5 13.5 14.5 21 6"/><polyline points="15 6 21 6 21 12"/></svg>',
+  star: '<svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12" style="flex-shrink:0;"><path d="M12 2.5l2.8 6.4 6.9.6-5.3 4.5 1.6 6.8L12 17.1l-6 3.7 1.6-6.8-5.3-4.5 6.9-.6z"/></svg>'
 };
 
 async function loadData(){
@@ -1111,8 +1115,8 @@ function renderFeed(){
           <div class="event-title">${ev.title}</div>
           <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
           <div class="tag-row">
-            ${ev.badge==="trending"?'<span class="tag badge-trending">🔥 Trending</span>':""}
-            ${ev.badge==="popular"?'<span class="tag badge-popular">⭐ Popular</span>':""}
+            ${ev.badge==="trending"?`<span class="tag badge-trending">${ICONS.trendUp} Trending</span>`:""}
+            ${ev.badge==="popular"?`<span class="tag badge-popular">${ICONS.star} Popular</span>`:""}
             <span class="tag city">${ev.city}</span>
             <span class="tag ${ev.cost}">${ev.cost==="free"?"Free":"Paid"}</span>
             <span class="tag age">Ages ${formatAgeRange(ev.age_min,ev.age_max)}</span>
