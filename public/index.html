@@ -1011,7 +1011,16 @@ function wireInlineCalendar(ev, cardEl){
   const icsBlob = new Blob([buildICS(ev)], {type:'text/calendar;charset=utf-8'});
   btn.href = URL.createObjectURL(icsBlob);
   btn.download = (ev.title||'event').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.ics';
-  btn.onclick = () => trackClick('add-to-calendar', {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'add_to_calendar'});
+  // IMPORTANT: this replaces the inline onclick="event.stopPropagation()"
+  // attribute in the card template, which otherwise gets silently dropped —
+  // without stopPropagation here, the click bubbles up to the card's own
+  // onclick (toggleCard) and immediately re-collapses the card mid-click,
+  // making the button (and the rest of the expanded detail view) appear to
+  // vanish right when it's tapped. Confirmed bug, fixed 2026-07-18.
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    trackClick('add-to-calendar', {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'add_to_calendar'});
+  };
 }
 
 function openDrawer(ev){
@@ -1322,21 +1331,28 @@ function shareEvent(id){
   const ev = events.find(e=>String(e.id)===String(id));
   if(!ev) return;
   const shareUrl = `${location.origin}/?event=${ev.id}`;
-  const lines = [
+  const bodyLines = [
     ev.title,
     `${ev.occurrence_label||ev.day_of_week} · ${ev.display_time}`,
     ev.source,
-    ev.cost==='free' ? 'Free' : 'Paid',
-    '',
-    `Found via Playroute: ${shareUrl}`
+    ev.cost==='free' ? 'Free' : 'Paid'
   ];
-  const shareText = lines.filter(Boolean).join('\n');
+  const shareBody = bodyLines.filter(Boolean).join('\n');
   trackClick(shareUrl, {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'share'});
 
   if(navigator.share){
-    navigator.share({title:ev.title, text:shareText, url:shareUrl}).catch(()=>{});
+    // IMPORTANT: text must NOT also contain shareUrl. Many Android share
+    // targets (esp. "copy to clipboard" / SMS handlers) concatenate the
+    // text and url fields themselves when the receiving app doesn't treat
+    // them separately — if the link is embedded in both, it shows up
+    // twice. Keep them fully separate; url is the one and only place the
+    // link goes. Confirmed bug, fixed 2026-07-18.
+    navigator.share({title:ev.title, text:shareBody, url:shareUrl}).catch(()=>{});
   } else if(navigator.clipboard){
-    navigator.clipboard.writeText(shareText).then(()=>{
+    // No native share sheet here (desktop/unsupported browsers), so the
+    // link has to be part of the copied text — this path only ever writes
+    // one copy of the URL, appended once at the end.
+    navigator.clipboard.writeText(`${shareBody}\n\n${shareUrl}`).then(()=>{
       alert('Copied! Paste it anywhere to share this event.');
     }).catch(()=>{});
   }
