@@ -95,6 +95,13 @@
   </div>
 
   <div class="card">
+    <h2>🔥 Trending &amp; popular events</h2>
+    <p>Scored weekly (Sundays) from what people actually click, add to calendar, and share — see the digest job spec for the exact thresholds. 🔥 trending = running well above that event's own usual pace; ⭐ popular = simply the highest raw volume this week, regardless of trend.</p>
+    <button onclick="loadEngagement()">Load trending &amp; popular</button>
+    <div id="engagementOutput" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
     <h2>📈 Weekly active users trend</h2>
     <p>A real trend over time, not just this-week-vs-last-week — so you can actually tell if you're growing or shrinking.</p>
     <button class="secondary" onclick="loadWauTrend()">Load trend (last 12 weeks)</button>
@@ -202,6 +209,50 @@ function deltaBadge(curr, prev, pct, label){
   const arrow = pct > 0 ? '↑' : (pct < 0 ? '↓' : '→');
   const sign = pct > 0 ? '+' : '';
   return `<div class="stat-delta ${dir}">${arrow} ${sign}${pct}% (${prev} ${label})</div>`;
+}
+
+function engagementRow(item){
+  const badge = item.badge === 'trending'
+    ? `<span style="color:#B0431F;font-weight:700;">🔥 Trending${item.trend_ratio ? ` · ${item.trend_ratio.toFixed(1)}x usual` : ''}</span>`
+    : item.badge === 'popular'
+      ? `<span style="color:#8A6A1E;font-weight:700;">⭐ Popular</span>`
+      : '';
+  return `
+    <div class="pending-item">
+      <div class="pending-title">${escapeHtml(item.event_title||'(untitled)')} ${badge}</div>
+      <div class="pending-meta">${escapeHtml(item.event_city||'—')} ${item.event_category?'· '+escapeHtml(item.event_category):''} · ${item.total_interactions} interactions this week</div>
+      <div class="pending-meta">${item.views||0} views · ${item.calendar_adds||0} calendar adds · ${item.shares||0} shares</div>
+    </div>
+  `;
+}
+
+async function loadEngagement(){
+  const out = document.getElementById('engagementOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/stats');
+    const s = await res.json();
+    if(!s.engagement_week_start){
+      out.innerHTML = '<div class="pending-empty">No engagement data scored yet — runs weekly on Sundays, or trigger /api/engagement-digest-now.</div>';
+      return;
+    }
+    const badged = s.engagement_badged || [];
+    const trending = badged.filter(i=>i.badge==='trending');
+    const popular = badged.filter(i=>i.badge==='popular');
+    out.innerHTML = `
+      <p style="font-size:11px;color:#7A6650;margin:0 0 10px;">Week of ${escapeHtml(s.engagement_week_start)}</p>
+      ${badged.length === 0 ? '<div class="pending-empty">Nothing has crossed the trending/popular threshold yet this week.</div>' : `
+        ${trending.length ? `<div class="breakdown"><strong>🔥 Trending (${trending.length})</strong></div>${trending.map(engagementRow).join('')}` : ''}
+        ${popular.length ? `<div class="breakdown" style="margin-top:10px;"><strong>⭐ Popular (${popular.length})</strong></div>${popular.map(engagementRow).join('')}` : ''}
+      `}
+      <div class="breakdown" style="margin-top:16px;padding-top:14px;border-top:1px solid #EDE2CA;">
+        <strong>Top 20 overall this week (regardless of badge)</strong>
+      </div>
+      ${(s.engagement_top_overall||[]).map(engagementRow).join('') || '<div class="pending-empty">No clicks scored yet this week.</div>'}
+    `;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
 }
 
 async function loadStats(){
