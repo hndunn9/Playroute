@@ -1565,12 +1565,25 @@ async function getWeekAheadEvents(env) {
   const { results } = await env.DB.prepare("SELECT * FROM events").all();
   const now = new Date();
   const cutoff = new Date(now.getTime() + DIGEST_MAX_DAYS * 864e5);
+
+  // Same badge lookup handleEvents() uses for the site — see
+  // runWeeklyEngagementDigest(). Subscribers should see the same
+  // trending/popular signal site visitors do, not a stripped-down version.
+  const latestWeek = await env.DB.prepare(`SELECT MAX(week_start) AS w FROM engagement_digests`).first();
+  let badgeByEventId = new Map();
+  if (latestWeek?.w) {
+    const badgeRows = await env.DB.prepare(
+      `SELECT event_id, badge FROM engagement_digests WHERE week_start = ? AND badge IS NOT NULL`
+    ).bind(latestWeek.w).all();
+    badgeByEventId = new Map(badgeRows.results.map((r) => [r.event_id, r.badge]));
+  }
+
   const withOccurrence = [];
   for (const ev of results) {
     if (ev.recurrence === "irregular") continue;
     const occ = getOccurrence(ev, now);
     if (!occ || occ > cutoff) continue;
-    withOccurrence.push({ ...ev, occurrence: occ, occurrence_label: formatOccurrenceLabel(occ) });
+    withOccurrence.push({ ...ev, occurrence: occ, occurrence_label: formatOccurrenceLabel(occ), badge: badgeByEventId.get(ev.id) || null });
   }
   withOccurrence.sort((a, b) => a.occurrence - b.occurrence);
 
@@ -1587,13 +1600,20 @@ async function getWeekAheadEvents(env) {
 function buildDigestHtml(byDay, unsubscribeUrl) {
   const days = [...byDay.entries()];
   const dayBlocks = days.map(([label, evs]) => {
-    const rows = evs.map((ev) => `
+    const rows = evs.map((ev) => {
+      const badge = ev.badge === "trending"
+        ? `<span style="display:inline-block;background:#B23368;color:#fff;font-size:10px;font-weight:700;letter-spacing:0.03em;padding:1px 6px;border-radius:4px;margin-right:6px;">\u{1F525} TRENDING</span>`
+        : ev.badge === "popular"
+          ? `<span style="display:inline-block;background:#A6791E;color:#fff;font-size:10px;font-weight:700;letter-spacing:0.03em;padding:1px 6px;border-radius:4px;margin-right:6px;">\u2B50 POPULAR</span>`
+          : "";
+      return `
       <tr>
         <td style="padding:6px 0;font-family:sans-serif;font-size:14px;color:#2c1f14;">
-          <strong>${escapeHtml(ev.title)}</strong> \u2014 ${escapeHtml(ev.display_time)}
-          <span style="color:#8a7a63;">\u00B7 ${escapeHtml(ev.city)} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}</span>
+          ${badge}<strong>${escapeHtml(ev.title)}</strong> \u2014 ${escapeHtml(ev.display_time)}<br>
+          <span style="color:#8a7a63;font-size:13px;">${escapeHtml(ev.source || "")}${ev.source ? " \u00B7 " : ""}${escapeHtml(ev.city)} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}</span>
         </td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
     return `
       <tr><td style="padding:18px 0 4px;font-family:sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#a68a5b;border-bottom:1px solid #eee;">${escapeHtml(label)}</td></tr>
       ${rows}`;
@@ -1620,7 +1640,9 @@ function buildDigestText(byDay) {
   for (const [label, evs] of byDay.entries()) {
     lines.push(label.toUpperCase());
     for (const ev of evs) {
-      lines.push(`- ${ev.title} \u2014 ${ev.display_time} \u00B7 ${ev.city} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}`);
+      const badge = ev.badge === "trending" ? "[TRENDING] " : ev.badge === "popular" ? "[POPULAR] " : "";
+      const location = ev.source ? `${ev.source}, ` : "";
+      lines.push(`- ${badge}${ev.title} \u2014 ${ev.display_time} \u00B7 ${location}${ev.city} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}`);
     }
     lines.push("");
   }
