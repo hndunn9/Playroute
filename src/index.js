@@ -909,6 +909,147 @@ async function fetchAndScanWestminsterLibrary() {
 
 SOURCE_RUNNERS.westminster_library = async () => fetchAndScanWestminsterLibrary();
 
+// --- Lyons Regional Library scraper (list-page only, weekly) ---------------
+// Source: https://lyons.librarycalendar.com/events/upcoming -- same "Library
+// Market" vendor platform as Westminster above (see the dedup-key comment
+// in pipeline.js re: this vendor minting a new URL per date instance of a
+// recurring program). Deliberately does NOT fetch individual /event/<slug>
+// detail pages the way the Westminster scraper does: confirmed by testing a
+// real fetch that this site's robots.txt disallows automated access to
+// /event/ paths specifically, even though /events/upcoming itself is
+// allowed. Conveniently, the upcoming-events list page already renders each
+// event's full detail inline (branch, room, age group, program type,
+// description), so a single list-page fetch covers everything -- no detail
+// page fetch needed, and no robots.txt violation either.
+//
+// UNVERIFIED like the Westminster scraper: regexes below are built from
+// visible page text (via search-engine snippets), not a confirmed live
+// render of the raw HTML tag structure -- this vendor's markup wasn't
+// directly inspectable. confidence is set to 'review' in scrape_sources on
+// purpose: treat every queued item as needing a look before approving,
+// same as Westminster.
+const LYONS_LIBRARY_LIST_URL = "https://lyons.librarycalendar.com/events/upcoming";
+const LYONS_LIBRARY_BASE_URL = "https://lyons.librarycalendar.com";
+
+// Non-library-sponsored meeting-room bookings (town commissions, blood
+// drives) show up in the same feed as real library programs, each flagged
+// inline with this literal text -- filtered out since they're not family
+// activity content.
+const LYONS_NOT_SPONSORED_RE = /This is not a library sponsored event\./i;
+
+function ageFromLyonsGroups(ageGroupText) {
+  const g = (ageGroupText || "").toLowerCase();
+  const groups = g.split(",").map((s) => s.trim()).filter(Boolean);
+  if (groups.length === 0 || groups.every((x) => x === "adults")) return null; // adults-only -- not Playroute content
+  let min = null, max = null;
+  const widen = (lo, hi) => {
+    if (min === null || lo < min) min = lo;
+    if (max === null || hi > max) max = hi;
+  };
+  if (groups.includes("babies")) widen(0, 2);
+  if (groups.includes("children")) widen(3, 8);
+  if (groups.includes("tweens")) widen(8, 12);
+  if (groups.includes("teens")) widen(12, 18);
+  if (min === null) return null; // nothing recognized
+  return { age_min: min, age_max: max };
+}
+
+function parseLyonsEventBlock(blockText, href) {
+  // Example raw text shape (confirmed via search-engine snippet, not a
+  // live render): 'Feb 24 2026 Tue Baby Storytime 10:30am–11:00am ...
+  // Library Branch: Lyons Community Library Room: Community Room
+  // Age Group: Babies Program Type: Storytime Event Details: <description>'
+  const dateMatch = blockText.match(
+    /([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{4})\s+\w{3}\s+(.+?)\s+(\d{1,2}:\d{2}[ap]m)\s*[–-]\s*(\d{1,2}:\d{2}[ap]m)/i
+  );
+  if (!dateMatch) return null;
+  const [, monAbbr, day, year, title, startLabel, endLabel] = dateMatch;
+  const monthIdx = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].indexOf(monAbbr);
+  if (monthIdx === -1) return null;
+  const eventDate = `${year}-${String(monthIdx + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+  const roomMatch = blockText.match(/Room:\s*(.+?)(?:\s+Age Group:|\s+Purpose of Meeting|\s+Event Details:|$)/i);
+  const ageGroupMatch = blockText.match(/Age Group:\s*(.+?)(?:\s+Program Type:|\s+Event Details:|\s+Registration|$)/i);
+  const detailsMatch = blockText.match(/Event Details:\s*(.+)$/i);
+
+  return {
+    title: decodeHtmlEntities(title).trim(),
+    eventDate,
+    startLabel,
+    endLabel,
+    room: roomMatch ? decodeHtmlEntities(roomMatch[1]).trim() : null,
+    ageGroup: ageGroupMatch ? ageGroupMatch[1].trim() : null,
+    details: detailsMatch ? decodeHtmlEntities(detailsMatch[1]).trim().slice(0, 400) : null,
+    notSponsored: LYONS_NOT_SPONSORED_RE.test(blockText),
+    href
+  };
+}
+
+async function fetchAndScanLyonsLibrary() {
+  const needsReview = [];
+  const res = await fetch(LYONS_LIBRARY_LIST_URL, {
+    headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
+  });
+  if (!res.ok) throw new Error(`Lyons library list fetch failed: ${res.status}`);
+  const html = await res.text();
+  const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+
+  // Each event card links to its own /event/<slug> detail page -- the href
+  // is used purely to build a human-facing source_url, NOT fetched (see
+  // robots.txt note above). Split the page into per-event chunks using
+  // each href as a boundary, then parse the plain-text version of each
+  // chunk. This vendor commonly renders two DOM copies of the same event
+  // (compact card + expanded detail) back-to-back -- dedup below keeps
+  // only one candidate per title+date+time.
+  const hrefPositions = [];
+  let m;
+  const hrefOnlyRe = /href="(\/event\/[\w-]+)"/gi;
+  while ((m = hrefOnlyRe.exec(noScript)) !== null) {
+    hrefPositions.push({ href: m[1], index: m.index });
+  }
+
+  const seen = new Set();
+  for (let i = 0; i < hrefPositions.length; i++) {
+    const start = hrefPositions[i].index;
+    const end = i + 1 < hrefPositions.length ? hrefPositions[i + 1].index : start + 3000;
+    const chunkText = decodeHtmlEntities(stripTags(noScript.slice(start, end))).replace(/\s+/g, " ").trim();
+
+    const parsed = parseLyonsEventBlock(chunkText, hrefPositions[i].href);
+    if (!parsed || parsed.notSponsored) continue;
+
+    const dedupSig = `${parsed.title}|${parsed.eventDate}|${parsed.startLabel}`;
+    if (seen.has(dedupSig)) continue;
+    seen.add(dedupSig);
+
+    const ages = ageFromLyonsGroups(parsed.ageGroup);
+    if (!ages) continue; // adults-only or unrecognized -- not Playroute content
+
+    const startTime = to24HourFromLabel(parsed.startLabel);
+    const d = new Date(`${parsed.eventDate}T12:00:00Z`);
+    const dayOfWeek = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d.getUTCDay()];
+
+    needsReview.push({
+      title: parsed.title,
+      source: `Lyons Regional Library${parsed.room ? " — " + parsed.room : ""}`,
+      city: "Lyons",
+      category: "library",
+      cost: "free",
+      age_min: ages.age_min,
+      age_max: ages.age_max,
+      day_of_week: dayOfWeek,
+      start_time: startTime,
+      display_time: `${parsed.startLabel}–${parsed.endLabel}`,
+      recurrence: "dated",
+      event_date: parsed.eventDate,
+      note: parsed.details || null,
+      source_url: `${LYONS_LIBRARY_BASE_URL}${parsed.href}`
+    });
+  }
+  return needsReview;
+}
+
+SOURCE_RUNNERS.lyons_library = async () => fetchAndScanLyonsLibrary();
+
 // --- My Nature Lab (Louisville) Story Time scraper (pending-review only) ---
 // Source: https://www.mynaturelab.org/story-time -- a Wix site. Confirmed
 // server-rendered (a plain fetch returns the actual dated listings, not an
@@ -1147,6 +1288,55 @@ async function getWauTrend(env, weeks = 12) {
     });
   }
   return trend;
+}
+
+// Referral volume driven to trending/popular events over time -- distinct
+// from the badge scoring above (which flags *why* an event is hot); this
+// answers "how many people am I actually sending to it, and is that number
+// growing." Reads from engagement_digests since source_clicks per event per
+// week is already computed there -- no need to re-aggregate raw link_clicks.
+async function getReferralsTrend(env, weeks = 8) {
+  const weeklyTrend = await env.DB.prepare(
+    `SELECT week_start,
+       SUM(source_clicks) AS total_referrals,
+       SUM(CASE WHEN badge IS NOT NULL THEN source_clicks ELSE 0 END) AS badged_referrals
+     FROM engagement_digests
+     WHERE week_start >= date('now', ?)
+     GROUP BY week_start
+     ORDER BY week_start ASC`
+  ).bind(`-${weeks * 7} days`).all();
+
+  const topEvents = await env.DB.prepare(
+    `SELECT event_id, event_title, event_city, event_category, badge, source_clicks, week_start
+     FROM engagement_digests
+     WHERE week_start = (SELECT MAX(week_start) FROM engagement_digests)
+       AND badge IS NOT NULL
+     ORDER BY source_clicks DESC
+     LIMIT 15`
+  ).all();
+
+  // Per-event trend across recent weeks for whatever's currently badged --
+  // lets you see e.g. "this one's been climbing 3 weeks straight" instead
+  // of just a single-week snapshot.
+  const topEventIds = [...new Set((topEvents.results || []).map(e => e.event_id).filter(id => id != null))];
+  const eventTrends = {};
+  if (topEventIds.length) {
+    const placeholders = topEventIds.map(() => "?").join(",");
+    const rows = await env.DB.prepare(
+      `SELECT event_id, week_start, source_clicks, badge
+       FROM engagement_digests
+       WHERE event_id IN (${placeholders}) AND week_start >= date('now', ?)
+       ORDER BY week_start ASC`
+    ).bind(...topEventIds, `-${weeks * 7} days`).all();
+    for (const r of (rows.results || [])) {
+      (eventTrends[r.event_id] ||= []).push({ week_start: r.week_start, source_clicks: r.source_clicks, badge: r.badge });
+    }
+  }
+
+  return {
+    weekly_trend: weeklyTrend.results || [],
+    top_events: (topEvents.results || []).map(e => ({ ...e, trend: eventTrends[e.event_id] || [] }))
+  };
 }
 
 async function handleStats(env) {
@@ -2104,6 +2294,9 @@ export default {
       if (url.pathname === "/api/track-click" && request.method === "POST") return await handleTrackClick(request, env);
       if (url.pathname === "/api/pageview" && request.method === "POST") return await handlePageView(request, env);
       if (url.pathname === "/api/stats") return await handleStats(env);
+      if (url.pathname === "/api/referrals-trend") {
+        return json(await getReferralsTrend(env, Number(url.searchParams.get("weeks")) || 8));
+      }
       if (url.pathname === "/api/wau-trend") {
         const weeks = Math.min(Math.max(parseInt(url.searchParams.get("weeks")) || 12, 1), 26);
         const trend = await getWauTrend(env, weeks);
