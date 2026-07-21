@@ -1295,6 +1295,15 @@ async function getWauTrend(env, weeks = 12) {
 // answers "how many people am I actually sending to it, and is that number
 // growing." Reads from engagement_digests since source_clicks per event per
 // week is already computed there -- no need to re-aggregate raw link_clicks.
+//
+// Two tiers on purpose: many titles ("Playtime by Reservation", "Connect
+// Tour", "Drop-In Tot Time") are genuinely different bookable instances --
+// one events-table row per weekday -- that happen to share a name. Comparing
+// one instance's this-week count against a *different* instance's last-week
+// count isn't a valid week-over-week trend, so instance rows never carry a
+// delta. `top_series` aggregates by (event_title, event_city) instead --
+// summing across every instance that shares a name at that location -- and
+// is the only place a week-over-week comparison is computed.
 async function getReferralsTrend(env, weeks = 8) {
   const weeklyTrend = await env.DB.prepare(
     `SELECT week_start,
@@ -1306,6 +1315,7 @@ async function getReferralsTrend(env, weeks = 8) {
      ORDER BY week_start ASC`
   ).bind(`-${weeks * 7} days`).all();
 
+  // Tier 1: raw instances at latest week, no delta.
   const topEvents = await env.DB.prepare(
     `SELECT event_id, event_title, event_city, event_category, badge, source_clicks, week_start
      FROM engagement_digests
@@ -1315,27 +1325,51 @@ async function getReferralsTrend(env, weeks = 8) {
      LIMIT 15`
   ).all();
 
-  // Per-event trend across recent weeks for whatever's currently badged --
-  // lets you see e.g. "this one's been climbing 3 weeks straight" instead
-  // of just a single-week snapshot.
-  const topEventIds = [...new Set((topEvents.results || []).map(e => e.event_id).filter(id => id != null))];
-  const eventTrends = {};
-  if (topEventIds.length) {
-    const placeholders = topEventIds.map(() => "?").join(",");
-    const rows = await env.DB.prepare(
-      `SELECT event_id, week_start, source_clicks, badge
-       FROM engagement_digests
-       WHERE event_id IN (${placeholders}) AND week_start >= date('now', ?)
-       ORDER BY week_start ASC`
-    ).bind(...topEventIds, `-${weeks * 7} days`).all();
-    for (const r of (rows.results || [])) {
-      (eventTrends[r.event_id] ||= []).push({ week_start: r.week_start, source_clicks: r.source_clicks, badge: r.badge });
-    }
+  // Tier 2: series-level rollup -- same (event_title, event_city) merged
+  // across however many instance event_ids share that name, for the last
+  // two scored weeks, so we can compute a real this-week-vs-last-week delta
+  // at the level a person actually thinks of as "the event."
+  const seriesRows = await env.DB.prepare(
+    `SELECT event_title, COALESCE(event_city,'') AS event_city, week_start,
+       SUM(source_clicks) AS source_clicks,
+       MAX(CASE badge WHEN 'trending' THEN 2 WHEN 'popular' THEN 1 ELSE 0 END) AS badge_rank,
+       COUNT(DISTINCT event_id) AS instance_count
+     FROM engagement_digests
+     WHERE week_start IN (
+       SELECT DISTINCT week_start FROM engagement_digests ORDER BY week_start DESC LIMIT 2
+     )
+     GROUP BY event_title, event_city, week_start`
+  ).all();
+
+  const byKey = {};
+  for (const r of (seriesRows.results || [])) {
+    const key = `${r.event_title}|${r.event_city}`;
+    (byKey[key] ||= []).push(r);
   }
+  const rankToBadge = { 2: "trending", 1: "popular", 0: null };
+  const topSeries = Object.values(byKey)
+    .map((weeksForKey) => {
+      weeksForKey.sort((a, b) => a.week_start.localeCompare(b.week_start));
+      const current = weeksForKey[weeksForKey.length - 1];
+      const prior = weeksForKey.length > 1 ? weeksForKey[weeksForKey.length - 2] : null;
+      if (current.badge_rank === 0) return null; // not currently badged, skip
+      return {
+        event_title: current.event_title,
+        event_city: current.event_city || null,
+        instance_count: current.instance_count,
+        badge: rankToBadge[current.badge_rank],
+        source_clicks: current.source_clicks,
+        prior_week_source_clicks: prior ? prior.source_clicks : null
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.source_clicks - a.source_clicks)
+    .slice(0, 15);
 
   return {
     weekly_trend: weeklyTrend.results || [],
-    top_events: (topEvents.results || []).map(e => ({ ...e, trend: eventTrends[e.event_id] || [] }))
+    top_events: topEvents.results || [],
+    top_series: topSeries
   };
 }
 
@@ -1876,8 +1910,16 @@ async function sendDigestEmail(env, toEmail, html, text, subject = "This week on
 // to the /api/events response for the frontend to render.
 // ---------------------------------------------------------------------
 async function runWeeklyEngagementDigest(env) {
+  // INSERT OR REPLACE relies on idx_engagement_digest_unique (event_id,
+  // event_title, week_start) -- without it, re-running this job for a week
+  // that's already been scored (e.g. a manual re-trigger, or the cron
+  // firing twice) silently piled up duplicate rows instead of updating in
+  // place. Safe to replace-on-conflict here even though this INSERT leaves
+  // prior_avg_interactions/trend_ratio/badge as NULL: the three UPDATE
+  // statements right below unconditionally recompute those for the whole
+  // week regardless of whether this was an insert or a replace.
   await env.DB.prepare(
-    `INSERT INTO engagement_digests
+    `INSERT OR REPLACE INTO engagement_digests
       (event_id, event_title, event_category, event_city,
        week_start, week_end, views, calendar_adds, shares, source_clicks,
        total_interactions, prior_avg_interactions, trend_ratio, badge)
