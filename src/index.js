@@ -1785,6 +1785,28 @@ function escapeHtml(s) {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// Some older scraped `source` values have the full street address baked
+// right in (e.g. "...— Steinbaugh Pavilion, 824 Front St"), while newer
+// entries keep source to just the org/venue name and put the address in
+// `note` instead. Left as-is, the digest shows an address on some events
+// and not others with no visible pattern. This strips any address-shaped
+// fragment (a street number, a "1300 block" reference, a trailing state+
+// zip) so the digest is consistent regardless of how the source data was
+// originally entered -- doesn't touch the underlying DB field, just the
+// email's display copy.
+function cleanSourceForDisplay(source) {
+  if (!source) return "";
+  let s = source.replace(/,?\s*\b[A-Z]{2}\s+\d{5}\b/g, "");
+  s = s
+    .split(",")
+    .map((seg) =>
+      seg.split("—").map((part) => part.trim()).filter((part) => part && !/^\d/.test(part)).join(" — ")
+    )
+    .filter(Boolean)
+    .join(", ");
+  return s.replace(/\s*—\s*$/, "").trim();
+}
+
 async function getWeekAheadEvents(env) {
   const { results } = await env.DB.prepare("SELECT * FROM events").all();
   const now = new Date();
@@ -1811,36 +1833,51 @@ async function getWeekAheadEvents(env) {
   }
   withOccurrence.sort((a, b) => a.occurrence - b.occurrence);
 
-  // Group by day, capping how many show per day so the email stays skimmable.
+  // Group by day, capping how many show per day so the email stays
+  // skimmable. `total` tracks how many actually occur that day (before the
+  // cap) so the render step can show a "+N more" prompt back to Playroute
+  // instead of silently dropping them with no indication more exist.
   const byDay = new Map();
   for (const ev of withOccurrence) {
-    const list = byDay.get(ev.occurrence_label) || [];
-    if (list.length < DIGEST_MAX_PER_DAY) list.push(ev);
-    byDay.set(ev.occurrence_label, list);
+    const entry = byDay.get(ev.occurrence_label) || { shown: [], total: 0 };
+    entry.total += 1;
+    if (entry.shown.length < DIGEST_MAX_PER_DAY) entry.shown.push(ev);
+    byDay.set(ev.occurrence_label, entry);
   }
   return byDay;
 }
 
 function buildDigestHtml(byDay, unsubscribeUrl) {
   const days = [...byDay.entries()];
-  const dayBlocks = days.map(([label, evs]) => {
-    const rows = evs.map((ev) => {
+  const ctaButton = `
+    <div style="margin:20px 0;">
+      <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:14px;">Open Playroute \u2192</a>
+    </div>`;
+  const dayBlocks = days.map(([label, { shown, total }]) => {
+    const rows = shown.map((ev) => {
       const badge = ev.badge === "trending"
         ? `<span style="display:inline-block;background:#B23368;color:#fff;font-size:10px;font-weight:700;letter-spacing:0.03em;padding:1px 6px;border-radius:4px;margin-right:6px;">\u{1F525} TRENDING</span>`
         : ev.badge === "popular"
           ? `<span style="display:inline-block;background:#A6791E;color:#fff;font-size:10px;font-weight:700;letter-spacing:0.03em;padding:1px 6px;border-radius:4px;margin-right:6px;">\u2B50 POPULAR</span>`
           : "";
+      const cleanSource = cleanSourceForDisplay(ev.source);
       return `
       <tr>
         <td style="padding:6px 0;font-family:sans-serif;font-size:14px;color:#2c1f14;">
           ${badge}<strong>${escapeHtml(ev.title)}</strong> \u2014 ${escapeHtml(ev.display_time)}<br>
-          <span style="color:#8a7a63;font-size:13px;">${escapeHtml(ev.source || "")}${ev.source ? " \u00B7 " : ""}${escapeHtml(ev.city)} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}</span>
+          <span style="color:#8a7a63;font-size:13px;">${escapeHtml(cleanSource)}${cleanSource ? " \u00B7 " : ""}${escapeHtml(ev.city)} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}</span>
         </td>
       </tr>`;
     }).join("");
+    const overflow = total - shown.length;
+    const overflowRow = overflow > 0
+      ? `<tr><td style="padding:6px 0 2px;font-family:sans-serif;font-size:13px;">
+           <a href="${DIGEST_SITE_URL}/?src=newsletter" style="color:#9B5C2A;font-weight:600;text-decoration:none;">+ ${overflow} more ${label.split("\u00B7")[0].trim()} on Playroute \u2192</a>
+         </td></tr>`
+      : "";
     return `
       <tr><td style="padding:18px 0 4px;font-family:sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#a68a5b;border-bottom:1px solid #eee;">${escapeHtml(label)}</td></tr>
-      ${rows}`;
+      ${rows}${overflowRow}`;
   }).join("");
 
   const bodyContent = days.length
@@ -1851,22 +1888,26 @@ function buildDigestHtml(byDay, unsubscribeUrl) {
   <div style="max-width:520px;margin:0 auto;font-family:sans-serif;">
     <h1 style="font-family:serif;font-size:22px;color:#2c1f14;margin-bottom:4px;">This week on Playroute</h1>
     <p style="color:#8a7a63;font-size:13px;margin-top:0;">A quick look at what's coming up for the kids this week.</p>
+    ${ctaButton}
     ${bodyContent}
-    <div style="margin:28px 0;">
-      <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:14px;">Open Playroute \u2192</a>
-    </div>
+    ${ctaButton}
     <p style="font-size:11px;color:#b5a88f;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
   </div>`;
 }
 
 function buildDigestText(byDay) {
-  const lines = ["This week on Playroute", ""];
-  for (const [label, evs] of byDay.entries()) {
+  const lines = ["This week on Playroute", "", `Open Playroute: ${DIGEST_SITE_URL}/?src=newsletter`, ""];
+  for (const [label, { shown, total }] of byDay.entries()) {
     lines.push(label.toUpperCase());
-    for (const ev of evs) {
+    for (const ev of shown) {
       const badge = ev.badge === "trending" ? "[TRENDING] " : ev.badge === "popular" ? "[POPULAR] " : "";
-      const location = ev.source ? `${ev.source}, ` : "";
+      const cleanSource = cleanSourceForDisplay(ev.source);
+      const location = cleanSource ? `${cleanSource}, ` : "";
       lines.push(`- ${badge}${ev.title} \u2014 ${ev.display_time} \u00B7 ${location}${ev.city} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}`);
+    }
+    const overflow = total - shown.length;
+    if (overflow > 0) {
+      lines.push(`+ ${overflow} more ${label.split("\u00B7")[0].trim()} on Playroute: ${DIGEST_SITE_URL}/?src=newsletter`);
     }
     lines.push("");
   }
