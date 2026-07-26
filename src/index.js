@@ -1050,6 +1050,136 @@ async function fetchAndScanLyonsLibrary() {
 
 SOURCE_RUNNERS.lyons_library = async () => fetchAndScanLyonsLibrary();
 
+// --- Jefferson County Public Library, Arvada Balsam branch (BiblioCommons) -
+// Source: https://jeffcolibrary.bibliocommons.com/v2/events?locations=ARBA
+// A different platform than the "Library Market" family above --
+// BiblioCommons, used by 200+ library systems. IMPORTANT SCOPE NOTE: the
+// original URL Holly supplied filtered by kid audience only, with no
+// location filter -- that returns the ENTIRE Jefferson County system
+// (5,257 events across 17 branches, most nowhere near Boulder County:
+// Golden, Lakewood, Littleton, Evergreen, Conifer, etc). Scoped down here
+// to just the Arvada Balsam Temporary Library (the current stand-in while
+// the main Arvada branch is closed for a redesign) via ?locations=ARBA.
+// Tried combining that with the original audience filter too, but the
+// comma-separated audiences param didn't combine reliably with locations
+// in testing -- so audience filtering happens client-side below instead
+// (checking each event's own audience tags), which is more robust anyway
+// since it doesn't depend on unverified query-param encoding.
+//
+// UNVERIFIED like the other scraper-type sources: BiblioCommons' actual
+// HTML tag structure wasn't directly inspectable, so the regexes below are
+// built from visible page text patterns. confidence is set to 'review' on
+// purpose -- treat every queued item as needing a look before approving.
+const JCPL_ARVADA_LIST_URL = "https://jeffcolibrary.bibliocommons.com/v2/events?locations=ARBA";
+const JCPL_ARVADA_MAX_PAGES = 6; // ~6 weeks of coverage at this branch's pace
+
+function ageFromJcplAudiences(audienceTags) {
+  const tags = audienceTags.map((t) => t.toLowerCase());
+  let min = null, max = null;
+  const widen = (lo, hi) => {
+    if (min === null || lo < min) min = lo;
+    if (max === null || hi > max) max = hi;
+  };
+  if (tags.includes("babies")) widen(0, 2);
+  if (tags.includes("toddlers")) widen(1, 3);
+  if (tags.includes("preschoolers")) widen(3, 5);
+  if (min === null) return null; // no baby/toddler/preschooler tag -- not in scope
+  return { age_min: min, age_max: max };
+}
+
+function parseJcplEventChunk(rawChunk, permalink) {
+  // decodeHtmlEntities(stripTags()) first, so this all operates on plain
+  // text regardless of the real surrounding markup -- same technique used
+  // for the Lyons scraper above, chosen because the exact tag structure
+  // here is unverified.
+  const text = decodeHtmlEntities(stripTags(rawChunk)).replace(/\s+/g, " ").trim();
+  if (/\bCanceled\b/.test(rawChunk.slice(0, 200))) return null; // skip canceled sessions
+
+  const dateMatch = text.match(/on ([A-Z][a-z]+ \d{1,2}, \d{4}), (\d{1,2}:\d{2}[ap]m)[\u2013-]+(\d{1,2}:\d{2}[ap]m)/);
+  if (!dateMatch) return null;
+  const [, dateStr, startLabel, endLabel] = dateMatch;
+  const d = new Date(dateStr + " 12:00:00");
+  if (isNaN(d.getTime())) return null;
+  const eventDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const dayOfWeek = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d.getDay()];
+
+  // Title comes from the actual anchor text on the real HTML (most
+  // reliable single signal available), not the plain-text chunk -- the
+  // first /v2/events/<id> anchor in a chunk is consistently the title link
+  // in every real page fetched during development.
+  const titleMatch = rawChunk.match(/<a[^>]+href="\/v2\/events\/[0-9a-f]+"[^>]*>([^<]+)<\/a>/i);
+  if (!titleMatch) return null;
+  const title = decodeHtmlEntities(titleMatch[1]).trim();
+
+  const locationMatch = text.match(/Event location:\s*([A-Za-z0-9 .'&()-]{3,60})/);
+  const location = locationMatch ? locationMatch[1].trim() : "Arvada Balsam Temporary Library";
+
+  // Audience tags appear as repeated "<Name>Find more events in: <Name>"
+  // link text -- capture the leading name before that literal suffix.
+  const audienceTags = [];
+  const audRe = /([A-Za-z ]+?)Find more events in: \1/g;
+  let m;
+  while ((m = audRe.exec(text)) !== null) audienceTags.push(m[1].trim());
+  const ages = ageFromJcplAudiences(audienceTags);
+  if (!ages) return null; // not a baby/toddler/preschooler event -- skip
+
+  // Description: between the location label and the first audience-tag
+  // sentence, truncated -- BiblioCommons itself truncates with "…" mid
+  // sentence in the source text, which is fine for a pending-review note.
+  const descMatch = text.match(/Event location:\s*[A-Za-z0-9 .'&()-]{3,60}\s*(.+?)(?:Story TimesFind|BabiesFind|ToddlersFind|PreschoolersFind|$)/);
+  const description = descMatch ? descMatch[1].trim().slice(0, 350) : null;
+
+  return {
+    title,
+    source: `Jefferson County Public Library \u2014 ${location}`,
+    city: "Arvada",
+    category: "library",
+    cost: "free",
+    age_min: ages.age_min,
+    age_max: ages.age_max,
+    day_of_week: dayOfWeek,
+    start_time: to24HourFromLabel(startLabel),
+    display_time: `${startLabel}\u2013${endLabel}`,
+    recurrence: "dated",
+    event_date: eventDate,
+    note: description,
+    source_url: `https://jeffcolibrary.bibliocommons.com${permalink}`
+  };
+}
+
+async function fetchAndScanJcplArvada() {
+  const needsReview = [];
+  const seen = new Set();
+  for (let page = 1; page <= JCPL_ARVADA_MAX_PAGES; page++) {
+    const url = page === 1 ? JCPL_ARVADA_LIST_URL : `${JCPL_ARVADA_LIST_URL}&page=${page}`;
+    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+    if (!res.ok) break;
+    const html = await res.text();
+    const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+
+    const hrefPositions = [];
+    let m;
+    const hrefOnlyRe = /href="(\/v2\/events\/[0-9a-f]+)"/gi;
+    while ((m = hrefOnlyRe.exec(noScript)) !== null) hrefPositions.push({ href: m[1], index: m.index });
+    if (hrefPositions.length === 0) break; // no more events -- stop paging
+
+    for (let i = 0; i < hrefPositions.length; i++) {
+      const start = hrefPositions[i].index;
+      const end = i + 1 < hrefPositions.length ? hrefPositions[i + 1].index : start + 3000;
+      const chunkHtml = noScript.slice(start, end);
+      const parsed = parseJcplEventChunk(chunkHtml, hrefPositions[i].href);
+      if (!parsed) continue;
+      const dedupSig = `${parsed.title}|${parsed.event_date}|${parsed.start_time}`;
+      if (seen.has(dedupSig)) continue;
+      seen.add(dedupSig);
+      needsReview.push(parsed);
+    }
+  }
+  return needsReview;
+}
+
+SOURCE_RUNNERS.jcpl_arvada = async () => fetchAndScanJcplArvada();
+
 // --- My Nature Lab (Louisville) Story Time scraper (pending-review only) ---
 // Source: https://www.mynaturelab.org/story-time -- a Wix site. Confirmed
 // server-rendered (a plain fetch returns the actual dated listings, not an
