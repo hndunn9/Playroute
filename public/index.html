@@ -309,6 +309,11 @@ main{
   background:var(--gold);color:#fff;font-weight:700;
   letter-spacing:0.01em;order:-1;
 }
+.tag.badge-new{
+  display:inline-flex;align-items:center;gap:3px;
+  background:var(--bark);color:#fff;font-weight:700;
+  letter-spacing:0.01em;order:-1;
+}
 
 /* expand chevron */
 .expand-chevron{
@@ -793,8 +798,28 @@ const blazes = {
   museum:  `<polygon points="11,2 20,8 2,8" fill="#C79A4B"/><rect x="3" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="9.5" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="16" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="2" y="18" width="18" height="2" fill="#C79A4B"/>`,
   outdoor: `<polygon points="11,2 17,11 13.5,11 18,18 4,18 8.5,11 5,11" fill="#B4805A"/>`,
   community: `<path d="M11 19 C11 19 2 13 2 7.5 C2 4.5 4.5 2 7.5 2 C9.5 2 11 3.5 11 3.5 C11 3.5 12.5 2 14.5 2 C17.5 2 20 4.5 20 7.5 C20 13 11 19 11 19 Z" fill="#9B8AAE"/>`,
-  farmers_market: `<path d="M11 6 C7 5 4 8 4 12 C4 16 7 19 10 19 C10.5 19 11 18.5 11 18.5 C11 18.5 11.5 19 12 19 C15 19 18 16 18 12 C18 8 15 5 11 6 Z" fill="#B85C4A"/><path d="M11 6 C11 4 12 2.5 13.5 2" stroke="#B85C4A" stroke-width="1.5" fill="none" stroke-linecap="round"/>`
+  farmers_market: `<path d="M11 6 C7 5 4 8 4 12 C4 16 7 19 10 19 C10.5 19 11 18.5 11 18.5 C11 18.5 11.5 19 12 19 C15 19 18 16 18 12 C18 8 15 5 11 6 Z" fill="#B85C4A"/><path d="M11 6 C11 4 12 2.5 13.5 2" stroke="#B85C4A" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
+  // -- keyword-matched icons below, first draft: simple shapes only
+  // (circles/rects/triangles) since these can't be visually previewed
+  // before shipping -- eyeball in-browser and refine as needed.
+  flower: `<circle cx="16" cy="11" r="3" fill="#D9A62E"/><circle cx="13.5" cy="6.7" r="3" fill="#D9A62E"/><circle cx="8.5" cy="6.7" r="3" fill="#D9A62E"/><circle cx="6" cy="11" r="3" fill="#D9A62E"/><circle cx="8.5" cy="15.3" r="3" fill="#D9A62E"/><circle cx="13.5" cy="15.3" r="3" fill="#D9A62E"/><circle cx="11" cy="11" r="2.8" fill="#7A5A1E"/>`,
+  music: `<ellipse cx="7" cy="17" rx="3" ry="2.3" fill="#8A6A9E"/><rect x="9.6" y="3" width="1.8" height="14" fill="#8A6A9E"/><polygon points="9.6,3 15,5 15,8 9.6,6" fill="#8A6A9E"/>`,
+  splash: `<path d="M11 3 C8 8 4 12.5 4 16 A7 7 0 0 0 18 16 C18 12.5 14 8 11 3 Z" fill="#4A8DA6"/>`,
+  sparkleNight: `<polygon points="11,1.5 13.8,8.2 21,10 13.8,11.8 11,18.5 8.2,11.8 1,10 8.2,8.2" fill="#3C4E7A"/>`
 };
+const SMART_ICON_KEYWORDS = {
+  flower: ["sunflower","u-pick","pumpkin patch","tulip","flower field"],
+  music: ["concert","philharmonic","symphony","orchestra"],
+  splash: ["splash pad","splash park","water park","waterpark","pool party"],
+  sparkleNight: ["planetarium","stargaz","star party","night sky"]
+};
+function matchEventIcon(ev){
+  const title = (ev.title||"").toLowerCase();
+  for(const [key, words] of Object.entries(SMART_ICON_KEYWORDS)){
+    if(words.some(w => title.includes(w))) return key;
+  }
+  return ev.category;
+}
 function blazeSvg(cat){
   return `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes[cat]||blazes.outdoor}</svg>`;
 }
@@ -1032,7 +1057,7 @@ function openDrawer(ev){
   const drawer = document.getElementById('activeDrawer');
   document.getElementById('drawerTitle').textContent = ev.title;
   document.getElementById('drawerSource').textContent = ev.source;
-  document.getElementById('drawerIcon').innerHTML = blazes[ev.category]||blazes.outdoor;
+  document.getElementById('drawerIcon').innerHTML = blazes[matchEventIcon(ev)]||blazes.outdoor;
   const cta = document.getElementById('drawerCta');
   cta.href = ev.source_url || '#';
   cta.textContent = ctaLabels[ev.category] || 'View original site ↗';
@@ -1110,13 +1135,14 @@ function renderFeed(){
     card.onclick=function(){ toggleCard(this, ev); };
     card.innerHTML=`
       <div class="card-summary">
-        <div class="blaze">${blazeSvg(ev.category)}</div>
+        <div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>
         <div class="event-main">
           <div class="event-title">${ev.title}</div>
           <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
           <div class="tag-row">
             ${ev.badge==="trending"?`<span class="tag badge-trending">${ICONS.trendUp} Trending</span>`:""}
             ${ev.badge==="popular"?`<span class="tag badge-popular">${ICONS.star} Popular</span>`:""}
+            ${!ev.badge && ev.is_new?`<span class="tag badge-new">${ICONS.sparkle} New</span>`:""}
             <span class="tag city">${ev.city}</span>
             <span class="tag ${ev.cost}">${ev.cost==="free"?"Free":"Paid"}</span>
             <span class="tag age">Ages ${formatAgeRange(ev.age_min,ev.age_max)}</span>
@@ -1281,7 +1307,7 @@ function renderRecentlyPassed(){
     card.onclick=function(){ toggleCard(this, ev); };
     card.innerHTML=`
       <div class="card-summary">
-        <div class="blaze">${blazeSvg(ev.category)}</div>
+        <div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>
         <div class="event-main">
           <div class="event-title">${ev.title}</div>
           <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
