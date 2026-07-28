@@ -1776,7 +1776,9 @@ async function handleEvents(env, url) {
     binds.push(cost);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const { results } = await env.DB.prepare(`SELECT * FROM events ${where}`).bind(...binds).all();
+  const { results } = await env.DB.prepare(
+    `SELECT *, (created_at >= datetime('now','-7 days')) AS is_new FROM events ${where}`
+  ).bind(...binds).all();
 
   // Attach this week's engagement badge, if any. Computed weekly by
   // runWeeklyEngagementDigest (see the Sunday cron branch below) —
