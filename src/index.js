@@ -1180,6 +1180,135 @@ async function fetchAndScanJcplArvada() {
 
 SOURCE_RUNNERS.jcpl_arvada = async () => fetchAndScanJcplArvada();
 
+// --- Longmont Public Library (WordPress "Events Calendar"-family plugin) --
+// Source: https://longmontcolorado.gov/events/category/library/
+// Verified for real via a live fetch (2026-07-27): this genuinely is
+// WordPress (wp-content/uploads paths on every event image), confirming
+// the platform note that was already on this scrape_sources row. A
+// separate claim on the same row -- that a "longmont-scrape" job had
+// already shipped -- was false and was already corrected by a prior
+// session; this is the actual first real implementation.
+//
+// Dated "Series" instances (recurring programs like Baby Storytime,
+// Toddler Stay & Play) get a permalink with the specific date baked in:
+// /event/{slug}/{YYYY-MM-DD}/. One-time specials instead get a bare
+// /event/{slug}/ with no date segment. Only the dated kind are scraped
+// here -- deliberately mirrors the original manual-review notes' own
+// stated strategy ("only known recurring child/family program titles are
+// auto-added; one-off specials still need manual review"), and it means
+// event_date comes straight from the URL itself rather than being parsed
+// out of display text, which is the most reliable field available.
+//
+// No structured age-group field exists on this platform (unlike JCPL's
+// BiblioCommons), so kid-relevance is inferred from title text: a
+// denylist catches clearly adult-only content (conversation groups, adult
+// book/writers groups, closures), anything else that survives is treated
+// as family content, matching the "nothing auto-publishes" safety net.
+// UNVERIFIED against the real HTML tag structure, same as the other
+// scraper-type sources -- confidence set to 'review' on purpose.
+const LONGMONT_LIBRARY_LIST_URL = "https://longmontcolorado.gov/events/category/library/";
+const LONGMONT_LIBRARY_MAX_PAGES = 6;
+const LONGMONT_ADULT_DENYLIST_RE = /adult|senior center|writers group|book group|conversation group|library closed|current events meeting|resume|job (search|club)|tax help/i;
+
+function ageFromLongmontTitle(title) {
+  const t = title.toLowerCase();
+  if (/\bbaby\b/.test(t)) return { age_min: 0, age_max: 2 };
+  if (/\btoddler\b/.test(t)) return { age_min: 1, age_max: 3 };
+  if (/\bpreschool/.test(t)) return { age_min: 3, age_max: 5 };
+  if (/\btween/.test(t)) return { age_min: 8, age_max: 12 };
+  if (/\bteen/.test(t)) return { age_min: 12, age_max: 18 };
+  if (/\bkids?\b|\bkid club\b/.test(t)) return { age_min: 5, age_max: 10 };
+  return { age_min: 0, age_max: 18 }; // "all ages", "family", or unlabeled -- broad default, gated by review
+}
+
+function parseLongmontEventChunk(rawChunk, permalink, eventDate) {
+  const text = decodeHtmlEntities(stripTags(rawChunk)).replace(/\s+/g, " ").trim();
+  if (LONGMONT_ADULT_DENYLIST_RE.test(text)) return null;
+
+  const titleMatch = rawChunk.match(/<a[^>]+href="[^"]*\/event\/[^"]+"[^>]*>([^<]+)<\/a>/i);
+  if (!titleMatch) return null;
+  const title = decodeHtmlEntities(titleMatch[1]).trim();
+  if (LONGMONT_ADULT_DENYLIST_RE.test(title)) return null;
+
+  const timeMatch = text.match(/(\d{1,2}(?::\d{2})?\s*[ap]m)\s*-\s*(\d{1,2}(?::\d{2})?\s*[ap]m)/i);
+  if (!timeMatch) return null; // no time range -- likely a multi-day banner (e.g. Summer Reading), skip
+  const [, startLabel, endLabel] = timeMatch;
+
+  // Everything after the matched time range, in order: an optional
+  // "<Series Name> Series" label, an optional location line, then the
+  // description. Sliced by position rather than chained regex matches --
+  // an earlier version re-matched "pm" and grabbed the wrong occurrence
+  // when a title had two time labels, and the address regex broke on the
+  // literal period in "355 Emery St.,".
+  let tail = text.slice(timeMatch.index + timeMatch[0].length).trim();
+  tail = tail.replace(/^.*?\bSeries\b\s*/, "");
+
+  const locationMatch = tail.match(/^Longmont Public Library\s+\d+.*?(?:CO|Colorado)(?:,\s*United States)?/);
+  let location = "Longmont Public Library";
+  if (locationMatch) {
+    location = locationMatch[0].trim();
+    tail = tail.slice(locationMatch[0].length).trim();
+  }
+  const description = tail ? tail.slice(0, 350) : null;
+
+  const d = new Date(eventDate + "T12:00:00Z");
+  const dayOfWeek = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d.getUTCDay()];
+  const ages = ageFromLongmontTitle(title);
+
+  return {
+    title,
+    source: location,
+    city: "Longmont",
+    category: "library",
+    cost: "free",
+    age_min: ages.age_min,
+    age_max: ages.age_max,
+    day_of_week: dayOfWeek,
+    start_time: to24HourFromLabel(startLabel.replace(/^(\d{1,2})\s*([ap]m)$/i, "$1:00$2")),
+    display_time: `${startLabel} - ${endLabel}`,
+    recurrence: "dated",
+    event_date: eventDate,
+    note: description,
+    source_url: `https://longmontcolorado.gov${permalink}`
+  };
+}
+
+async function fetchAndScanLongmontLibrary() {
+  const needsReview = [];
+  const seen = new Set();
+  for (let page = 1; page <= LONGMONT_LIBRARY_MAX_PAGES; page++) {
+    const url = page === 1 ? LONGMONT_LIBRARY_LIST_URL : `${LONGMONT_LIBRARY_LIST_URL}page/${page}/`;
+    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+    if (!res.ok) break;
+    const html = await res.text();
+    const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+
+    const hrefPositions = [];
+    let m;
+    const hrefOnlyRe = /href="(https?:\/\/longmontcolorado\.gov\/event\/[\w-]+\/(\d{4}-\d{2}-\d{2})\/)"/gi;
+    while ((m = hrefOnlyRe.exec(noScript)) !== null) {
+      const path = m[1].replace(/^https?:\/\/longmontcolorado\.gov/, "");
+      hrefPositions.push({ href: path, eventDate: m[2], index: m.index });
+    }
+    if (hrefPositions.length === 0) break;
+
+    for (let i = 0; i < hrefPositions.length; i++) {
+      const start = hrefPositions[i].index;
+      const end = i + 1 < hrefPositions.length ? hrefPositions[i + 1].index : start + 2500;
+      const chunkHtml = noScript.slice(start, end);
+      const parsed = parseLongmontEventChunk(chunkHtml, hrefPositions[i].href, hrefPositions[i].eventDate);
+      if (!parsed) continue;
+      const dedupSig = `${parsed.title}|${parsed.event_date}|${parsed.start_time}`;
+      if (seen.has(dedupSig)) continue;
+      seen.add(dedupSig);
+      needsReview.push(parsed);
+    }
+  }
+  return needsReview;
+}
+
+SOURCE_RUNNERS.longmont_library = async () => fetchAndScanLongmontLibrary();
+
 // --- My Nature Lab (Louisville) Story Time scraper (pending-review only) ---
 // Source: https://www.mynaturelab.org/story-time -- a Wix site. Confirmed
 // server-rendered (a plain fetch returns the actual dated listings, not an
@@ -1963,7 +2092,20 @@ async function getWeekAheadEvents(env) {
     if (!occ || occ > cutoff) continue;
     withOccurrence.push({ ...ev, occurrence: occ, occurrence_label: formatOccurrenceLabel(occ), badge: badgeByEventId.get(ev.id) || null });
   }
-  withOccurrence.sort((a, b) => a.occurrence - b.occurrence);
+  // Free events sort ahead of paid ones within the same day -- otherwise
+  // an early-but-paid drop-in (e.g. one starting at 8:30am) chronologically
+  // wins the top slot every day it recurs, and since the digest caps at
+  // DIGEST_MAX_PER_DAY per day, that could push a free event out of the
+  // newsletter entirely rather than just reordering it.
+  withOccurrence.sort((a, b) => {
+    const dayA = a.occurrence.toDateString();
+    const dayB = b.occurrence.toDateString();
+    if (dayA !== dayB) return a.occurrence - b.occurrence;
+    const paidA = a.cost === "paid" ? 1 : 0;
+    const paidB = b.cost === "paid" ? 1 : 0;
+    if (paidA !== paidB) return paidA - paidB;
+    return a.occurrence - b.occurrence;
+  });
 
   // Group by day, capping how many show per day so the email stays
   // skimmable. `total` tracks how many actually occur that day (before the
