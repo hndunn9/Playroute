@@ -1115,7 +1115,21 @@ function renderFeed(){
     .filter(ev=>ev.occurrence)
     .filter(ev=>inDateRange(ev.occurrence,activeWhen))
     .slice()
-    .sort((a,b)=>new Date(a.occurrence)-new Date(b.occurrence));
+    .sort((a,b)=>{
+      // Chronological across days as before. Within the SAME day, free
+      // events sort ahead of paid ones -- otherwise an early-but-paid
+      // drop-in (e.g. one starting at 8:30am) chronologically wins the
+      // top slot on every single day it recurs, which reads as "this
+      // paid thing is always first" even though nothing's actually wrong
+      // with the data, just the pure-chronological sort.
+      const dayA = new Date(a.occurrence).toDateString();
+      const dayB = new Date(b.occurrence).toDateString();
+      if(dayA !== dayB) return new Date(a.occurrence)-new Date(b.occurrence);
+      const paidA = a.cost==="paid" ? 1 : 0;
+      const paidB = b.cost==="paid" ? 1 : 0;
+      if(paidA !== paidB) return paidA-paidB;
+      return new Date(a.occurrence)-new Date(b.occurrence);
+    });
 
   let shown=0, lastHeading=null;
   upcoming.forEach(ev=>{
