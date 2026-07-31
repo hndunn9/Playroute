@@ -2092,6 +2092,13 @@ async function getWeekAheadEvents(env) {
     if (!occ || occ > cutoff) continue;
     withOccurrence.push({ ...ev, occurrence: occ, occurrence_label: formatOccurrenceLabel(occ), badge: badgeByEventId.get(ev.id) || null });
   }
+  // Chronological sort BEFORE grouping into days -- byDayAll below is a Map
+  // keyed by day label, and Map preserves insertion order. Without this
+  // sort, days land in whatever order the SQL query happened to return
+  // rows in (not chronological), which is exactly the bug that shipped:
+  // the interest-score rewrite replaced the old sort but never restored an
+  // equivalent one before day-grouping.
+  withOccurrence.sort((a, b) => a.occurrence - b.occurrence);
 
   // "Most interesting to parents" isn't cost tier -- it's whether the event
   // is actually notable. Trending/popular badges are the strongest signal
@@ -2184,17 +2191,26 @@ async function getWeekAheadEvents(env) {
 // audience mostly opens on phones this is an acceptable tradeoff for now,
 // but flagging it: if Outlook-desktop rendering turns out to matter, these
 // would need to become small PNGs instead.
-const DIGEST_ICONS = {
-  library: `<path d="M11 4 C8 2.3 4 1.8 2 2.3 L2 17.3 C4 16.8 8 17.3 11 19 C14 17.3 18 16.8 20 17.3 L20 2.3 C18 1.8 14 2.3 11 4 Z" fill="#7A5568"/>`,
-  rec: `<path d="M14.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm2.8 3.1l-2.1-1.8c-.3-.3-.7-.4-1.1-.3l-3.2 1c-.5.2-.8.6-.8 1.1v3.4c0 .6.4 1 1 1s1-.4 1-1V9.8l1.1-.3-1.7 3.3c-.2.4-.1.9.3 1.2l2.5 1.9-.9 4c-.1.5.2 1 .7 1.1.5.1 1-.2 1.1-.7l1-4.5c.1-.4-.1-.8-.4-1.1l-1.8-1.4 1.4-2.7 1 .9c.2.2.5.3.7.3h2.1c.6 0 1-.4 1-1s-.4-1-1-1h-1.7z" fill="#6E8B8A"/>`,
-  museum: `<polygon points="11,2 20,8 2,8" fill="#C79A4B"/><rect x="3" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="9.5" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="16" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="2" y="18" width="18" height="2" fill="#C79A4B"/>`,
-  outdoor: `<polygon points="11,2 17,11 13.5,11 18,18 4,18 8.5,11 5,11" fill="#B4805A"/>`,
-  community: `<path d="M11 19 C11 19 2 13 2 7.5 C2 4.5 4.5 2 7.5 2 C9.5 2 11 3.5 11 3.5 C11 3.5 12.5 2 14.5 2 C17.5 2 20 4.5 20 7.5 C20 13 11 19 11 19 Z" fill="#9B8AAE"/>`,
-  farmers_market: `<path d="M11 6 C7 5 4 8 4 12 C4 16 7 19 10 19 C10.5 19 11 18.5 11 18.5 C11 18.5 11.5 19 12 19 C15 19 18 16 18 12 C18 8 15 5 11 6 Z" fill="#B85C4A"/><path d="M11 6 C11 4 12 2.5 13.5 2" stroke="#B85C4A" stroke-width="1.5" fill="none" stroke-linecap="round"/>`
+// Category colors for the email -- matches the app's category icon colors,
+// but rendered as a plain colored block instead of an SVG shape. Inline
+// SVG in email is NOT reliably supported (confirmed broken on Gmail
+// Android specifically, and generally unreliable across clients beyond
+// Apple Mail) -- a table cell with a background color has zero image/SVG
+// dependency and renders identically everywhere, which matters more here
+// than the shape did. If real per-category icon imagery is wanted later,
+// the safe path is small hosted PNGs referenced by <img src>, not inline
+// SVG or CSS shapes relying on unsupported properties.
+const DIGEST_CATEGORY_COLORS = {
+  library: "#7A5568",
+  rec: "#6E8B8A",
+  museum: "#C79A4B",
+  outdoor: "#B4805A",
+  community: "#9B8AAE",
+  farmers_market: "#B85C4A"
 };
-function digestIconSvg(category) {
-  const path = DIGEST_ICONS[category] || DIGEST_ICONS.outdoor;
-  return `<svg width="20" height="20" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${path}</svg>`;
+function digestColorBlock(category, size) {
+  const color = DIGEST_CATEGORY_COLORS[category] || DIGEST_CATEGORY_COLORS.outdoor;
+  return `<table role="presentation" width="${size}" height="${size}" cellpadding="0" cellspacing="0"><tr><td bgcolor="${color}" width="${size}" height="${size}" style="border-radius:${Math.round(size / 3)}px;font-size:0;line-height:0;">&nbsp;</td></tr></table>`;
 }
 
 function digestBadgeHtml(badge) {
@@ -2220,7 +2236,7 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl) {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 24px 12px;width:calc(100% - 48px);background:#F1E7D2;border:1px solid #D3D8C8;border-radius:14px;">
         <tr>
           <td width="46" style="padding:14px 0 14px 14px;vertical-align:top;">
-            <table role="presentation" width="34" height="34" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="border-radius:9px;"><tr><td align="center" valign="middle">${digestIconSvg(ev.category)}</td></tr></table>
+            ${digestColorBlock(ev.category, 34)}
           </td>
           <td style="padding:14px 14px 14px 10px;font-family:-apple-system,sans-serif;">
             <div style="font-weight:700;font-size:15px;color:#1F2A22;">${escapeHtml(ev.title)}</div>
@@ -2237,7 +2253,7 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl) {
       const cleanSource = cleanSourceForDisplay(ev.source);
       return `
       <tr>
-        <td width="34" valign="top" style="padding:9px 0;">${digestIconSvg(ev.category)}</td>
+        <td width="24" valign="top" style="padding:9px 0;">${digestColorBlock(ev.category, 16)}</td>
         <td style="padding:9px 0 9px 10px;font-family:-apple-system,sans-serif;border-bottom:1px solid #F1E7D2;">
           <div style="font-weight:600;font-size:13.5px;color:#1F2A22;">${escapeHtml(ev.title)}</div>
           <div style="font-size:11.5px;color:#6B7268;margin-top:2px;">${escapeHtml(cleanSource)}${cleanSource ? " \u00B7 " : ""}${escapeHtml(ev.display_time)}</div>
