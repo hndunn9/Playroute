@@ -2146,7 +2146,7 @@ function buildDigestHtml(byDay, unsubscribeUrl) {
     const overflow = total - shown.length;
     const overflowRow = overflow > 0
       ? `<tr><td style="padding:6px 0 2px;font-family:sans-serif;font-size:13px;">
-           <a href="${DIGEST_SITE_URL}/?src=newsletter" style="color:#9B5C2A;font-weight:600;text-decoration:none;">+ ${overflow} more ${label.split("\u00B7")[0].trim()} on Playroute \u2192</a>
+           <a href="${DIGEST_SITE_URL}/?src=newsletter" style="color:#9B5C2A;font-weight:600;text-decoration:none;">+ ${overflow} more event${overflow === 1 ? "" : "s"} on Playroute \u2192</a>
          </td></tr>`
       : "";
     return `
@@ -2181,7 +2181,7 @@ function buildDigestText(byDay) {
     }
     const overflow = total - shown.length;
     if (overflow > 0) {
-      lines.push(`+ ${overflow} more ${label.split("\u00B7")[0].trim()} on Playroute: ${DIGEST_SITE_URL}/?src=newsletter`);
+      lines.push(`+ ${overflow} more event${overflow === 1 ? "" : "s"} on Playroute: ${DIGEST_SITE_URL}/?src=newsletter`);
     }
     lines.push("");
   }
