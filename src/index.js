@@ -2092,89 +2092,224 @@ async function getWeekAheadEvents(env) {
     if (!occ || occ > cutoff) continue;
     withOccurrence.push({ ...ev, occurrence: occ, occurrence_label: formatOccurrenceLabel(occ), badge: badgeByEventId.get(ev.id) || null });
   }
-  // Free events sort ahead of paid ones within the same day -- otherwise
-  // an early-but-paid drop-in (e.g. one starting at 8:30am) chronologically
-  // wins the top slot every day it recurs, and since the digest caps at
-  // DIGEST_MAX_PER_DAY per day, that could push a free event out of the
-  // newsletter entirely rather than just reordering it.
-  withOccurrence.sort((a, b) => {
-    const dayA = a.occurrence.toDateString();
-    const dayB = b.occurrence.toDateString();
-    if (dayA !== dayB) return a.occurrence - b.occurrence;
-    const paidA = a.cost === "paid" ? 1 : 0;
-    const paidB = b.cost === "paid" ? 1 : 0;
-    if (paidA !== paidB) return paidA - paidB;
-    return a.occurrence - b.occurrence;
-  });
+
+  // "Most interesting to parents" isn't cost tier -- it's whether the event
+  // is actually notable. Trending/popular badges are the strongest signal
+  // (real engagement data); a one-off dated special (is_special) is the
+  // next best signal even before it's accumulated any clicks (a new farm
+  // festival won't have engagement history yet, but it's still clearly
+  // more noteworthy than a routine weekly storytime). Routine recurring
+  // events are the baseline. This replaces an earlier free-before-paid
+  // sort that technically prevented an early paid drop-in from always
+  // winning the top slot, but overcorrected into crowding paid events out
+  // of the digest entirely on days with several free options.
+  function interestScore(ev) {
+    if (ev.badge === "trending") return 3;
+    if (ev.badge === "popular") return 2;
+    if (ev.is_special) return 1;
+    return 0;
+  }
+
+  const byDayAll = new Map();
+  for (const ev of withOccurrence) {
+    const list = byDayAll.get(ev.occurrence_label) || [];
+    list.push(ev);
+    byDayAll.set(ev.occurrence_label, list);
+  }
 
   // Group by day, capping how many show per day so the email stays
   // skimmable. `total` tracks how many actually occur that day (before the
   // cap) so the render step can show a "+N more" prompt back to Playroute
   // instead of silently dropping them with no indication more exist.
   const byDay = new Map();
-  for (const ev of withOccurrence) {
-    const entry = byDay.get(ev.occurrence_label) || { shown: [], total: 0 };
-    entry.total += 1;
-    if (entry.shown.length < DIGEST_MAX_PER_DAY) entry.shown.push(ev);
-    byDay.set(ev.occurrence_label, entry);
+  for (const [label, dayEvents] of byDayAll) {
+    const total = dayEvents.length;
+    const ranked = dayEvents.slice().sort((a, b) => {
+      const scoreDiff = interestScore(b) - interestScore(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.occurrence - b.occurrence;
+    });
+    let shown = ranked.slice(0, DIGEST_MAX_PER_DAY);
+
+    // Balance backstop: if the top picks came out all one cost tier but
+    // the day actually has an event from the other tier, swap in the
+    // single best-scored one -- guarantees a real mix instead of, say, six
+    // free storytimes crowding out the one great paid class that day.
+    const tiers = new Set(shown.map((e) => e.cost));
+    if (tiers.size === 1 && shown.length === DIGEST_MAX_PER_DAY) {
+      const missingTier = shown[0].cost === "free" ? "paid" : "free";
+      const bestOfMissing = ranked.find((e) => e.cost === missingTier);
+      if (bestOfMissing) {
+        const worstIdx = shown.length - 1; // lowest-ranked of the overrepresented tier
+        shown = [...shown.slice(0, worstIdx), bestOfMissing];
+      }
+    }
+
+    // Display order is chronological within the day regardless of how
+    // picks were selected -- ranking by "interest" is for choosing which
+    // events make the cut, not for the order a reader sees them in.
+    shown.sort((a, b) => a.occurrence - b.occurrence);
+    byDay.set(label, { shown, total });
   }
-  return byDay;
+
+  // Spotlight picks for the top-of-email highlight section: the 2 most
+  // genuinely notable events of the week, reusing the same interest score
+  // as day-level selection above (trending > popular > one-off special).
+  // Deliberately NOT limited to weekly-recurring events -- a one-off farm
+  // festival or concert is exactly the kind of thing worth surfacing here,
+  // it just won't have a badge yet if it's brand new.
+  const spotlight = withOccurrence
+    .filter((ev) => interestScore(ev) > 0)
+    .sort((a, b) => {
+      const scoreDiff = interestScore(b) - interestScore(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.occurrence - b.occurrence;
+    })
+    .slice(0, 2);
+
+  // Same real number used elsewhere (/api/public-stats, the app footer) --
+  // total tracked interactions with event content, not a fabricated figure.
+  const statRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM link_clicks WHERE category NOT IN ('playground','hike','support')`
+  ).first();
+
+  return { byDay, spotlight, eventsDiscovered: statRow?.n || 0 };
 }
 
-function buildDigestHtml(byDay, unsubscribeUrl) {
+// Category icons for the email -- same shapes as the app's blaze icon set
+// (public/index.html) so the newsletter visually matches the app instead of
+// looking like a generic email template. NOTE: inline SVG has patchy
+// support in Outlook desktop specifically (Word rendering engine) though it
+// works fine in Gmail, Apple Mail, and Outlook web/mobile. Given the
+// audience mostly opens on phones this is an acceptable tradeoff for now,
+// but flagging it: if Outlook-desktop rendering turns out to matter, these
+// would need to become small PNGs instead.
+const DIGEST_ICONS = {
+  library: `<path d="M11 4 C8 2.3 4 1.8 2 2.3 L2 17.3 C4 16.8 8 17.3 11 19 C14 17.3 18 16.8 20 17.3 L20 2.3 C18 1.8 14 2.3 11 4 Z" fill="#7A5568"/>`,
+  rec: `<path d="M14.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm2.8 3.1l-2.1-1.8c-.3-.3-.7-.4-1.1-.3l-3.2 1c-.5.2-.8.6-.8 1.1v3.4c0 .6.4 1 1 1s1-.4 1-1V9.8l1.1-.3-1.7 3.3c-.2.4-.1.9.3 1.2l2.5 1.9-.9 4c-.1.5.2 1 .7 1.1.5.1 1-.2 1.1-.7l1-4.5c.1-.4-.1-.8-.4-1.1l-1.8-1.4 1.4-2.7 1 .9c.2.2.5.3.7.3h2.1c.6 0 1-.4 1-1s-.4-1-1-1h-1.7z" fill="#6E8B8A"/>`,
+  museum: `<polygon points="11,2 20,8 2,8" fill="#C79A4B"/><rect x="3" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="9.5" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="16" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="2" y="18" width="18" height="2" fill="#C79A4B"/>`,
+  outdoor: `<polygon points="11,2 17,11 13.5,11 18,18 4,18 8.5,11 5,11" fill="#B4805A"/>`,
+  community: `<path d="M11 19 C11 19 2 13 2 7.5 C2 4.5 4.5 2 7.5 2 C9.5 2 11 3.5 11 3.5 C11 3.5 12.5 2 14.5 2 C17.5 2 20 4.5 20 7.5 C20 13 11 19 11 19 Z" fill="#9B8AAE"/>`,
+  farmers_market: `<path d="M11 6 C7 5 4 8 4 12 C4 16 7 19 10 19 C10.5 19 11 18.5 11 18.5 C11 18.5 11.5 19 12 19 C15 19 18 16 18 12 C18 8 15 5 11 6 Z" fill="#B85C4A"/><path d="M11 6 C11 4 12 2.5 13.5 2" stroke="#B85C4A" stroke-width="1.5" fill="none" stroke-linecap="round"/>`
+};
+function digestIconSvg(category) {
+  const path = DIGEST_ICONS[category] || DIGEST_ICONS.outdoor;
+  return `<svg width="20" height="20" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${path}</svg>`;
+}
+
+function digestBadgeHtml(badge) {
+  if (badge === "trending") return `<span style="display:inline-block;background:#B23368;color:#fff;font-size:10px;font-weight:700;letter-spacing:0.03em;padding:2px 7px;border-radius:20px;margin-top:4px;">TRENDING</span>`;
+  if (badge === "popular") return `<span style="display:inline-block;background:#A6791E;color:#fff;font-size:10px;font-weight:700;letter-spacing:0.03em;padding:2px 7px;border-radius:20px;margin-top:4px;">POPULAR</span>`;
+  return "";
+}
+
+function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl) {
   const days = [...byDay.entries()];
-  const ctaButton = `
-    <div style="margin:20px 0;">
-      <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:12px 20px;border-radius:8px;font-size:14px;">Open Playroute \u2192</a>
-    </div>`;
+  const ctaButton = (label) => `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:14px 0;">
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td align="center" bgcolor="#A8623A" style="border-radius:10px;">
+        <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:block;padding:13px 20px;font-family:-apple-system,sans-serif;font-size:14.5px;font-weight:700;color:#ffffff;text-decoration:none;">${label} \u2192</a>
+      </td></tr></table>
+    </td></tr></table>`;
+
+  const spotlightHtml = spotlight.length ? `
+    <p style="padding:22px 24px 8px;margin:0;font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:#3C5548;font-family:-apple-system,sans-serif;">Don't miss these</p>
+    ${spotlight.map((ev) => {
+      const cleanSource = cleanSourceForDisplay(ev.source);
+      return `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 24px 12px;width:calc(100% - 48px);background:#F1E7D2;border:1px solid #D3D8C8;border-radius:14px;">
+        <tr>
+          <td width="46" style="padding:14px 0 14px 14px;vertical-align:top;">
+            <table role="presentation" width="34" height="34" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="border-radius:9px;"><tr><td align="center" valign="middle">${digestIconSvg(ev.category)}</td></tr></table>
+          </td>
+          <td style="padding:14px 14px 14px 10px;font-family:-apple-system,sans-serif;">
+            <div style="font-weight:700;font-size:15px;color:#1F2A22;">${escapeHtml(ev.title)}</div>
+            <div style="font-size:12px;color:#6B7268;margin-top:3px;">${escapeHtml(cleanSource)}${cleanSource ? " \u00B7 " : ""}${escapeHtml(ev.city)} \u00B7 ${escapeHtml(ev.occurrence_label)}, ${escapeHtml(ev.display_time)}</div>
+            ${digestBadgeHtml(ev.badge)}
+          </td>
+        </tr>
+      </table>`;
+    }).join("")}
+  ` : "";
+
   const dayBlocks = days.map(([label, { shown, total }]) => {
     const rows = shown.map((ev) => {
-      const badge = ev.badge === "trending"
-        ? `<span style="display:inline-block;background:#B23368;color:#fff;font-size:10px;font-weight:700;letter-spacing:0.03em;padding:1px 6px;border-radius:4px;margin-right:6px;">\u{1F525} TRENDING</span>`
-        : ev.badge === "popular"
-          ? `<span style="display:inline-block;background:#A6791E;color:#fff;font-size:10px;font-weight:700;letter-spacing:0.03em;padding:1px 6px;border-radius:4px;margin-right:6px;">\u2B50 POPULAR</span>`
-          : "";
       const cleanSource = cleanSourceForDisplay(ev.source);
       return `
       <tr>
-        <td style="padding:6px 0;font-family:sans-serif;font-size:14px;color:#2c1f14;">
-          ${badge}<strong>${escapeHtml(ev.title)}</strong> \u2014 ${escapeHtml(ev.display_time)}<br>
-          <span style="color:#8a7a63;font-size:13px;">${escapeHtml(cleanSource)}${cleanSource ? " \u00B7 " : ""}${escapeHtml(ev.city)} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}</span>
+        <td width="34" valign="top" style="padding:9px 0;">${digestIconSvg(ev.category)}</td>
+        <td style="padding:9px 0 9px 10px;font-family:-apple-system,sans-serif;border-bottom:1px solid #F1E7D2;">
+          <div style="font-weight:600;font-size:13.5px;color:#1F2A22;">${escapeHtml(ev.title)}</div>
+          <div style="font-size:11.5px;color:#6B7268;margin-top:2px;">${escapeHtml(cleanSource)}${cleanSource ? " \u00B7 " : ""}${escapeHtml(ev.display_time)}</div>
+          <span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;margin-top:4px;${ev.cost === "free" ? "background:#D4EBC9;color:#3A5C2A;" : "background:#E8DED0;color:#5C4A38;"}">${ev.cost === "free" ? "Free" : "Paid"}</span>
+          ${ev.is_new ? `<span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;margin:4px 0 0 4px;background:#3C5548;color:#fff;">New</span>` : ""}
         </td>
       </tr>`;
     }).join("");
     const overflow = total - shown.length;
     const overflowRow = overflow > 0
-      ? `<tr><td style="padding:6px 0 2px;font-family:sans-serif;font-size:13px;">
-           <a href="${DIGEST_SITE_URL}/?src=newsletter" style="color:#9B5C2A;font-weight:600;text-decoration:none;">+ ${overflow} more event${overflow === 1 ? "" : "s"} on Playroute \u2192</a>
+      ? `<tr><td colspan="2" style="padding:8px 0 2px;font-family:-apple-system,sans-serif;font-size:12.5px;">
+           <a href="${DIGEST_SITE_URL}/?src=newsletter" style="color:#9B5C2A;font-weight:700;text-decoration:none;">+ ${overflow} more event${overflow === 1 ? "" : "s"} on Playroute \u2192</a>
          </td></tr>`
       : "";
     return `
-      <tr><td style="padding:18px 0 4px;font-family:sans-serif;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:#a68a5b;border-bottom:1px solid #eee;">${escapeHtml(label)}</td></tr>
-      ${rows}${overflowRow}`;
+      <p style="margin:18px 24px 8px;padding:0;"><span style="font-size:12px;font-weight:700;color:#1F2A22;background:#D3D8C8;padding:3px 11px;border-radius:20px;font-family:-apple-system,sans-serif;">${escapeHtml(label)}</span></p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 24px;width:calc(100% - 48px);">${rows}${overflowRow}</table>`;
   }).join("");
 
   const bodyContent = days.length
-    ? `<table width="100%" cellpadding="0" cellspacing="0">${dayBlocks}</table>`
-    : `<p style="font-family:sans-serif;color:#8a7a63;">No events loaded for this week yet \u2014 check the app directly.</p>`;
+    ? dayBlocks
+    : `<p style="padding:0 24px;font-family:-apple-system,sans-serif;color:#8a7a63;">No events loaded for this week yet \u2014 check the app directly.</p>`;
 
   return `
-  <div style="max-width:520px;margin:0 auto;font-family:sans-serif;">
-    <h1 style="font-family:serif;font-size:22px;color:#2c1f14;margin-bottom:4px;">This week on Playroute</h1>
-    <p style="color:#8a7a63;font-size:13px;margin-top:0;">A quick look at what's coming up for the kids this week.</p>
-    ${ctaButton}
+  <div style="max-width:600px;margin:0 auto;background:#FBF6EC;font-family:-apple-system,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr><td background="${DIGEST_SITE_URL}/hero-flatirons.jpg" style="background-image:url('${DIGEST_SITE_URL}/hero-flatirons.jpg');background-size:cover;background-position:center 65%;height:150px;" height="150">
+        <table role="presentation" width="100%" height="150" cellpadding="0" cellspacing="0"><tr><td valign="bottom" style="padding:16px 24px;background:linear-gradient(180deg,rgba(31,42,34,0.05) 0%,rgba(31,42,34,0.6) 100%);">
+          <div style="font-family:Georgia,serif;font-size:24px;font-weight:700;color:#ffffff;">Playroute</div>
+        </td></tr></table>
+      </td></tr>
+    </table>
+
+    <div style="padding:20px 24px 4px;">
+      <h1 style="font-family:Georgia,serif;font-size:19px;color:#1F2A22;margin:0 0 6px;">This week on Playroute</h1>
+      <p style="font-size:13px;color:#6B7268;margin:0;line-height:1.5;">A quick look at what's coming up for the kids this week.</p>
+    </div>
+    <div style="padding:0 24px;">${ctaButton("Open Playroute")}</div>
+
+    ${spotlightHtml}
+    <p style="padding:18px 24px 4px;margin:0;font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:#3C5548;font-family:-apple-system,sans-serif;">This week, day by day</p>
     ${bodyContent}
-    ${ctaButton}
-    <p style="font-size:11px;color:#b5a88f;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
+
+    <div style="padding:20px 24px 4px;">${ctaButton("See the full week")}</div>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:18px 24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px dashed #D3D8C8;border-radius:12px;"><tr><td align="center" style="padding:13px;font-family:-apple-system,sans-serif;font-size:12.5px;color:#6B7268;">
+        <span style="font-family:Georgia,serif;font-size:15px;color:#A8623A;font-weight:700;">${eventsDiscovered.toLocaleString()}</span> events discovered through Playroute so far
+      </td></tr></table>
+    </td></tr></table>
+
+    <p style="text-align:center;font-size:11px;color:#b5a88f;font-family:-apple-system,sans-serif;padding-bottom:20px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
   </div>`;
 }
 
-function buildDigestText(byDay) {
+function buildDigestText(byDay, spotlight, eventsDiscovered) {
   const lines = ["This week on Playroute", "", `Open Playroute: ${DIGEST_SITE_URL}/?src=newsletter`, ""];
+
+  if (spotlight.length) {
+    lines.push("DON'T MISS THESE");
+    for (const ev of spotlight) {
+      const badge = ev.badge === "trending" ? "[TRENDING] " : ev.badge === "popular" ? "[POPULAR] " : "";
+      const cleanSource = cleanSourceForDisplay(ev.source);
+      lines.push(`- ${badge}${ev.title} \u2014 ${cleanSource}${cleanSource ? ", " : ""}${ev.city} \u00B7 ${ev.occurrence_label}, ${ev.display_time}`);
+    }
+    lines.push("");
+  }
+
   for (const [label, { shown, total }] of byDay.entries()) {
     lines.push(label.toUpperCase());
     for (const ev of shown) {
-      const badge = ev.badge === "trending" ? "[TRENDING] " : ev.badge === "popular" ? "[POPULAR] " : "";
+      const badge = ev.badge === "trending" ? "[TRENDING] " : ev.badge === "popular" ? "[POPULAR] " : ev.is_new ? "[NEW] " : "";
       const cleanSource = cleanSourceForDisplay(ev.source);
       const location = cleanSource ? `${cleanSource}, ` : "";
       lines.push(`- ${badge}${ev.title} \u2014 ${ev.display_time} \u00B7 ${location}${ev.city} \u00B7 ${ev.cost === "free" ? "Free" : "Paid"}`);
@@ -2185,6 +2320,7 @@ function buildDigestText(byDay) {
     }
     lines.push("");
   }
+  lines.push(`${eventsDiscovered.toLocaleString()} events discovered through Playroute so far`);
   lines.push(`Open Playroute: ${DIGEST_SITE_URL}/?src=newsletter`);
   return lines.join("\n");
 }
@@ -2298,14 +2434,14 @@ async function runWeeklyEngagementDigest(env) {
 }
 
 async function runWeeklyDigest(env, testEmail = null) {
-  const byDay = await getWeekAheadEvents(env);
+  const { byDay, spotlight, eventsDiscovered } = await getWeekAheadEvents(env);
 
   if (testEmail) {
     // Test mode: send to exactly one address, real content, without
     // touching the subscribers table or anyone's real subscription at all.
     const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(testEmail)}`;
-    const html = buildDigestHtml(byDay, unsubscribeUrl);
-    const text = buildDigestText(byDay);
+    const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl);
+    const text = buildDigestText(byDay, spotlight, eventsDiscovered);
     try {
       await sendDigestEmail(env, testEmail, html, text, "[TEST] This week on Playroute \uD83C\uDF33");
       return [{ email: testEmail, status: "sent (test)" }];
@@ -2320,8 +2456,8 @@ async function runWeeklyDigest(env, testEmail = null) {
   const results = [];
   for (const { email } of subs) {
     const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}`;
-    const html = buildDigestHtml(byDay, unsubscribeUrl);
-    const text = buildDigestText(byDay);
+    const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl);
+    const text = buildDigestText(byDay, spotlight, eventsDiscovered);
     try {
       await sendDigestEmail(env, email, html, text);
       results.push({ email, status: "sent" });
@@ -2613,8 +2749,16 @@ export default {
   async scheduled(event, env, ctx) {
     if (event.cron === "0 18 * * 7" || event.cron === "0 19 * * 7") {
       if (isNearNoonMountain(new Date())) {
-        ctx.waitUntil(runWeeklyDigest(env));
-        ctx.waitUntil(runWeeklyEngagementDigest(env));
+        // Sequenced on purpose: runWeeklyDigest reads engagement_digests to
+        // attach trending/popular badges to the newsletter, so the badge
+        // scoring MUST finish writing this week's rows first. These used to
+        // fire as two independent ctx.waitUntil() calls -- which run
+        // concurrently, not in order -- so the newsletter could (and did)
+        // sometimes build against last week's badges, or none at all, if it
+        // happened to finish first. Awaiting the chain forces the order.
+        ctx.waitUntil(
+          runWeeklyEngagementDigest(env).then(() => runWeeklyDigest(env))
+        );
         ctx.waitUntil(runSources(env, { cadence: "weekly" }).then(() => emailPendingReviewIfAny(env)));
       }
       return;
