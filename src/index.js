@@ -2072,6 +2072,18 @@ async function getWeekAheadEvents(env) {
   const { results } = await env.DB.prepare("SELECT * FROM events").all();
   const now = new Date();
   const cutoff = new Date(now.getTime() + DIGEST_MAX_DAYS * 864e5);
+  // Used to build a subject line that actually varies week to week (see
+  // runWeeklyDigest) -- Gmail threads emails by matching subject text, so
+  // a fully static subject like "This week on Playroute" sent every single
+  // week would merge every week's digest into one ever-growing thread,
+  // collapsing all but the latest behind "Show trimmed/quoted content."
+  const startLabel = now.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
+  const endLabel = cutoff.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
+  // Only abbreviate the end date to just a day number when both dates
+  // share a month (e.g. "Aug 3-9") -- across a month boundary, spelling
+  // out both months avoids a confusing "Jul 31-7" with no month on the "7".
+  const sameMonth = startLabel.split(" ")[0] === endLabel.split(" ")[0];
+  const weekLabel = sameMonth ? `${startLabel}\u2013${endLabel.split(" ")[1]}` : `${startLabel}\u2013${endLabel}`;
 
   // Same badge lookup handleEvents() uses for the site — see
   // runWeeklyEngagementDigest(). Subscribers should see the same
@@ -2180,7 +2192,7 @@ async function getWeekAheadEvents(env) {
     `SELECT COUNT(*) AS n FROM link_clicks WHERE category NOT IN ('playground','hike','support')`
   ).first();
 
-  return { byDay, spotlight, eventsDiscovered: statRow?.n || 0 };
+  return { byDay, spotlight, eventsDiscovered: statRow?.n || 0, weekLabel };
 }
 
 // Category icons for the email -- same shapes as the app's blaze icon set
@@ -2450,16 +2462,21 @@ async function runWeeklyEngagementDigest(env) {
 }
 
 async function runWeeklyDigest(env, testEmail = null) {
-  const { byDay, spotlight, eventsDiscovered } = await getWeekAheadEvents(env);
+  const { byDay, spotlight, eventsDiscovered, weekLabel } = await getWeekAheadEvents(env);
+  const subject = `This week on Playroute \uD83C\uDF33 \u2014 ${weekLabel}`;
 
   if (testEmail) {
     // Test mode: send to exactly one address, real content, without
     // touching the subscribers table or anyone's real subscription at all.
+    // Subject includes a time marker (not just the week range) since test
+    // sends commonly get repeated several times within the same hour while
+    // debugging -- without it, Gmail would still thread those together.
+    const timeMarker = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
     const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(testEmail)}`;
     const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl);
     const text = buildDigestText(byDay, spotlight, eventsDiscovered);
     try {
-      await sendDigestEmail(env, testEmail, html, text, "[TEST] This week on Playroute \uD83C\uDF33");
+      await sendDigestEmail(env, testEmail, html, text, `[TEST ${timeMarker}] ${subject}`);
       return [{ email: testEmail, status: "sent (test)" }];
     } catch (err) {
       return [{ email: testEmail, status: "error", error: String(err) }];
@@ -2475,7 +2492,7 @@ async function runWeeklyDigest(env, testEmail = null) {
     const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl);
     const text = buildDigestText(byDay, spotlight, eventsDiscovered);
     try {
-      await sendDigestEmail(env, email, html, text);
+      await sendDigestEmail(env, email, html, text, subject);
       results.push({ email, status: "sent" });
     } catch (err) {
       results.push({ email, status: "error", error: String(err) });
@@ -2503,7 +2520,12 @@ async function emailPendingReviewIfAny(env) {
   ).all();
   if (pending.length === 0 || !env.ADMIN_EMAIL) return { sent: false, count: pending.length };
   const html = buildPendingEventsEmailHtml(pending);
-  await sendDigestEmail(env, env.ADMIN_EMAIL, html, null, "New events to review on Playroute");
+  // Includes the count so the subject varies run to run -- otherwise this
+  // fires every time new events are scraped with an identical subject line,
+  // and Gmail threads same-subject emails together, collapsing everything
+  // but the latest run behind "Show trimmed content." The count is also
+  // just more useful to see at a glance in an inbox list.
+  await sendDigestEmail(env, env.ADMIN_EMAIL, html, null, `${pending.length} new event${pending.length === 1 ? "" : "s"} to review on Playroute`);
   return { sent: true, count: pending.length };
 }
 
