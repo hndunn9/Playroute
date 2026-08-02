@@ -1527,6 +1527,60 @@ async function handlePageView(request, env) {
   return json({ ok: true });
 }
 
+// What people search for and how many results it returned -- the
+// zero-result queries are the real signal here (someone looking for
+// "pottery" or "swim lessons" and finding nothing is a direct content-gap
+// pointer, more actionable than guessing from click data alone). Debounced
+// client-side (see trackSearch() in index.html) so this logs the settled
+// query, not every keystroke.
+async function handleTrackSearch(request, env) {
+  const visitorHash = await hashVisitor(request);
+  const cf = request.cf || {};
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "invalid JSON body" }, 400);
+  }
+  const query = String(body.query || "").trim().slice(0, 200);
+  if (!query) return json({ ok: true, skipped: "empty query" });
+  const resultsCount = Number.isFinite(body.resultsCount) ? body.resultsCount : null;
+  await env.DB.prepare(
+    `INSERT INTO search_queries (query, results_count, visitor_hash, city, country) VALUES (?, ?, ?, ?, ?)`
+  ).bind(query, resultsCount, visitorHash, cf.city || null, cf.country || null).run();
+  return json({ ok: true });
+}
+
+async function handleSearchInsights(env) {
+  const days = 30;
+  // Zero-result queries first -- these are the direct, actionable signal:
+  // someone typed something and Playroute had nothing for it. Grouped by
+  // lowercase query text since the same search from different visitors
+  // should count as one repeated signal, not scattered rows.
+  const zeroResults = await env.DB.prepare(
+    `SELECT query, COUNT(*) AS n, MAX(searched_at) AS last_searched
+     FROM search_queries
+     WHERE results_count = 0 AND searched_at >= datetime('now', ?)
+     GROUP BY LOWER(query)
+     ORDER BY n DESC, last_searched DESC
+     LIMIT 25`
+  ).bind(`-${days} days`).all();
+  const topSearches = await env.DB.prepare(
+    `SELECT query, COUNT(*) AS n, AVG(results_count) AS avg_results
+     FROM search_queries
+     WHERE searched_at >= datetime('now', ?)
+     GROUP BY LOWER(query)
+     ORDER BY n DESC
+     LIMIT 25`
+  ).bind(`-${days} days`).all();
+  const totals = await env.DB.prepare(
+    `SELECT COUNT(*) AS total, COUNT(DISTINCT visitor_hash) AS unique_searchers,
+       SUM(CASE WHEN results_count = 0 THEN 1 ELSE 0 END) AS zero_result_count
+     FROM search_queries WHERE searched_at >= datetime('now', ?)`
+  ).bind(`-${days} days`).first();
+  return json({ days, totals, zeroResults: zeroResults.results, topSearches: topSearches.results });
+}
+
 function pctChange(curr, prev) {
   if (!prev) return curr > 0 ? null : 0; // no prior data to compare against — don't claim a % change out of nowhere
   return Math.round(((curr - prev) / prev) * 1000) / 10; // one decimal place
@@ -2857,6 +2911,8 @@ export default {
         return await handlePhoto(env, decodeURIComponent(url.pathname.slice("/api/photos/".length)));
       }
       if (url.pathname === "/api/track-click" && request.method === "POST") return await handleTrackClick(request, env);
+      if (url.pathname === "/api/track-search" && request.method === "POST") return await handleTrackSearch(request, env);
+      if (url.pathname === "/api/search-insights" && request.method === "GET") return await handleSearchInsights(env);
       if (url.pathname === "/api/pageview" && request.method === "POST") return await handlePageView(request, env);
       if (url.pathname === "/api/stats") return await handleStats(env);
       if (url.pathname === "/api/referrals-trend") {
