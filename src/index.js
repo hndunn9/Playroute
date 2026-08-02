@@ -1230,7 +1230,7 @@ function parseLongmontEventChunk(rawChunk, permalink, eventDate) {
   const title = decodeHtmlEntities(titleMatch[1]).trim();
   if (LONGMONT_ADULT_DENYLIST_RE.test(title)) return null;
 
-  const timeMatch = text.match(/(\d{1,2}(?::\d{2})?\s*[ap]m)\s*-\s*(\d{1,2}(?::\d{2})?\s*[ap]m)/i);
+  const timeMatch = text.match(/(\d{1,2}(?::\d{2})?\s*[ap]m)\s*[-\u2013\u2014]\s*(\d{1,2}(?::\d{2})?\s*[ap]m)/i);
   if (!timeMatch) return null; // no time range -- likely a multi-day banner (e.g. Summer Reading), skip
   const [, startLabel, endLabel] = timeMatch;
 
