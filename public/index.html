@@ -38,19 +38,20 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600&display=swap">
 <style>
 :root {
-  --soil:      #1B3630;
-  --bark:      #3C5548;
-  --clay:      #A8623A;
-  --wheat:     #F0D6B3;
-  --sage:      #6B7C63;
-  --cream:     #FBF6EC;
-  --parchment: #F1E7D2;
-  --fog:       #D3D8C8;
-  --ink:       #1F2A22;
-  --ink-soft:  #5F6C5F;
-  --sky:       #2F5850;
-  --ember:     #B23368;
-  --gold:      #A6791E;
+  /* ── Granite & Glacier ── */
+  --soil:      #1B2B26;
+  --bark:      #3A4F45;
+  --clay:      #5B84A0;
+  --wheat:     #E8DCC3;
+  --sage:      #7A8B76;
+  --cream:     #F4F5F0;
+  --parchment: #ECEEE8;
+  --fog:       #D7DBD3;
+  --ink:       #1E2622;
+  --ink-soft:  #5B6560;
+  --sky:       #46707E;
+  --ember:     #B2555A;
+  --gold:      #A88B3E;
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
@@ -127,7 +128,7 @@ body{
   letter-spacing:0.02em;
   text-shadow:0 1px 4px rgba(0,0,0,0.55);
   display:flex;align-items:center;gap:10px;
-  background:#10201A;
+  background:#14211D;
   padding:7px 16px 7px 13px;
   border-radius:10px;
   border-left:4px solid var(--clay);
@@ -137,8 +138,8 @@ body{
   font-family:'DM Sans',sans-serif;
   font-size:10.5px;font-weight:700;
   text-transform:uppercase;letter-spacing:0.1em;
-  color:#FFF8E6;
-  border:1px solid rgba(255,248,230,0.6);
+  color:#F3F1E8;
+  border:1px solid rgba(243,241,232,0.55);
   border-radius:4px;padding:3px 8px;
 }
 
@@ -262,28 +263,37 @@ main{
 .section-sub{font-size:12px;color:var(--ink-soft);font-family:'DM Sans',sans-serif;}
 
 .day-heading{
-  font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;
-  text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);
   display:flex;align-items:center;gap:8px;margin:22px 0 8px;
   position:sticky;top:0;z-index:5;
   background:var(--cream);padding:10px 0 8px;
 }
-.day-heading::after{content:"";flex:1;height:1px;background:var(--fog);}
+.day-heading .day-label{
+  font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;
+  text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);
+  white-space:nowrap;
+}
+.day-rule{flex:1;height:1px;background:var(--fog);}
+.elev-spark{flex-shrink:0;color:var(--sage);}
+.elev-count{font-family:'DM Sans',sans-serif;font-size:9.5px;color:var(--ink-soft);flex-shrink:0;white-space:nowrap;}
 
 /* ── EVENT CARDS — progressive disclosure ── */
 .event-card{
   background:var(--parchment);border:1px solid var(--fog);
   border-radius:var(--radius-md);margin-bottom:10px;
-  box-shadow:0 2px 8px rgba(44,31,20,0.07);
+  box-shadow:0 2px 8px rgba(20,24,22,0.07);
   position:relative;cursor:pointer;overflow:hidden;
   transition:box-shadow .15s ease;
 }
-.event-card:active{box-shadow:0 1px 3px rgba(44,31,20,0.08);}
+.event-card:active{box-shadow:0 1px 3px rgba(20,24,22,0.08);}
 
 /* Level 1 — scannable summary */
 .card-summary{padding:13px 14px;display:flex;gap:11px;align-items:flex-start;}
-.blaze{width:22px;height:22px;flex-shrink:0;margin-top:2px;}
-.event-main{flex:1;min-width:0;padding-right:26px;}
+.blaze{width:22px;height:22px;flex-shrink:0;margin-top:2px;transition:transform .35s cubic-bezier(.34,1.4,.64,1);}
+.event-card.expanded .blaze{transform:rotate(135deg);}
+.event-main{flex:1;min-width:0;padding-right:20px;}
+/* Quiet static cue that the whole card is tappable — the blaze rotation
+   above is feedback *after* you tap, this is the invitation *to* tap. */
+.expand-hint{position:absolute;top:15px;right:14px;color:var(--ink-soft);opacity:0.45;}
 .event-title{font-weight:600;font-size:14.5px;color:var(--ink);line-height:1.3;}
 .event-meta{font-size:12.5px;color:var(--ink-soft);margin-top:3px;}
 .event-time{
@@ -297,7 +307,7 @@ main{
 }
 .tag.city{background:var(--clay);color:#fff;font-weight:600;}
 .tag.free{background:#D4EBC9;color:#3A5C2A;}
-.tag.paid{background:#E8DED0;color:#5C4A38;}
+.tag.paid{background:#D7DBD3;color:#5B6560;}
 .tag.age{background:#D8E8D8;color:#3A5438;}
 .tag.badge-trending{
   display:inline-flex;align-items:center;gap:3px;
@@ -314,15 +324,6 @@ main{
   background:var(--bark);color:#fff;font-weight:700;
   letter-spacing:0.01em;order:-1;
 }
-
-/* expand chevron */
-.expand-chevron{
-  position:absolute;top:13px;right:12px;
-  width:20px;height:20px;
-  display:flex;align-items:center;justify-content:center;
-  color:var(--ink-soft);transition:transform .2s ease;
-}
-.event-card.expanded .expand-chevron{transform:rotate(180deg);}
 
 /* Level 2 — inline expanded detail */
 .card-detail{
@@ -356,7 +357,7 @@ main{
 .pg-card{
   background:var(--parchment);border:1px solid var(--fog);
   border-radius:var(--radius-md);overflow:hidden;
-  box-shadow:0 2px 8px rgba(44,31,20,0.07);
+  box-shadow:0 2px 8px rgba(20,24,22,0.07);
 }
 .pg-photo{height:88px;display:flex;align-items:center;justify-content:center;position:relative;}
 .pg-photo svg{width:54%;height:54%;}
@@ -379,7 +380,7 @@ main{
 .pg-tips{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;}
 .pg-tip{
   font-size:10px;font-family:'DM Sans',sans-serif;
-  background:rgba(44,31,20,0.07);color:var(--ink-soft);
+  background:rgba(20,24,22,0.07);color:var(--ink-soft);
   padding:2px 6px;border-radius:5px;
 }
 .pg-maps-link{
@@ -393,7 +394,7 @@ main{
 .hike-card{
   background:var(--parchment);border:1px solid var(--fog);
   border-radius:var(--radius-md);padding:13px 14px;margin-bottom:10px;
-  box-shadow:0 2px 8px rgba(44,31,20,0.07);
+  box-shadow:0 2px 8px rgba(20,24,22,0.07);
 }
 .hike-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;}
 .hike-name{font-weight:600;font-size:14px;color:var(--ink);flex:1;min-width:0;}
@@ -413,6 +414,9 @@ main{
   text-align:center;padding:36px 20px;color:var(--ink-soft);font-size:14px;
 }
 .blaze-lg{width:34px;height:34px;margin:0 auto 10px;}
+.empty-illustration{margin:0 auto 12px;}
+.empty-title{font-family:'Playfair Display',serif;font-size:16px;font-weight:600;color:var(--ink);margin-bottom:6px;}
+.empty-sub{font-size:12.5px;color:var(--ink-soft);line-height:1.5;max-width:230px;margin:0 auto;}
 
 /* ── SIGNUP ── */
 .signup{
@@ -420,10 +424,10 @@ main{
   border-radius:var(--radius-md);padding:20px 18px;text-align:center;
 }
 .signup h3{
-  font-family:'Playfair Display',serif;color:#FDF8ED;
+  font-family:'Playfair Display',serif;color:#F7F8F4;
   font-size:17px;margin-bottom:6px;
 }
-.signup p{font-size:13px;color:#C8BA9E;margin:0 0 14px;line-height:1.5;}
+.signup p{font-size:13px;color:#AEBBAF;margin:0 0 14px;line-height:1.5;}
 .signup-form{display:flex;gap:8px;max-width:340px;margin:0 auto;}
 .signup-form input{
   flex:1;padding:11px 12px;border-radius:9px;border:none;
@@ -435,45 +439,9 @@ main{
   font-weight:600;font-size:14px;cursor:pointer;
 }
 .signup-form button:active{transform:scale(0.97);}
-.signup-note{font-size:11px;color:#9FB6A5;margin-top:10px;}
-
-/* ── FRESHNESS NOTE ── */
-.freshness-note{
-  margin-top:20px;padding:10px 14px;
-  background:rgba(92,58,30,0.06);
-  border:1px solid rgba(92,58,30,0.15);
-  border-radius:10px;font-size:11.5px;line-height:1.5;
-  color:var(--ink-soft);text-align:center;
-}
+.signup-note{font-size:11px;color:#A7C0A0;margin-top:10px;}
 
 /* ── RELEASE NOTES ── */
-/* ── RECENTLY PASSED ── */
-.recently-passed-toggle{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:12px 0 8px;cursor:pointer;
-  -webkit-tap-highlight-color:transparent;user-select:none;
-  border-top:1px solid var(--fog);margin-top:8px;
-}
-.rp-label{
-  font-family:'DM Sans',sans-serif;font-size:11px;
-  text-transform:uppercase;letter-spacing:0.07em;color:var(--ink-soft);
-  display:flex;align-items:center;gap:7px;
-}
-.rp-count{
-  background:var(--fog);color:var(--ink-soft);
-  font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:600;
-  padding:1px 7px;border-radius:100px;
-}
-.recently-passed-panel{
-  max-height:800px;overflow:hidden;
-  transition:max-height .3s ease,opacity .2s ease;opacity:1;
-}
-.recently-passed-panel.collapsed{max-height:0;opacity:0;}
-/* Passed event cards — desaturated, visually quieter than upcoming */
-.recently-passed-panel .event-card{
-  opacity:0.65;filter:grayscale(20%);
-}
-.recently-passed-panel .event-card.expanded{opacity:0.85;filter:none;}
 
 .release-notes{
   margin-top:28px;padding-top:14px;border-top:1px solid var(--fog);
@@ -506,7 +474,7 @@ main{
 .link-popover{
   position:fixed;z-index:150;
   background:var(--parchment);border:1px solid var(--fog);
-  border-radius:10px;box-shadow:0 8px 24px rgba(44,31,20,0.18);
+  border-radius:10px;box-shadow:0 8px 24px rgba(20,24,22,0.18);
   padding:10px;width:240px;font-family:'DM Sans',sans-serif;
 }
 .link-popover-label{font-size:11px;color:var(--ink-soft);margin-bottom:6px;line-height:1.4;}
@@ -525,7 +493,7 @@ main{
 
 /* ── LEVEL 3 DRAWER ── */
 .drawer-overlay{
-  position:fixed;inset:0;background:rgba(44,31,20,0.55);
+  position:fixed;inset:0;background:rgba(20,24,22,0.55);
   z-index:100;opacity:0;pointer-events:none;transition:opacity .25s ease;
 }
 .drawer-overlay.open{opacity:1;pointer-events:all;}
@@ -578,10 +546,10 @@ main{
   align-items:center;gap:3px;cursor:pointer;
   text-decoration:none;-webkit-tap-highlight-color:transparent;
 }
-.bottom-nav-item .nav-icon{font-size:20px;color:rgba(245,237,216,0.45);}
+.bottom-nav-item .nav-icon{font-size:20px;color:rgba(244,245,240,0.45);}
 .bottom-nav-item .nav-label{
   font-family:'DM Sans',sans-serif;font-size:8.5px;
-  text-transform:uppercase;letter-spacing:0.05em;color:rgba(245,237,216,0.45);
+  text-transform:uppercase;letter-spacing:0.05em;color:rgba(244,245,240,0.45);
 }
 .bottom-nav-item.active .nav-icon,.bottom-nav-item:hover .nav-icon,
 .bottom-nav-item.active .nav-label,.bottom-nav-item:hover .nav-label{color:var(--wheat);}
@@ -663,17 +631,6 @@ footer{
   </div>
 
 
-  <!-- Recently passed — hidden until toggled, only shown when content exists -->
-  <div id="recentlyPassedWrap" style="display:none;">
-    <div class="recently-passed-toggle" onclick="toggleRecentlyPassed()">
-      <span class="rp-label">Recently passed <span id="recentlyPassedCount" class="rp-count"></span></span>
-      <span class="chevron" id="recentlyPassedChevron">▾</span>
-    </div>
-    <div class="recently-passed-panel collapsed" id="recentlyPassedPanel">
-      <div id="recentlyPassedFeed"></div>
-    </div>
-  </div>
-
   <div class="section-title" id="section-playgrounds">
     <h2>Playgrounds &amp; farms</h2>
     <span class="section-sub">browse anytime</span>
@@ -696,8 +653,6 @@ footer{
     </div>
     <div class="signup-note" id="signupNote"></div>
   </div>
-
-  <div class="freshness-note" id="freshnessNote"></div>
 
   <div class="release-notes">
     <div class="release-notes-toggle" onclick="toggleReleaseNotes()">
@@ -795,16 +750,16 @@ footer{
 const blazes = {
   library: `<path d="M11 4 C8 2.3 4 1.8 2 2.3 L2 17.3 C4 16.8 8 17.3 11 19 C14 17.3 18 16.8 20 17.3 L20 2.3 C18 1.8 14 2.3 11 4 Z" fill="#7A5568"/>`,
   rec:     `<path d="M14.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm2.8 3.1l-2.1-1.8c-.3-.3-.7-.4-1.1-.3l-3.2 1c-.5.2-.8.6-.8 1.1v3.4c0 .6.4 1 1 1s1-.4 1-1V9.8l1.1-.3-1.7 3.3c-.2.4-.1.9.3 1.2l2.5 1.9-.9 4c-.1.5.2 1 .7 1.1.5.1 1-.2 1.1-.7l1-4.5c.1-.4-.1-.8-.4-1.1l-1.8-1.4 1.4-2.7 1 .9c.2.2.5.3.7.3h2.1c.6 0 1-.4 1-1s-.4-1-1-1h-1.7z" fill="#6E8B8A"/>`,
-  museum:  `<polygon points="11,2 20,8 2,8" fill="#C79A4B"/><rect x="3" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="9.5" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="16" y="9" width="2.5" height="9" fill="#C79A4B"/><rect x="2" y="18" width="18" height="2" fill="#C79A4B"/>`,
-  outdoor: `<polygon points="11,2 17,11 13.5,11 18,18 4,18 8.5,11 5,11" fill="#B4805A"/>`,
-  community: `<path d="M11 19 C11 19 2 13 2 7.5 C2 4.5 4.5 2 7.5 2 C9.5 2 11 3.5 11 3.5 C11 3.5 12.5 2 14.5 2 C17.5 2 20 4.5 20 7.5 C20 13 11 19 11 19 Z" fill="#9B8AAE"/>`,
-  farmers_market: `<path d="M11 6 C7 5 4 8 4 12 C4 16 7 19 10 19 C10.5 19 11 18.5 11 18.5 C11 18.5 11.5 19 12 19 C15 19 18 16 18 12 C18 8 15 5 11 6 Z" fill="#B85C4A"/><path d="M11 6 C11 4 12 2.5 13.5 2" stroke="#B85C4A" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
+  museum:  `<polygon points="11,2 20,8 2,8" fill="#9A7645"/><rect x="3" y="9" width="2.5" height="9" fill="#9A7645"/><rect x="9.5" y="9" width="2.5" height="9" fill="#9A7645"/><rect x="16" y="9" width="2.5" height="9" fill="#9A7645"/><rect x="2" y="18" width="18" height="2" fill="#9A7645"/>`,
+  outdoor: `<polygon points="11,2 17,11 13.5,11 18,18 4,18 8.5,11 5,11" fill="#93704F"/>`,
+  community: `<path d="M11 19 C11 19 2 13 2 7.5 C2 4.5 4.5 2 7.5 2 C9.5 2 11 3.5 11 3.5 C11 3.5 12.5 2 14.5 2 C17.5 2 20 4.5 20 7.5 C20 13 11 19 11 19 Z" fill="#85759C"/>`,
+  farmers_market: `<path d="M11 6 C7 5 4 8 4 12 C4 16 7 19 10 19 C10.5 19 11 18.5 11 18.5 C11 18.5 11.5 19 12 19 C15 19 18 16 18 12 C18 8 15 5 11 6 Z" fill="#B2555A"/><path d="M11 6 C11 4 12 2.5 13.5 2" stroke="#B2555A" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
   // -- keyword-matched icons below, first draft: simple shapes only
   // (circles/rects/triangles) since these can't be visually previewed
   // before shipping -- eyeball in-browser and refine as needed.
-  flower: `<circle cx="16" cy="11" r="3" fill="#D9A62E"/><circle cx="13.5" cy="6.7" r="3" fill="#D9A62E"/><circle cx="8.5" cy="6.7" r="3" fill="#D9A62E"/><circle cx="6" cy="11" r="3" fill="#D9A62E"/><circle cx="8.5" cy="15.3" r="3" fill="#D9A62E"/><circle cx="13.5" cy="15.3" r="3" fill="#D9A62E"/><circle cx="11" cy="11" r="2.8" fill="#7A5A1E"/>`,
+  flower: `<circle cx="16" cy="11" r="3" fill="#A3852F"/><circle cx="13.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="8.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="6" cy="11" r="3" fill="#A3852F"/><circle cx="8.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="13.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="11" cy="11" r="2.8" fill="#6B5A38"/>`,
   music: `<ellipse cx="7" cy="17" rx="3" ry="2.3" fill="#8A6A9E"/><rect x="9.6" y="3" width="1.8" height="14" fill="#8A6A9E"/><polygon points="9.6,3 15,5 15,8 9.6,6" fill="#8A6A9E"/>`,
-  splash: `<path d="M11 3 C8 8 4 12.5 4 16 A7 7 0 0 0 18 16 C18 12.5 14 8 11 3 Z" fill="#4A8DA6"/>`,
+  splash: `<path d="M11 3 C8 8 4 12.5 4 16 A7 7 0 0 0 18 16 C18 12.5 14 8 11 3 Z" fill="#5B84A0"/>`,
   sparkleNight: `<polygon points="11,1.5 13.8,8.2 21,10 13.8,11.8 11,18.5 8.2,11.8 1,10 8.2,8.2" fill="#3C4E7A"/>`
 };
 const SMART_ICON_KEYWORDS = {
@@ -822,6 +777,32 @@ function matchEventIcon(ev){
 }
 function blazeSvg(cat){
   return `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes[cat]||blazes.outdoor}</svg>`;
+}
+function emptyStateIllustration(){
+  return `<svg class="empty-illustration" width="64" height="64" viewBox="0 0 88 88" fill="none">
+    <line x1="44" y1="14" x2="44" y2="78" stroke="var(--bark)" stroke-width="3" stroke-linecap="round"/>
+    <path d="M44 22 L70 22 L62 30 L70 38 L44 38 Z" fill="var(--parchment)" stroke="var(--clay)" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M44 40 L20 40 L28 48 L20 56 L44 56 Z" fill="var(--parchment)" stroke="var(--sage)" stroke-width="2" stroke-linejoin="round"/>
+    <line x1="50" y1="27" x2="63" y2="27" stroke="var(--clay)" stroke-width="1.6" stroke-linecap="round" opacity=".5"/>
+    <line x1="26" y1="45" x2="39" y2="45" stroke="var(--sage)" stroke-width="1.6" stroke-linecap="round" opacity=".5"/>
+    <path d="M30 78 Q44 82 58 78" stroke="var(--fog)" stroke-width="3" stroke-linecap="round" fill="none"/>
+  </svg>`;
+}
+function emptyStateHTML(title, sub){
+  return `<div class="empty-state">${emptyStateIllustration()}<div class="empty-title">${title}</div><div class="empty-sub">${sub}</div></div>`;
+}
+function elevationSpark(count){
+  // Deterministic jagged profile whose overall height scales with how many
+  // events land on that day -- not a real elevation reading, just a quick
+  // "how packed is this day" glance before reading any cards.
+  const n = Math.min(count, 10);
+  const pts = [0,1,2,3,4].map(i=>{
+    const x = (i*11.5).toFixed(1);
+    const jitter = (i*37 + count*13) % 6;
+    const y = (15 - (n/10)*11 - jitter*0.5);
+    return `${x},${Math.max(2,Math.min(15,y)).toFixed(1)}`;
+  }).join(" ");
+  return `<svg class="elev-spark" width="46" height="16" viewBox="0 0 46 16"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
 
 const API_BASE = "";
@@ -858,22 +839,8 @@ async function loadData(){
     console.error("Failed to load live data:", err);
     dataLoadFailed = true;
   }
-  renderFreshnessNote();
   renderAll();
   handleEventDeepLink();
-}
-
-function renderFreshnessNote(){
-  const el = document.getElementById("freshnessNote");
-  if(dataLoadFailed){ el.innerHTML = ""; return; }
-  const datedEvents = events.filter(ev => ev.recurrence === "dated" && ev.event_date);
-  if(datedEvents.length === 0){
-    el.innerHTML = `This is a beta — data is hand-curated and may be incomplete. Always confirm details with the source before you go.`;
-    return;
-  }
-  const latest = datedEvents.reduce((max, ev) => ev.event_date > max ? ev.event_date : max, datedEvents[0].event_date);
-  const latestFormatted = new Date(`${latest}T00:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  el.innerHTML = `This is a beta. One-time events are confirmed only through <strong>${latestFormatted}</strong>. Recurring programs are ongoing but worth a quick check before you go.`;
 }
 
 let activeCities = new Set(), activeAges = new Set(), activeCats = new Set();
@@ -1128,13 +1095,16 @@ function renderFeed(){
     // chronological scanning.
 
   let shown=0, lastHeading=null;
+  const dayCounts={};
+  upcoming.forEach(ev=>{ dayCounts[ev.occurrence_label]=(dayCounts[ev.occurrence_label]||0)+1; });
   upcoming.forEach(ev=>{
     const heading = ev.occurrence_label;
     if(heading!==lastHeading){
       const h=document.createElement("div");
       h.className="day-heading";
       h.id="day-"+heading.replace(/[^a-z0-9]/gi,"-");
-      h.textContent=heading;
+      const count=dayCounts[heading];
+      h.innerHTML=`<span class="day-label">${heading}</span><span class="day-rule"></span>${elevationSpark(count)}<span class="elev-count">${count}</span>`;
       feed.appendChild(h);
       lastHeading=heading;
     }
@@ -1158,7 +1128,7 @@ function renderFeed(){
             <span class="tag age">Ages ${formatAgeRange(ev.age_min,ev.age_max)}</span>
           </div>
         </div>
-        <div class="expand-chevron"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg></div>
+        <div class="expand-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
       </div>
       <div class="card-detail">
         <div class="card-detail-inner">
@@ -1176,7 +1146,7 @@ function renderFeed(){
   });
   document.getElementById("resultCount").textContent=`${shown} upcoming`;
   if(shown===0){
-    feed.innerHTML=`<div class="empty-state"><div class="blaze-lg">${blazeSvg("outdoor")}</div>Nothing matches those filters — try widening the date range, age, or category.</div>`;
+    feed.innerHTML=emptyStateHTML("No trail markers this way","Nothing matches those filters — try widening the date range, age, or category.");
   }
 }
 
@@ -1197,12 +1167,12 @@ function renderPlaygrounds(){
   grid.innerHTML="";
   if(dataLoadFailed){ grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1;">Couldn't load playgrounds — check your connection.</div>`; navWrap.innerHTML=""; return; }
   const filtered=playgrounds.filter(pg=>activeCities.size===0||activeCities.has(pg.city)).slice().sort((a,b)=>a.city.localeCompare(b.city));
-  if(filtered.length===0){ grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1;">No playgrounds curated for this city yet.</div>`; navWrap.innerHTML=""; return; }
+  if(filtered.length===0){ grid.innerHTML=`<div style="grid-column:1/-1;">${emptyStateHTML("No trail markers this way","No playgrounds curated for this city yet.")}</div>`; navWrap.innerHTML=""; return; }
   const distinctCities=[...new Set(filtered.map(pg=>pg.city))];
   if(distinctCities.length>1&&filtered.length>4){
     navWrap.innerHTML=`<div class="daynav-wrap" style="border-top:none;"><div class="daynav">${distinctCities.map(c=>`<div class="daynav-pill" onclick="document.getElementById('pg-city-${c}').scrollIntoView({behavior:'smooth',block:'start'})">${c}</div>`).join("")}</div></div>`;
   } else { navWrap.innerHTML=""; }
-  const palette=["#B4805A","#6E8B8A","#C79A4B","#7A5568"];
+  const palette=["#93704F","#6E8B8A","#9A7645","#7A5568"];
   const seenCities=new Set();
   filtered.forEach((pg,i)=>{
     const color=palette[i%palette.length];
@@ -1236,7 +1206,7 @@ function renderHikes(){
   list.innerHTML="";
   if(dataLoadFailed){ list.innerHTML=`<div class="empty-state">Couldn't load hikes — check your connection.</div>`; return; }
   const filtered=hikes.filter(h=>activeCities.size===0||activeCities.has(h.city));
-  if(filtered.length===0){ list.innerHTML=`<div class="empty-state">No hikes curated for this city yet.</div>`; return; }
+  if(filtered.length===0){ list.innerHTML=emptyStateHTML("No trail markers this way","No hikes curated for this city yet."); return; }
   filtered.forEach(h=>{
     const card=document.createElement("div");
     card.className="hike-card";
@@ -1257,93 +1227,17 @@ function handleSignup(){
   const input=document.getElementById("emailInput");
   const note=document.getElementById("signupNote");
   const email=input.value.trim();
-  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ note.textContent="Enter a real-looking email."; note.style.color="#C79A4B"; return; }
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ note.textContent="Enter a real-looking email."; note.style.color="#B2555A"; return; }
   note.textContent="Signing you up...";
-  note.style.color="#8a7a63";
+  note.style.color="#5B6560";
   fetch(`${API_BASE}/api/subscribe`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})})
     .then(r=>{ if(!r.ok) throw new Error(); return r.json(); })
-    .then(()=>{ note.textContent="You're in! One email a week, every Sunday."; note.style.color="#9FB6A5"; input.value=""; })
-    .catch(()=>{ note.textContent="Something went wrong — try again in a bit."; note.style.color="#C79A4B"; });
+    .then(()=>{ note.textContent="You're in! One email a week, every Sunday."; note.style.color="#A7C0A0"; input.value=""; })
+    .catch(()=>{ note.textContent="Something went wrong — try again in a bit."; note.style.color="#B2555A"; });
 }
 
 let filtersOpen=false;
-let recentlyPassedOpen=false;
 
-function toggleRecentlyPassed(){
-  recentlyPassedOpen=!recentlyPassedOpen;
-  document.getElementById("recentlyPassedPanel").classList.toggle("collapsed",!recentlyPassedOpen);
-  document.getElementById("recentlyPassedChevron").classList.toggle("open",recentlyPassedOpen);
-}
-
-function renderRecentlyPassed(){
-  const wrap=document.getElementById("recentlyPassedWrap");
-  const feed=document.getElementById("recentlyPassedFeed");
-  feed.innerHTML="";
-
-  if(dataLoadFailed){ wrap.style.display="none"; return; }
-
-  const now=new Date();
-  const threeDaysAgo=new Date(now.getTime()-3*86400000);
-
-  // One-off dated events that have actually ENDED within the last 3 days
-  // (not just started — an in-progress event shouldn't show as "passed").
-  const recentlyPassed=events
-    .filter(ev=>{
-      if(!passesFilters(ev)) return false;
-      if(ev.recurrence!=="dated"||!ev.event_date) return false;
-      const occ=new Date(`${ev.event_date}T${ev.start_time||"00:00"}:00`);
-      const durationMs=(ev.duration_minutes||60)*60000;
-      const endTime=new Date(occ.getTime()+durationMs);
-      return endTime<now && occ>=threeDaysAgo;
-    })
-    .sort((a,b)=>new Date(b.event_date)-new Date(a.event_date));
-
-  if(recentlyPassed.length===0){ wrap.style.display="none"; return; }
-
-  wrap.style.display="block";
-  document.getElementById("recentlyPassedCount").textContent=recentlyPassed.length;
-
-  recentlyPassed.forEach(ev=>{
-    const label=new Date(`${ev.event_date}T12:00:00Z`).toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric",timeZone:"America/Denver"});
-    const h=document.createElement("div");
-    h.className="day-heading";
-    h.style.opacity="0.6";
-    h.textContent=`${label} · passed`;
-    feed.appendChild(h);
-
-    const card=document.createElement("div");
-    card.className="event-card";
-    card.dataset.eventId=ev.id;
-    card.onclick=function(){ toggleCard(this, ev); };
-    card.innerHTML=`
-      <div class="card-summary">
-        <div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>
-        <div class="event-main">
-          <div class="event-title">${ev.title}</div>
-          <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
-          <div class="tag-row">
-            <span class="tag city">${ev.city}</span>
-            <span class="tag ${ev.cost}">${ev.cost==="free"?"Free":"Paid"}</span>
-            <span class="tag age">Ages ${formatAgeRange(ev.age_min,ev.age_max)}</span>
-          </div>
-        </div>
-        <div class="expand-chevron"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg></div>
-      </div>
-      <div class="card-detail">
-        <div class="card-detail-inner">
-          <div class="card-detail-note">${ev.note||""}</div>
-          <div class="card-detail-actions">
-            <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();">View source ↗</a>
-            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
-            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}')" title="Share" aria-label="Share">${ICONS.share}</a>
-          </div>
-        </div>
-      </div>
-    `;
-    feed.appendChild(card);
-    wireInlineCalendar(ev, card);
-  });
-}
 function scrollToSection(anchorId){
   if(filtersOpen) toggleFilters();
   const target=document.getElementById(anchorId);
@@ -1471,7 +1365,7 @@ function init(){
   renderChips("catFilters",catOptions(),activeCats,(v)=>{toggleFilterValue(activeCats,v);saveFilterPrefs();renderAll();});
   renderChips("costFilters",costOptions(),activeCost,(v)=>{activeCost=v;saveFilterPrefs();renderAll();});
 }
-function renderAll(){ init(); updateActiveCount(); renderFeed(); renderRecentlyPassed(); renderPlaygrounds(); renderHikes(); }
+function renderAll(){ init(); updateActiveCount(); renderFeed(); renderPlaygrounds(); renderHikes(); }
 
 // Tracks distinct calendar days visited (not page loads) to rotate the
 // feedback callout's copy and switch the coffee ask once someone's clearly
