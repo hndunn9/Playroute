@@ -1890,8 +1890,20 @@ async function handleEvents(env, url) {
   const cost = url.searchParams.get("cost");
   const ageBucket = url.searchParams.get("age");
   const includeIrregular = url.searchParams.get("includeIrregular") === "1";
-  const conditions = [];
-  const binds = [];
+  // How far ahead to fetch dated one-off events by default. Without this,
+  // the query returns literally every future dated event no matter how far
+  // out (some are 6+ months away), and that payload only grows as more
+  // events get added -- it had reached ~500KB/522 events with no ceiling in
+  // sight. Weekly/monthly recurring events are unaffected by this (they
+  // have no event_date to filter on, and are inherently "always soon"
+  // since occurrence is computed as next-from-now). A `days` param lets a
+  // future "browse further ahead" UI feature request a wider window
+  // explicitly; the default keeps the common case small.
+  const forwardDays = Math.min(Math.max(parseInt(url.searchParams.get("days")) || 90, 7), 365);
+  const conditions = [
+    `(recurrence != 'dated' OR (event_date >= date('now','-1 day') AND event_date <= date('now', ?)))`
+  ];
+  const binds = [`+${forwardDays} days`];
   if (city) {
     conditions.push("city = ?");
     binds.push(city);
@@ -1904,7 +1916,7 @@ async function handleEvents(env, url) {
     conditions.push("cost = ?");
     binds.push(cost);
   }
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const where = `WHERE ${conditions.join(" AND ")}`;
   const { results } = await env.DB.prepare(
     `SELECT *, (created_at >= datetime('now','-7 days')) AS is_new FROM events ${where}`
   ).bind(...binds).all();
@@ -1941,7 +1953,15 @@ async function handleEvents(env, url) {
     });
   }
   withOccurrence.sort((a, b) => new Date(a.occurrence) - new Date(b.occurrence));
-  return json([...withOccurrence, ...irregular]);
+  // Short cache window (not the shared json() helper's headers, which are
+  // used by many endpoints with different freshness needs) -- lets a quick
+  // repeat refresh (exactly what someone frustrated by a slow load tends to
+  // do) hit the browser's HTTP cache instead of re-downloading the full
+  // payload from scratch every time. 3 minutes balances that against still
+  // picking up admin-approved changes reasonably promptly.
+  return Response.json([...withOccurrence, ...irregular], {
+    headers: { ...CORS_HEADERS, "Cache-Control": "public, max-age=180" }
+  });
 }
 
 async function handlePlaygrounds(env, url) {
