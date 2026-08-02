@@ -629,7 +629,7 @@ async function loadPendingEvents(){
     out.innerHTML = items.map(item => `
       <div class="pending-item" id="pending-${item.id}">
         <div class="pending-title">${escapeHtml(item.title)} &nbsp; ${severityBadge(item)}</div>
-        <div class="pending-meta">${escapeHtml(item.city||'')} ${item.source?'· '+escapeHtml(item.source):''} ${item.display_time?'· '+escapeHtml(item.display_time):''} ${item.event_date?'· '+escapeHtml(item.event_date):''}</div>
+        <div class="pending-meta">${escapeHtml(item.city||'')} ${item.source?'· '+escapeHtml(item.source):''} ${item.day_of_week?'· '+escapeHtml(item.day_of_week):''} ${item.display_time?'· '+escapeHtml(item.display_time):''} ${item.event_date?'· <strong>'+escapeHtml(item.event_date)+'</strong>':'<strong style="color:#7a2a2a;"> · no date</strong>'}</div>
         ${item.note?`<div class="pending-note">${escapeHtml(item.note).slice(0,220)}</div>`:''}
         ${validationReasons(item)}
         ${item.source_url?`<div class="pending-meta"><a href="${item.source_url}" target="_blank" rel="noopener noreferrer">View source ↗</a></div>`:''}
