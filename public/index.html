@@ -998,12 +998,30 @@ function clearSearch(){
   renderFeed();
 }
 
+let lastShownCount = 0;
+let searchTrackTimer = null;
+
 function handleSearchInput(){
   const val = document.getElementById("searchInput").value;
   activeSearch = val.trim().toLowerCase();
   document.getElementById("searchClear").classList.toggle("show", activeSearch.length>0);
   document.getElementById("searchBtn").classList.toggle("active", activeSearch.length>0);
   renderFeed();
+
+  // Debounced -- logs the query 800ms after typing stops, not every
+  // keystroke ("po", "pot", "pott", "pottery" would otherwise be 4 noisy
+  // rows for one search intent). Cancels and restarts on every new
+  // keystroke, so only the settled query ever gets sent.
+  clearTimeout(searchTrackTimer);
+  if(activeSearch.length < 2) return; // too short to be a meaningful query
+  searchTrackTimer = setTimeout(()=>{
+    fetch(`${API_BASE}/api/track-search`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({query:activeSearch, resultsCount:lastShownCount}),
+      keepalive:true
+    }).catch(()=>{});
+  }, 800);
 }
 
 // Easy fuzzy match, on purpose kept simple rather than a real fuzzy-search
@@ -1239,6 +1257,7 @@ function renderFeed(){
     wireInlineCalendar(ev, card);
   });
   document.getElementById("resultCount").textContent=`${shown} upcoming`;
+  lastShownCount = shown;
   if(shown===0){
     feed.innerHTML = activeSearch
       ? emptyStateHTML("No matches", `Nothing found for "${escapeHtml(activeSearchDisplay())}" — try a different word, or clear the search.`)

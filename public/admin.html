@@ -109,6 +109,13 @@
   </div>
 
   <div class="card">
+    <h2>🔎 Search insights</h2>
+    <p>What people actually type into the search box, last 30 days. Zero-result searches are the useful signal — someone looked for something specific and Playroute had nothing to show them, a direct pointer to what to add next.</p>
+    <button onclick="loadSearchInsights()">Load search insights</button>
+    <div id="searchInsightsOutput" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
     <h2>📈 Weekly active users trend</h2>
     <p>A real trend over time, not just this-week-vs-last-week — so you can actually tell if you're growing or shrinking.</p>
     <button class="secondary" onclick="loadWauTrend()">Load trend (last 12 weeks)</button>
@@ -365,6 +372,41 @@ function referralSeriesRow(item){
       <div class="pending-meta"><strong style="color:#9B5C2A;">${item.source_clicks}</strong> driven this week${delta}</div>
     </div>
   `;
+}
+
+async function loadSearchInsights(){
+  const out = document.getElementById('searchInsightsOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/search-insights');
+    const data = await res.json();
+    const t = data.totals || {};
+    const zeroRows = (data.zeroResults||[]).map(r=>`
+      <div class="pending-item">
+        <div class="pending-title">"${escapeHtml(r.query)}"</div>
+        <div class="pending-meta">Searched ${r.n}x · zero results · last ${new Date(r.last_searched).toLocaleDateString()}</div>
+      </div>`).join('');
+    const topRows = (data.topSearches||[]).map(r=>`
+      <div class="pending-item">
+        <div class="pending-title">"${escapeHtml(r.query)}"</div>
+        <div class="pending-meta">Searched ${r.n}x · avg ${Math.round(r.avg_results||0)} results</div>
+      </div>`).join('');
+    out.innerHTML = `
+      <div class="breakdown">
+        <strong>${t.total||0}</strong> searches · <strong>${t.unique_searchers||0}</strong> unique searchers · <strong>${t.zero_result_count||0}</strong> returned nothing (last ${data.days} days)
+      </div>
+      <div class="breakdown" style="margin-top:16px;padding-top:14px;border-top:1px solid #EDE2CA;">
+        <strong>Zero-result searches — biggest content gaps</strong>
+      </div>
+      ${zeroRows || '<div class="pending-empty">None yet — good sign, or not enough search volume to tell.</div>'}
+      <div class="breakdown" style="margin-top:16px;padding-top:14px;border-top:1px solid #EDE2CA;">
+        <strong>Most-searched terms overall</strong>
+      </div>
+      ${topRows || '<div class="pending-empty">No searches logged yet.</div>'}
+    `;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
 }
 
 async function loadReferralsTrend(){
