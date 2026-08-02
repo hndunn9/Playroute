@@ -22,6 +22,14 @@
     }
   ],
 
+  "workflows": [
+    {
+      "name": "event-discovery",
+      "binding": "EVENT_DISCOVERY_WORKFLOW",
+      "class_name": "EventDiscoveryWorkflow"
+    }
+  ],
+
   "triggers": {
     "crons": ["0 9 * * *", "0 18 * * 7", "0 19 * * 7", "0 9 1 * *"]
   }
