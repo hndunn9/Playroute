@@ -188,6 +188,39 @@ body{
 .active-count.show{display:inline-block;}
 .chevron{color:var(--ink-soft);font-size:12px;transition:transform .2s ease;}
 .chevron.open{transform:rotate(180deg);}
+
+/* ── SEARCH ── lives next to the Filters toggle, not inside the panel --
+   deliberately kept out of the filter-chip system so it doesn't read as
+   "one more filter to configure." Just an icon until tapped. */
+.filters-topbar{display:flex;align-items:center;gap:6px;}
+.filters-topbar .filters-toggle{flex:1;}
+.search-btn{
+  width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  color:var(--ink-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  border-radius:100px;transition:background .15s ease,color .15s ease;
+}
+.search-btn.active{background:var(--clay);color:#fff;}
+.search-bar{
+  max-height:0;overflow:hidden;opacity:0;
+  transition:max-height .2s ease,opacity .15s ease,margin .2s ease;
+}
+.search-bar.open{max-height:50px;opacity:1;margin-bottom:10px;}
+.search-input-wrap{position:relative;display:flex;align-items:center;}
+.search-input{
+  width:100%;padding:9px 34px 9px 13px;border-radius:10px;
+  border:1px solid var(--fog);background:#fff;
+  font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);
+  outline:none;box-sizing:border-box;
+}
+.search-input:focus{border-color:var(--clay);}
+.search-clear{
+  position:absolute;right:8px;color:var(--ink-soft);cursor:pointer;
+  display:none;width:20px;height:20px;align-items:center;justify-content:center;
+}
+.search-clear.show{display:flex;}
+.search-no-results{
+  text-align:center;padding:20px 10px;font-size:13px;color:var(--ink-soft);
+}
 .filter-panel{
   max-height:400px;overflow:hidden;
   transition:max-height .25s ease,opacity .2s ease;opacity:1;
@@ -590,9 +623,22 @@ footer{
 
   <!-- Filters -->
   <div class="filters">
-    <div class="filters-toggle" onclick="toggleFilters()">
-      <span class="filters-toggle-label">Filters <span id="activeCount" class="active-count"></span></span>
-      <span class="chevron" id="chevron">▾</span>
+    <div class="filters-topbar">
+      <div class="filters-toggle" onclick="toggleFilters()">
+        <span class="filters-toggle-label">Filters <span id="activeCount" class="active-count"></span></span>
+        <span class="chevron" id="chevron">▾</span>
+      </div>
+      <div class="search-btn" id="searchBtn" onclick="toggleSearch()" aria-label="Search events">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </div>
+    </div>
+    <div class="search-bar" id="searchBar">
+      <div class="search-input-wrap">
+        <input type="text" class="search-input" id="searchInput" placeholder="Search events…" oninput="handleSearchInput()" autocomplete="off">
+        <div class="search-clear" id="searchClear" onclick="clearSearch()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </div>
+      </div>
     </div>
     <div class="filter-panel collapsed" id="filterPanel">
       <div class="filter-label">When</div>
@@ -926,11 +972,59 @@ function ageMatches(ev){
   }
   return false;
 }
+let activeSearch = ""; // deliberately not persisted across visits (unlike city/age/etc prefs) -- a stale forgotten search silently hiding everything would be more confusing than starting fresh each time
+
+function escapeHtml(s){
+  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+function toggleSearch(){
+  const bar = document.getElementById("searchBar");
+  const btn = document.getElementById("searchBtn");
+  const opening = !bar.classList.contains("open");
+  bar.classList.toggle("open", opening);
+  if(opening){
+    document.getElementById("searchInput").focus();
+  } else {
+    clearSearch();
+  }
+}
+
+function clearSearch(){
+  document.getElementById("searchInput").value = "";
+  activeSearch = "";
+  document.getElementById("searchClear").classList.remove("show");
+  document.getElementById("searchBtn").classList.remove("active");
+  renderFeed();
+}
+
+function handleSearchInput(){
+  const val = document.getElementById("searchInput").value;
+  activeSearch = val.trim().toLowerCase();
+  document.getElementById("searchClear").classList.toggle("show", activeSearch.length>0);
+  document.getElementById("searchBtn").classList.toggle("active", activeSearch.length>0);
+  renderFeed();
+}
+
+// Easy fuzzy match, on purpose kept simple rather than a real fuzzy-search
+// library: split the query into words, match if EVERY word shows up
+// somewhere in the combined searchable text. Order-independent and
+// tolerant of partial words ("pott" matches "pottery"), without the
+// unpredictability of character-level subsequence matching on short
+// queries against long strings.
+function matchesSearch(ev){
+  if(!activeSearch) return true;
+  const haystack = `${ev.title||""} ${ev.source||""} ${ev.note||""} ${ev.city||""}`.toLowerCase();
+  const words = activeSearch.split(/\s+/).filter(Boolean);
+  return words.every(w=>haystack.includes(w));
+}
+
 function passesFilters(ev){
   if(activeCities.size>0&&!activeCities.has(ev.city)) return false;
   if(activeCats.size>0&&!activeCats.has(ev.category)) return false;
   if(activeCost==="free"&&ev.cost!=="free") return false;
   if(!ageMatches(ev)) return false;
+  if(!matchesSearch(ev)) return false;
   return true;
 }
 
@@ -1146,8 +1240,14 @@ function renderFeed(){
   });
   document.getElementById("resultCount").textContent=`${shown} upcoming`;
   if(shown===0){
-    feed.innerHTML=emptyStateHTML("No trail markers this way","Nothing matches those filters — try widening the date range, age, or category.");
+    feed.innerHTML = activeSearch
+      ? emptyStateHTML("No matches", `Nothing found for "${escapeHtml(activeSearchDisplay())}" — try a different word, or clear the search.`)
+      : emptyStateHTML("No trail markers this way","Nothing matches those filters — try widening the date range, age, or category.");
   }
+}
+
+function activeSearchDisplay(){
+  return document.getElementById("searchInput").value;
 }
 
 // Shows a water-drop badge on a playground card only when the tags/detail
