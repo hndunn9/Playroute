@@ -1,0 +1,240 @@
+// src/discovery-workflow.js
+//
+// Weekly LLM-driven event discovery. Different in kind from the scrapers in
+// index.js: those know exactly which page to fetch and what shape the data
+// is in. This instead asks Claude (with live web search) to actively go
+// find family activity providers in a given city that AREN'T already in
+// Playroute -- genuine discovery, not re-scraping a known URL.
+//
+// Built as a Cloudflare Workflow rather than folded into the existing
+// scheduled() cron handler because this is qualitatively slower and less
+// predictable than the existing scrapers (a live web-search-backed LLM call
+// vs. a single fetch()), and Workflows give per-step retries and durable
+// state for exactly that kind of task -- if the LLM call fails transiently,
+// the step retries without re-running the whole discovery from scratch.
+//
+// Funnels through the SAME ingestCandidate() every other source uses --
+// same validation, same dedup, same pending_events review queue. Nothing
+// here bypasses human review; the only thing "automated" is finding
+// candidates in the first place.
+//
+// REQUIRES: an ANTHROPIC_API_KEY secret (wrangler secret put ANTHROPIC_API_KEY)
+// and a [[workflows]] binding in wrangler.jsonc (see bottom of this file for
+// the exact config to add). Neither exists yet as of writing this -- see the
+// deploy checklist in the PR/commit message.
+
+import { WorkflowEntrypoint } from "cloudflare:workers";
+import { ingestCandidate } from "./pipeline.js";
+
+const DISCOVERY_MODEL = "claude-sonnet-5"; // confirm current model availability/pricing before relying on this long-term
+const CATEGORIES = ["library", "rec", "museum", "outdoor", "community", "farmers_market"];
+
+// Picks whichever registered city has gone longest without a discovery run
+// (or has never run at all -- NULL last_run_at sorts first). Verified
+// against live data before this was written: correctly returns the
+// never-run city first, then cycles by recency once all have run once.
+async function pickNextCity(env) {
+  const row = await env.DB.prepare(
+    `SELECT id, city FROM scrape_sources
+     WHERE source_key LIKE 'llm_discovery_%' AND enabled = 1
+     ORDER BY (last_run_at IS NOT NULL), last_run_at ASC
+     LIMIT 1`
+  ).first();
+  return row; // { id, city } or null if none registered/enabled
+}
+
+// What Playroute already has for this city, so the prompt can explicitly
+// tell Claude what NOT to rediscover. Keeps this compact (distinct source
+// names only, not full event listings) since it just needs to be enough
+// context to avoid obvious re-finds, not a complete inventory dump.
+async function fetchExistingSources(env, city) {
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT source FROM events WHERE city = ? ORDER BY source`
+  ).bind(city).all();
+  return results.map((r) => r.source).filter(Boolean);
+}
+
+const DISCOVERY_SYSTEM_PROMPT = `You are a research assistant finding family/kids activities for a local events app called Playroute, covering Boulder County and nearby Colorado cities.
+
+Given a city and a list of providers/venues Playroute ALREADY has, use web search to find providers, classes, drop-ins, or recurring programs for kids/families in that city that are NOT already in the existing list. Prioritize things with a real, findable schedule (a specific day/time or a specific date) over vague "check our site" listings.
+
+Do not invent details. If you can't confirm a specific field (age range, cost, exact time), say so explicitly rather than guessing -- the output will go through a human review step before anything is published, so it's far better to flag uncertainty than to fabricate a plausible-sounding number.
+
+When you're done searching, respond with ONLY a JSON code block (\`\`\`json ... \`\`\`) containing an array of candidates. No other text before or after the code block. Each candidate object must have exactly these fields:
+
+{
+  "title": string,
+  "source": string (organization/venue name),
+  "city": string,
+  "category": one of ${JSON.stringify(CATEGORIES)},
+  "cost": "free" or "paid",
+  "age_min": number,
+  "age_max": number,
+  "day_of_week": string (e.g. "Tuesday") or null if not a weekly recurring thing,
+  "start_time": "HH:MM" 24-hour or null if unknown,
+  "display_time": string (human-readable, e.g. "10:00 AM" or "Check listing for time" if genuinely unknown),
+  "recurrence": "weekly" or "dated" or "irregular",
+  "event_date": "YYYY-MM-DD" (required if recurrence is "dated", else null),
+  "note": string (2-3 sentence summary a parent would actually want to read),
+  "source_url": string (the actual page you found this on),
+  "confidence": "high" or "low" (your own honest assessment of how solid this info is)
+}
+
+If you find nothing genuinely new after a reasonable search effort, return an empty array. An empty array is a fine, honest result -- do not pad it with things Playroute already has or with vague non-specific listings just to return something.`;
+
+// The actual Anthropic API call. NOTE: this code is written carefully
+// against documented API patterns (web_search server tool + a final
+// JSON-code-block response) but has NOT been live-tested end-to-end --
+// this sandbox has no ANTHROPIC_API_KEY available to call the real API
+// with. Treat the first few real runs as a trial, not a fire-and-forget --
+// check the pending_events results by hand before trusting the cadence.
+async function discoverEvents(env, city, existingSources) {
+  const userMessage = `City: ${city}, Colorado
+
+Providers Playroute already has for this city (do not rediscover these):
+${existingSources.length ? existingSources.map((s) => `- ${s}`).join("\n") : "(none yet)"}
+
+Find genuinely new family/kids activity providers or events for this city.`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: DISCOVERY_MODEL,
+      max_tokens: 4096,
+      system: DISCOVERY_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userMessage }],
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }]
+    })
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Anthropic API error ${res.status}: ${body.slice(0, 500)}`);
+  }
+  const data = await res.json();
+
+  // Concatenate all text blocks in the final response -- with web search,
+  // the response can interleave text and tool_use/tool_result blocks, but
+  // the final JSON code block should be in one of the text blocks.
+  const textContent = (data.content || [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+
+  const jsonMatch = textContent.match(/```json\s*([\s\S]*?)\s*```/);
+  if (!jsonMatch) {
+    throw new Error(`No JSON code block found in Claude's response. Raw text: ${textContent.slice(0, 500)}`);
+  }
+
+  let candidates;
+  try {
+    candidates = JSON.parse(jsonMatch[1]);
+  } catch (e) {
+    throw new Error(`Failed to parse JSON from Claude's response: ${e.message}. Raw block: ${jsonMatch[1].slice(0, 500)}`);
+  }
+  if (!Array.isArray(candidates)) {
+    throw new Error(`Expected a JSON array, got: ${typeof candidates}`);
+  }
+  return candidates;
+}
+
+export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
+  async run(event, step) {
+    const target = await step.do("pick-city", async () => {
+      const forcedCity = event.payload && event.payload.city;
+      if (forcedCity) {
+        const row = await this.env.DB.prepare(
+          `SELECT id, city FROM scrape_sources WHERE source_key = ?`
+        ).bind(`llm_discovery_${forcedCity.toLowerCase()}`).first();
+        if (!row) throw new Error(`No registered llm_discovery source for city "${forcedCity}"`);
+        return row;
+      }
+      const row = await pickNextCity(this.env);
+      if (!row) throw new Error("No llm_discovery_* sources registered in scrape_sources");
+      return row;
+    });
+
+    const existingSources = await step.do("fetch-existing-inventory", async () => {
+      return await fetchExistingSources(this.env, target.city);
+    });
+
+    const candidates = await step.do(
+      "discover-via-llm",
+      { retries: { limit: 2, delay: "30 seconds", backoff: "exponential" }, timeout: "5 minutes" },
+      async () => {
+        return await discoverEvents(this.env, target.city, existingSources);
+      }
+    );
+
+    const result = await step.do("validate-and-queue", async () => {
+      const sourceRow = { id: target.id, source_key: `llm_discovery_${target.city.toLowerCase()}`, confidence: "review" };
+      let queued = 0, skippedDuplicate = 0, lowConfidence = 0, errors = [];
+      for (const raw of candidates) {
+        try {
+          const ev = { ...raw };
+          delete ev.confidence; // not a real events-table column, just an LLM self-assessment signal
+          if (raw.confidence === "low") lowConfidence++;
+          const res = await ingestCandidate(this.env, sourceRow, ev);
+          if (res.reason === "duplicate-in-events") { skippedDuplicate++; continue; }
+          if (res.queued) queued++;
+        } catch (e) {
+          errors.push({ title: raw.title, error: String(e) });
+        }
+      }
+      await this.env.DB.prepare(
+        `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = ?, last_error = ?, last_found = ? WHERE id = ?`
+      ).bind(
+        errors.length ? "partial_error" : "ok",
+        errors.length ? JSON.stringify(errors).slice(0, 1000) : null,
+        candidates.length,
+        target.id
+      ).run();
+      return { city: target.city, found: candidates.length, queued, skippedDuplicate, lowConfidence, errors };
+    });
+
+    return result;
+  }
+}
+
+// --- Deploy checklist (nothing below this line runs -- it's setup notes) --
+//
+// 1. wrangler secret put ANTHROPIC_API_KEY
+//    (get a real API key from console.anthropic.com -- this is billed
+//    separately from your Claude.ai/Claude Code usage)
+//
+// 2. Add to wrangler.jsonc:
+//    "workflows": [
+//      {
+//        "name": "event-discovery",
+//        "binding": "EVENT_DISCOVERY_WORKFLOW",
+//        "class_name": "EventDiscoveryWorkflow"
+//      }
+//    ]
+//
+// 3. Export EventDiscoveryWorkflow from src/index.js (or keep this as a
+//    separate entry -- Workflows classes need to be reachable from your
+//    main module's exports, check current Workflows docs for the exact
+//    multi-file export pattern since this may have changed since writing).
+//
+// 4. To trigger manually (e.g. an admin panel button):
+//      await env.EVENT_DISCOVERY_WORKFLOW.create();
+//    or forced to a specific city:
+//      await env.EVENT_DISCOVERY_WORKFLOW.create({ params: { city: "Boulder" } });
+//
+// 5. To trigger weekly: add a new cron trigger distinct from the existing
+//    ones (e.g. a different day/time than the Sunday digest crons, so a
+//    slow discovery run can never contend with or delay the newsletter),
+//    and in the scheduled() handler's matching branch:
+//      await env.EVENT_DISCOVERY_WORKFLOW.create();
+//
+// 6. FIRST RUNS: treat as a trial. Check the actual pending_events rows
+//    this produces by hand -- the LLM's search results, JSON formatting
+//    reliability, and the overall signal-to-noise ratio are all unverified
+//    against live traffic (this file was written and tested for D1/dedup
+//    logic only; the live Anthropic call was never actually executed, see
+//    the note on discoverEvents() above).

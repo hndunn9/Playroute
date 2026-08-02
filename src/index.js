@@ -1,4 +1,10 @@
 import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SOURCE_RUNNERS } from "./pipeline.js";
+// Re-exported (not just defined in its own file) because wrangler.jsonc's
+// workflows binding points at class_name "EventDiscoveryWorkflow", and
+// Cloudflare resolves that against whatever this file (the `main` entry
+// point) exports -- a class sitting in discovery-workflow.js alone,
+// without this re-export, would be invisible to the platform.
+export { EventDiscoveryWorkflow } from "./discovery-workflow.js";
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
 const TZ = "America/Denver";
@@ -2889,6 +2895,30 @@ export default {
         const results = await runSources(env, cadence ? { cadence } : {});
         const emailResult = await emailPendingReviewIfAny(env);
         return json({ ranAt: new Date().toISOString(), cadence: cadence || "all", results, emailResult });
+      }
+      // Triggers EventDiscoveryWorkflow (see discovery-workflow.js) --
+      // unlike /api/run-sources above, this returns almost immediately with
+      // just an instance ID. Workflows execute durably in the background,
+      // not within this HTTP request's lifetime -- the actual discovery
+      // (web search + LLM call + queueing) can take a couple of minutes and
+      // happens after this response is already sent. Check results via
+      // pending_events (?source= one of the llm_discovery_* keys) or the
+      // instance status endpoint below, not by waiting on this call.
+      // Optional ?city=Boulder forces a specific city instead of the
+      // automatic least-recently-run pick.
+      if (url.pathname === "/api/run-discovery" && request.method === "POST") {
+        const city = url.searchParams.get("city");
+        const instance = await env.EVENT_DISCOVERY_WORKFLOW.create(
+          city ? { params: { city } } : {}
+        );
+        return json({ startedAt: new Date().toISOString(), instanceId: instance.id, city: city || "(auto-picked)" });
+      }
+      if (url.pathname === "/api/discovery-status" && request.method === "GET") {
+        const instanceId = url.searchParams.get("id");
+        if (!instanceId) return json({ error: "missing ?id=<instanceId>" }, 400);
+        const instance = await env.EVENT_DISCOVERY_WORKFLOW.get(instanceId);
+        const status = await instance.status();
+        return json(status);
       }
       if (url.pathname === "/api/ingest" && request.method === "POST") {
         return await handleIngest(request, env);
