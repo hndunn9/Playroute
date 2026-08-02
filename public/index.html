@@ -1,15 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-V212HC6MVZ"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  
-  gtag('config', 'G-V212HC6MVZ');
-</script>
 <!-- Awin Publisher Account Verification -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1466,10 +1457,14 @@ function saveFilterPrefs(){
 function loadFilterPrefs(){
   try{
     const raw=localStorage.getItem(FILTER_STORAGE_KEY);
-    if(!raw) return;
+    if(!raw) return; // no cached prefs at all -- top-level defaults (activeWhen="week") already apply
     const p=JSON.parse(raw);
     activeCities=new Set(p.cities||[]); activeAges=new Set(p.ages||[]);
-    activeCats=new Set(p.cats||[]); activeCost=p.cost||"all"; activeWhen=p.when||"all";
+    // Falls back to "week" (next 7 days), matching the top-level default,
+    // not "all" -- a returning visitor with missing/malformed cached prefs
+    // should land on the same lightweight default a first-time visitor
+    // gets, not silently the heaviest view.
+    activeCats=new Set(p.cats||[]); activeCost=p.cost||"all"; activeWhen=p.when||"week";
   }catch(e){}
 }
 
