@@ -56,11 +56,17 @@ async function fetchExistingSources(env, city) {
 
 const DISCOVERY_SYSTEM_PROMPT = `You are a research assistant finding family/kids activities for a local events app called Playroute, covering Boulder County and nearby Colorado cities.
 
-Given a city and a list of providers/venues Playroute ALREADY has, use web search to find providers, classes, drop-ins, or recurring programs for kids/families in that city that are NOT already in the existing list. Prioritize things with a real, findable schedule (a specific day/time or a specific date) over vague "check our site" listings.
+Given a city and a list of providers/venues Playroute ALREADY has, use web search to find providers, classes, drop-ins, or recurring programs for kids/families in that city that are NOT already in the existing list.
 
-Do not invent details. If you can't confirm a specific field (age range, cost, exact time), say so explicitly rather than guessing -- the output will go through a human review step before anything is published, so it's far better to flag uncertainty than to fabricate a plausible-sounding number.
+STRICT BAR FOR INCLUSION -- read this carefully, it directly determines what gets returned:
+- Only include something if you found a SPECIFIC page (not a homepage, not a general "programs" listing) that states its actual day/date AND time. If the best you found is "check our site for current schedule" or similar, LEAVE IT OUT rather than including it with a placeholder.
+- Only include something if you are confident it currently, actually exists and runs on the schedule you found -- not something you're inferring a venue "probably" offers based on its general description, and not something whose page might be stale/outdated. If you have any real doubt, leave it out.
+- Do not include anything with an event_date in the past relative to today.
+- It is far better to return FEWER, fully-confirmed candidates than to pad the list with plausible-sounding but unconfirmed ones. An empty array is a completely acceptable, honest result if nothing clears this bar -- do not include something just to have something to show.
 
-When you're done searching, respond with ONLY a JSON code block (\`\`\`json ... \`\`\`) containing an array of candidates. No other text before or after the code block. Each candidate object must have exactly these fields:
+Do not invent details to fill in a field. If you cannot find a specific value with real confidence, leave that candidate out entirely rather than guessing -- there is no partial credit here, an incomplete candidate is worse than no candidate, since a human still has to spend time reviewing and rejecting it.
+
+When you're done searching, respond with ONLY a JSON code block (\`\`\`json ... \`\`\`) containing an array of candidates. No other text before or after the code block. Each candidate object must have exactly these fields, ALL of them populated with real, confirmed values (not null, not "unknown", not a placeholder -- if you can't fill every field with confidence, don't include that candidate at all):
 
 {
   "title": string,
@@ -70,17 +76,17 @@ When you're done searching, respond with ONLY a JSON code block (\`\`\`json ... 
   "cost": "free" or "paid",
   "age_min": number,
   "age_max": number,
-  "day_of_week": string (e.g. "Tuesday") or null if not a weekly recurring thing,
-  "start_time": "HH:MM" 24-hour or null if unknown,
-  "display_time": string (human-readable, e.g. "10:00 AM" or "Check listing for time" if genuinely unknown),
+  "day_of_week": string (e.g. "Tuesday") -- required unless recurrence is "dated", in which case use the actual weekday of event_date,
+  "start_time": "HH:MM" 24-hour -- a REAL time from the source page, never a placeholder,
+  "display_time": string (human-readable, e.g. "10:00 AM"),
   "recurrence": "weekly" or "dated" or "irregular",
-  "event_date": "YYYY-MM-DD" (required if recurrence is "dated", else null),
+  "event_date": "YYYY-MM-DD", required and must be today or later if recurrence is "dated", else null,
   "note": string (2-3 sentence summary a parent would actually want to read),
-  "source_url": string (the actual page you found this on),
-  "confidence": "high" or "low" (your own honest assessment of how solid this info is)
+  "source_url": string (the actual specific page you found the schedule on, not a homepage),
+  "confidence": "high" or "low" -- be honest here. If you'd put "low", strongly consider just leaving the candidate out instead, per the strict bar above.
 }
 
-If you find nothing genuinely new after a reasonable search effort, return an empty array. An empty array is a fine, honest result -- do not pad it with things Playroute already has or with vague non-specific listings just to return something.`;
+Return an empty array if nothing genuinely clears the bar. That is a good, useful result, not a failure.`;
 
 // The actual Anthropic API call. NOTE: this code is written carefully
 // against documented API patterns (web_search server tool + a final
@@ -143,6 +149,52 @@ Find genuinely new family/kids activity providers or events for this city.`;
   return candidates;
 }
 
+// Hard bar a candidate must clear before it's even worth a human looking
+// at it. Real gap found on the first live test run (2026-08-02): every
+// candidate that landed in pending_events was missing day_of_week and/or
+// start_time, one was a date that had already passed, and validateCandidate
+// correctly flagged all of this -- but ingestCandidate still QUEUES
+// error-severity candidates (right behavior for the other scrapers, where
+// a human already vetted the underlying source; wrong here, where the LLM
+// itself is the uncertain part). This filter runs BEFORE ingestCandidate,
+// so genuinely incomplete or unconfirmed candidates never reach the review
+// queue as reject-only clutter in the first place.
+function passesQueueBar(ev) {
+  const reasons = [];
+  if (!ev.title || !ev.source || !ev.city || !ev.category || !ev.cost) {
+    reasons.push("missing a core field (title/source/city/category/cost)");
+  }
+  if (!ev.start_time || !/^\d{1,2}:\d{2}$/.test(ev.start_time)) {
+    reasons.push("no real start_time");
+  }
+  if (!ev.display_time || /check listing|see source|tbd/i.test(ev.display_time)) {
+    reasons.push("display_time is a placeholder, not a real time");
+  }
+  if (ev.recurrence === "dated") {
+    if (!ev.event_date) {
+      reasons.push('recurrence is "dated" but event_date is missing');
+    } else {
+      const d = new Date(`${ev.event_date}T00:00:00`);
+      if (isNaN(d.getTime())) reasons.push("event_date isn't a valid date");
+      else if (d < new Date(new Date().toDateString())) reasons.push("event_date is already in the past");
+    }
+  } else if (!ev.day_of_week) {
+    reasons.push("not dated, but day_of_week is missing");
+  }
+  if (!ev.source_url || !/^https?:\/\//.test(ev.source_url)) {
+    reasons.push("no real source_url");
+  }
+  // The LLM's own confidence self-assessment. Deliberately strict: "low"
+  // is dropped outright rather than queued-with-a-warning, because unlike
+  // the scrapers (where low confidence means "the parsing might be off"),
+  // here it can mean "I'm not fully sure this real-world thing exists" --
+  // a real fabrication risk seen on the first test run.
+  if (ev.confidence !== "high") {
+    reasons.push(`self-reported confidence is "${ev.confidence || "unset"}", not "high"`);
+  }
+  return { passes: reasons.length === 0, reasons };
+}
+
 export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
   async run(event, step) {
     const target = await step.do("pick-city", async () => {
@@ -172,13 +224,27 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
     );
 
     const result = await step.do("validate-and-queue", async () => {
-      const sourceRow = { id: target.id, source_key: `llm_discovery_${target.city.toLowerCase()}`, confidence: "review" };
-      let queued = 0, skippedDuplicate = 0, lowConfidence = 0, errors = [];
+      const sourceRow = {
+        id: target.id,
+        source_key: `llm_discovery_${target.city.toLowerCase()}`,
+        city: target.city,
+        platform: "LLM Discovery",
+        confidence: "review"
+      };
+      let queued = 0, skippedDuplicate = 0, droppedLowBar = 0, errors = [];
+      const dropped = [];
       for (const raw of candidates) {
         try {
           const ev = { ...raw };
           delete ev.confidence; // not a real events-table column, just an LLM self-assessment signal
-          if (raw.confidence === "low") lowConfidence++;
+
+          const bar = passesQueueBar(raw); // check against the ORIGINAL raw candidate, before confidence is stripped
+          if (!bar.passes) {
+            droppedLowBar++;
+            dropped.push({ title: raw.title, reasons: bar.reasons });
+            continue; // never reaches ingestCandidate / pending_events at all
+          }
+
           const res = await ingestCandidate(this.env, sourceRow, ev);
           if (res.reason === "duplicate-in-events") { skippedDuplicate++; continue; }
           if (res.queued) queued++;
@@ -194,7 +260,7 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
         candidates.length,
         target.id
       ).run();
-      return { city: target.city, found: candidates.length, queued, skippedDuplicate, lowConfidence, errors };
+      return { city: target.city, found: candidates.length, queued, skippedDuplicate, droppedLowBar, dropped, errors };
     });
 
     return result;
@@ -232,9 +298,13 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
 //    and in the scheduled() handler's matching branch:
 //      await env.EVENT_DISCOVERY_WORKFLOW.create();
 //
-// 6. FIRST RUNS: treat as a trial. Check the actual pending_events rows
-//    this produces by hand -- the LLM's search results, JSON formatting
-//    reliability, and the overall signal-to-noise ratio are all unverified
-//    against live traffic (this file was written and tested for D1/dedup
-//    logic only; the live Anthropic call was never actually executed, see
-//    the note on discoverEvents() above).
+// 6. UPDATE 2026-08-02: first live test run found real problems -- every
+//    candidate queued was missing day_of_week/start_time, one had a past
+//    event_date, and at least one didn't correspond to anything real. Fixed
+//    with passesQueueBar() (a hard pre-queue gate, checked BEFORE
+//    ingestCandidate -- incomplete/unconfirmed/past candidates never reach
+//    pending_events at all now) and a stricter system prompt pushing the
+//    model to leave things out rather than guess. Verified the new filter
+//    against the exact 4 bad candidates from that real run -- all 4 now
+//    correctly blocked. Still worth watching the next several runs by hand;
+//    this reduces garbage, it doesn't guarantee zero.
