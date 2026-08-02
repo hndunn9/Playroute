@@ -78,6 +78,42 @@
   .pending-actions button{width:auto;flex:1;padding:8px;font-size:12.5px;}
   .pending-actions button.reject{background:#eee;color:#5C4A38;}
   .pending-empty{font-size:12.5px;color:#7A6650;text-align:center;padding:10px 0;}
+
+  /* ── Section grouping ── */
+  .section-label{
+    font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;
+    color:#7A6650;margin:24px 0 10px;padding-top:4px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .section-label:first-of-type{margin-top:0;}
+  .section-label::after{content:"";flex:1;height:1px;background:#C8BA9E;}
+
+  /* ── Summary strip ── always visible, no click required */
+  .summary-strip{
+    background:#2C1F14;color:#EDE2CA;border-radius:10px;
+    padding:12px 14px;margin-bottom:20px;font-size:12.5px;line-height:1.7;
+  }
+  .summary-strip .sum-item{display:flex;justify-content:space-between;align-items:center;}
+  .summary-strip .sum-num{font-weight:700;color:#D4A96A;}
+  .summary-strip .sum-num.alert{color:#E08A6A;}
+  .summary-strip .sum-loading{color:#B5A88F;font-style:italic;}
+
+  /* ── Danger zone ── visually isolated from routine cards */
+  .danger-zone{
+    margin-top:28px;padding-top:18px;border-top:2px dashed #C88;
+  }
+  .danger-zone .card{border-color:#7a2a2a;background:#fdf2f2;}
+  .danger-zone .card h2{color:#7a2a2a;}
+
+  /* ── Collapsible cards (default-collapsed for less-frequent actions) ── */
+  .card.collapsible .card-body{display:none;}
+  .card.collapsible.open .card-body{display:block;}
+  .card-collapse-toggle{
+    display:flex;justify-content:space-between;align-items:center;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .card-collapse-toggle .chev{transition:transform .2s ease;color:#7A6650;font-size:13px;}
+  .card.open .card-collapse-toggle .chev{transform:rotate(180deg);}
 </style>
 </head>
 <body>
@@ -86,6 +122,12 @@
   <div class="subtitle">Private control panel — not linked from the app</div>
 
   <div class="warn">⚠️ This page has no password. Don't share this URL. Bookmark it to your home screen for quick access.</div>
+
+  <div class="summary-strip" id="summaryStrip">
+    <div class="sum-item"><span>Loading summary…</span></div>
+  </div>
+
+  <div class="section-label">Analytics</div>
 
   <div class="card">
     <h2>📊 Live stats</h2>
@@ -122,6 +164,8 @@
     <div id="wauTrendOutput" style="margin-top:12px;"></div>
   </div>
 
+  <div class="section-label">Newsletter</div>
+
   <div class="card">
     <h2>✉️ Send test digest</h2>
     <p>Sends this week's real digest content to one address only. Doesn't touch your subscriber list.</p>
@@ -129,6 +173,8 @@
     <button onclick="sendTestDigest()">Send test digest</button>
     <div class="result" id="digestResult"></div>
   </div>
+
+  <div class="section-label">Content pipeline</div>
 
   <div class="card">
     <h2>🗂️ Sources</h2>
@@ -175,27 +221,42 @@
     <div id="pendingListOutput" style="margin-top:12px;"></div>
   </div>
 
-  <div class="card">
-    <h2>🔎 Check pending against what's already live</h2>
-    <p>Cross-checks every item in the review queue against your real calendar (same title/city/day-or-date/location). Exact matches get a one-tap bulk-reject; same-slot-different-time gets flagged for you to look at rather than auto-resolved either direction.</p>
-    <button class="secondary" onclick="checkPendingDuplicates()">Run check</button>
-    <div id="dupCheckOutput" style="margin-top:12px;"></div>
+  <div class="card collapsible" id="dupCheckCard">
+    <div class="card-collapse-toggle" onclick="toggleCardCollapse('dupCheckCard')">
+      <h2>🔎 Check pending against what's already live</h2>
+      <span class="chev">▾</span>
+    </div>
+    <div class="card-body">
+      <p>Cross-checks every item in the review queue against your real calendar (same title/city/day-or-date/location). Exact matches get a one-tap bulk-reject; same-slot-different-time gets flagged for you to look at rather than auto-resolved either direction.</p>
+      <button class="secondary" onclick="checkPendingDuplicates()">Run check</button>
+      <div id="dupCheckOutput" style="margin-top:12px;"></div>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>📸 Upload playground photo</h2>
-    <p>Uploads straight to R2 and links it to the park in one step.</p>
-    <select id="photoParkSelect"><option value="">Loading playgrounds…</option></select>
-    <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp">
-    <button class="secondary" onclick="uploadPhoto()">Upload photo</button>
-    <div class="result" id="photoResult"></div>
+  <div class="section-label">Media</div>
+
+  <div class="card collapsible" id="photoUploadCard">
+    <div class="card-collapse-toggle" onclick="toggleCardCollapse('photoUploadCard')">
+      <h2>📸 Upload playground photo</h2>
+      <span class="chev">▾</span>
+    </div>
+    <div class="card-body">
+      <p>Uploads straight to R2 and links it to the park in one step.</p>
+      <select id="photoParkSelect"><option value="">Loading playgrounds…</option></select>
+      <input type="file" id="photoFile" accept="image/jpeg,image/png,image/webp">
+      <button class="secondary" onclick="uploadPhoto()">Upload photo</button>
+      <div class="result" id="photoResult"></div>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>⚠️ Send real digest to all subscribers</h2>
-    <p>This actually emails everyone currently subscribed. Use with care.</p>
-    <button style="background:#7a2a2a;" onclick="sendRealDigest()">Send real digest to everyone</button>
-    <div class="result" id="realDigestResult"></div>
+  <div class="danger-zone">
+    <div class="section-label">⚠️ Irreversible</div>
+    <div class="card">
+      <h2>⚠️ Send real digest to all subscribers</h2>
+      <p>This actually emails everyone currently subscribed. Use with care.</p>
+      <button style="background:#7a2a2a;" onclick="sendRealDigest()">Send real digest to everyone</button>
+      <div class="result" id="realDigestResult"></div>
+    </div>
   </div>
 
 <script>
@@ -776,10 +837,39 @@ async function bulkRejectDuplicates(btn){
   }
 }
 
+function toggleCardCollapse(cardId){
+  document.getElementById(cardId).classList.toggle('open');
+}
+
+async function loadSummaryStrip(){
+  const el = document.getElementById('summaryStrip');
+  try{
+    const [pendingRes, sourcesRes] = await Promise.all([
+      fetch('/api/pending-events'),
+      fetch('/api/sources')
+    ]);
+    const pending = await pendingRes.json();
+    const sources = await sourcesRes.json();
+
+    const pendingCount = pending.count || 0;
+    const blockedCount = (pending.pending||[]).filter(p=>p.severity==='error').length;
+    const erroredSources = (Array.isArray(sources)?sources:[])
+      .filter(s=>s.last_run_status==='error'||s.last_run_status==='partial_error');
+
+    el.innerHTML = `
+      <div class="sum-item"><span>📋 Pending review</span><span class="sum-num${pendingCount>0?'':''}">${pendingCount}${blockedCount>0?` <span style="color:#E08A6A;">(${blockedCount} blocked)</span>`:''}</span></div>
+      <div class="sum-item"><span>🗂️ Sources with errors</span><span class="sum-num${erroredSources.length>0?' alert':''}">${erroredSources.length}</span></div>
+    `;
+  }catch(err){
+    el.innerHTML = `<div class="sum-item"><span>Couldn't load summary</span></div>`;
+  }
+}
+
 loadStats();
 loadPendingEvents();
 loadPlaygroundsForPhoto();
 loadSources();
+loadSummaryStrip();
 </script>
 </body>
 </html>
