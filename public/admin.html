@@ -138,6 +138,30 @@
   </div>
 
   <div class="card">
+    <h2>🔍 LLM event discovery (new, untested)</h2>
+    <p>Uses Claude with live web search to find family activity providers NOT already in Playroute, one city at a time. Different from the scrapers above -- this is genuine discovery, not re-scraping a known page. Still funnels into the same review queue below (source shows as "LLM Discovery"). <strong>First runs should be treated as a trial</strong> -- check the actual pending items by hand before trusting this on autopilot.</p>
+    <p style="font-size:12px;color:#7A6650;">Runs in the background (can take a couple minutes -- live search + LLM call). Leave city blank to auto-pick whichever's gone longest without a check.</p>
+    <select id="discoveryCitySelect">
+      <option value="">Auto-pick next city</option>
+      <option value="Boulder">Boulder</option>
+      <option value="Longmont">Longmont</option>
+      <option value="Erie">Erie</option>
+      <option value="Lafayette">Lafayette</option>
+      <option value="Louisville">Louisville</option>
+      <option value="Westminster">Westminster</option>
+      <option value="Superior">Superior</option>
+      <option value="Broomfield">Broomfield</option>
+      <option value="Arvada">Arvada</option>
+    </select>
+    <button class="secondary" onclick="runDiscovery()">Start discovery run</button>
+    <div class="result" id="discoveryResult"></div>
+    <div id="discoveryStatusWrap" style="display:none;margin-top:10px;">
+      <button class="secondary" onclick="checkDiscoveryStatus()">Check status</button>
+      <div class="result" id="discoveryStatusResult"></div>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>📋 Pending events</h2>
     <p>Everything currently sitting in the review queue — approve or reject right here instead of waiting for the email. ⛔ marks items missing required info (blocked from approval until fixed); ⚠️ marks judgment calls that are still approvable.</p>
     <button class="secondary" onclick="loadPendingEvents()">Refresh list</button>
@@ -168,6 +192,44 @@
   </div>
 
 <script>
+async function runDiscovery(){
+  const city = document.getElementById('discoveryCitySelect').value;
+  const path = '/api/run-discovery' + (city ? `?city=${encodeURIComponent(city)}` : '');
+  const el = document.getElementById('discoveryResult');
+  el.className = 'result show loading';
+  el.textContent = 'Starting…';
+  try{
+    const res = await fetch(path, {method:'POST'});
+    const data = await res.json();
+    el.className = 'result show ' + (res.ok ? 'ok' : 'err');
+    el.textContent = JSON.stringify(data, null, 2);
+    if(res.ok && data.instanceId){
+      document.getElementById('discoveryStatusWrap').style.display = 'block';
+      window._lastDiscoveryInstanceId = data.instanceId;
+    }
+  }catch(err){
+    el.className = 'result show err';
+    el.textContent = 'Error: ' + err.message;
+  }
+}
+
+async function checkDiscoveryStatus(){
+  const id = window._lastDiscoveryInstanceId;
+  const el = document.getElementById('discoveryStatusResult');
+  if(!id){ el.textContent = 'No run started yet this session.'; return; }
+  el.className = 'result show loading';
+  el.textContent = 'Checking…';
+  try{
+    const res = await fetch(`/api/discovery-status?id=${encodeURIComponent(id)}`);
+    const data = await res.json();
+    el.className = 'result show ' + (res.ok ? 'ok' : 'err');
+    el.textContent = JSON.stringify(data, null, 2);
+  }catch(err){
+    el.className = 'result show err';
+    el.textContent = 'Error: ' + err.message;
+  }
+}
+
 async function runAllSourcesAndRefresh(){
   await runAction('/api/run-sources', 'sourcesResult');
   // Run all sources now used to leave the sources list (last_run_at /
