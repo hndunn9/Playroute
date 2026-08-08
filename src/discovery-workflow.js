@@ -79,8 +79,8 @@ When you're done searching, respond with ONLY a JSON code block (\`\`\`json ... 
   "day_of_week": string (e.g. "Tuesday") -- required unless recurrence is "dated", in which case use the actual weekday of event_date. Must be exactly ONE day name. If something runs on multiple days per week (e.g. Mon/Wed/Fri), return it as SEPARATE candidates, one per day -- do not combine days into one string like "Monday, Wednesday, Friday",
   "start_time": "HH:MM" 24-hour -- a REAL time from the source page, never a placeholder,
   "display_time": string (human-readable, e.g. "10:00 AM"),
-  "recurrence": "weekly" or "dated" or "irregular",
-  "event_date": "YYYY-MM-DD" -- REQUIRED for every candidate, not just dated ones. For "dated", this is the actual one-time date. For "weekly" or "irregular", this is the NEXT real upcoming occurrence date you can find or calculate (e.g. if it's every Tuesday and today is a Wednesday, give next Tuesday's date). This must always be today or later -- never a date that has already passed. If you cannot pin down a specific next occurrence date with confidence, leave the candidate out entirely rather than guessing one,
+  "recurrence": "weekly" or "dated" -- only these two. Use "dated" for both true one-off events AND anything on a monthly/annual/other non-weekly pattern (e.g. "second Friday of the month", an annual festival) -- give event_date as the next real upcoming occurrence you found. Do NOT use any other value here (e.g. "irregular") -- this app has no way to display anything outside these two, so a candidate with any other recurrence value will never actually show up if approved, no matter how complete the rest of its fields are,
+  "event_date": "YYYY-MM-DD" -- REQUIRED for every candidate. For "dated", this is the actual date (the one-time date, or the next real occurrence if it's a recurring-but-not-weekly pattern). For "weekly", this is the NEXT real upcoming occurrence date you can find or calculate (e.g. if it's every Tuesday and today is a Wednesday, give next Tuesday's date). This must always be today or later -- never a date that has already passed. If you cannot pin down a specific next occurrence date with confidence, leave the candidate out entirely rather than guessing one,
   "note": string (2-3 sentence summary a parent would actually want to read),
   "source_url": string (the actual specific page you found the schedule on, not a homepage),
   "confidence": "high" or "low" -- be honest here. If you'd put "low", strongly consider just leaving the candidate out instead, per the strict bar above.
@@ -174,6 +174,16 @@ function passesQueueBar(ev) {
   const reasons = [];
   if (!ev.title || !ev.source || !ev.city || !ev.category || !ev.cost) {
     reasons.push("missing a core field (title/source/city/category/cost)");
+  }
+  // Backstop for the prompt guidance above -- this app silently excludes
+  // any recurrence value other than "weekly"/"dated" from ever showing an
+  // occurrence at all (confirmed real bug: 3 separate LLM discovery
+  // candidates landed as "irregular" with a perfectly good event_date
+  // attached, and every one of them was unapprovable as a result). If the
+  // model ever ignores the prompt instruction, this catches it here
+  // instead of it reaching pending_events broken again.
+  if (ev.recurrence !== "weekly" && ev.recurrence !== "dated") {
+    reasons.push(`recurrence "${ev.recurrence}" isn't supported by this app (only "weekly" or "dated" ever show up) -- reclassify as "dated" if a specific event_date was found`);
   }
   if (!ev.start_time || !/^\d{1,2}:\d{2}$/.test(ev.start_time)) {
     reasons.push("no real start_time");
@@ -342,3 +352,21 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
 //    occurrence date even on weekly things, and admin.html's pending list
 //    now shows day_of_week alongside event_date so a reviewer sees both
 //    the recurrence pattern and the concrete date to check it against.
+//
+// 8. UPDATE 2026-08-08 (later same day): 3 separate candidates (Lafayette
+//    Art Night Out, Superior Summer Market, Superior Commons concert) all
+//    landed as recurrence="irregular" despite each having a perfectly
+//    good event_date -- and "irregular" is silently excluded from ever
+//    showing an occurrence anywhere in this app, so all 3 were stuck
+//    unapprovable despite being otherwise-complete, real events. The
+//    prompt schema just listed "weekly" or "dated" or "irregular" with no
+//    guidance on when to use which, so the model reached for "irregular"
+//    for anything not strictly weekly (monthly patterns, annual events)
+//    without knowing that classification was a dead end here. Removed
+//    "irregular" from the schema entirely -- "dated" now explicitly covers
+//    one-offs AND next-occurrence-of-a-non-weekly-pattern, which is all
+//    event_date being mandatory already meant in practice. Added a code
+//    backstop too (passesQueueBar rejects anything that isn't "weekly" or
+//    "dated"), so this fails safe even if a future prompt tweak
+//    accidentally reopens the gap. Verified against the exact 3 real
+//    failures -- all 3 now blocked pre-queue instead of landing broken.
