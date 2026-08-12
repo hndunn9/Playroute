@@ -192,14 +192,51 @@ body{
 /* ── SEARCH ── lives next to the Filters toggle, not inside the panel --
    deliberately kept out of the filter-chip system so it doesn't read as
    "one more filter to configure." Just an icon until tapped. */
-.filters-topbar{display:flex;align-items:center;gap:6px;}
+.filters-topbar{display:flex;align-items:center;gap:6px;position:relative;}
 .filters-topbar .filters-toggle{flex:1;}
 .search-btn{
   width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
   color:var(--ink-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;
-  border-radius:100px;transition:background .15s ease,color .15s ease;
+  border-radius:100px;transition:background .15s ease,color .15s ease;position:relative;
 }
 .search-btn.active{background:var(--clay);color:#fff;}
+
+/* ── SEARCH COACHMARK ── shown once ever (see initSearchCoachmark), never
+   again after the first dismissal on any given device. */
+.search-btn.spotlight{color:var(--clay);}
+.search-btn.spotlight::before{
+  content:"";position:absolute;inset:-6px;border-radius:100px;
+  border:2px solid var(--clay);opacity:0;
+  animation:pulse-ring 1.8s ease-out infinite;pointer-events:none;
+}
+@keyframes pulse-ring{
+  0%{transform:scale(0.8);opacity:0.7;}
+  70%{transform:scale(1.6);opacity:0;}
+  100%{opacity:0;}
+}
+.coachmark{
+  position:absolute;top:38px;right:0;z-index:10;
+  background:var(--soil);color:var(--cream);
+  padding:12px 14px;border-radius:12px;
+  width:190px;font-size:12.5px;line-height:1.45;
+  box-shadow:0 6px 20px rgba(0,0,0,0.25);
+  animation:coachmark-in 0.35s ease-out;cursor:pointer;
+}
+.coachmark::before{
+  content:"";position:absolute;top:-6px;right:11px;
+  width:12px;height:12px;background:var(--soil);
+  transform:rotate(45deg);border-radius:2px;
+}
+.coachmark-title{font-weight:700;font-size:13px;margin-bottom:3px;display:flex;align-items:center;gap:5px;}
+.coachmark-close{
+  position:absolute;top:8px;right:9px;color:rgba(244,245,240,0.55);
+  width:16px;height:16px;display:flex;align-items:center;justify-content:center;
+}
+@keyframes coachmark-in{
+  from{opacity:0;transform:translateY(-6px) scale(0.96);}
+  to{opacity:1;transform:translateY(0) scale(1);}
+}
+
 .search-bar{
   max-height:0;overflow:hidden;opacity:0;
   transition:max-height .2s ease,opacity .15s ease,margin .2s ease;
@@ -630,6 +667,11 @@ footer{
       </div>
       <div class="search-btn" id="searchBtn" onclick="toggleSearch()" aria-label="Search events">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <div class="coachmark" id="searchCoachmark" style="display:none;" onclick="dismissSearchCoachmark(event)">
+          <div class="coachmark-close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+          <div class="coachmark-title">✨ New</div>
+          Search for anything — pottery classes, storytime, a venue name, whatever you're after.
+        </div>
       </div>
     </div>
     <div class="search-bar" id="searchBar">
@@ -979,6 +1021,7 @@ function escapeHtml(s){
 }
 
 function toggleSearch(){
+  dismissSearchCoachmark();
   const bar = document.getElementById("searchBar");
   const btn = document.getElementById("searchBtn");
   const opening = !bar.classList.contains("open");
@@ -988,6 +1031,41 @@ function toggleSearch(){
   } else {
     clearSearch();
   }
+}
+
+// ── SEARCH COACHMARK ── one-time highlight pointing at the search icon,
+// never shown again on this device after the first dismissal (tap, tap
+// elsewhere, or auto-timeout all count as "seen"). Delayed ~1.5s after
+// load so it doesn't compete with the initial render for attention.
+const SEARCH_COACHMARK_KEY = "pr_searchCoachmarkSeen";
+let searchCoachmarkTimer = null;
+function initSearchCoachmark(){
+  try{
+    if(localStorage.getItem(SEARCH_COACHMARK_KEY)) return;
+  }catch(e){ return; }
+  setTimeout(()=>{
+    const mark = document.getElementById("searchCoachmark");
+    const btn = document.getElementById("searchBtn");
+    if(!mark || !btn) return;
+    mark.style.display = "block";
+    btn.classList.add("spotlight");
+    document.addEventListener("click", handleOutsideCoachmarkTap, true);
+    searchCoachmarkTimer = setTimeout(dismissSearchCoachmark, 6000);
+  }, 1500);
+}
+function handleOutsideCoachmarkTap(e){
+  const mark = document.getElementById("searchCoachmark");
+  if(mark && !mark.contains(e.target)) dismissSearchCoachmark();
+}
+function dismissSearchCoachmark(e){
+  if(e) e.stopPropagation();
+  const mark = document.getElementById("searchCoachmark");
+  const btn = document.getElementById("searchBtn");
+  if(mark) mark.style.display = "none";
+  if(btn) btn.classList.remove("spotlight");
+  clearTimeout(searchCoachmarkTimer);
+  document.removeEventListener("click", handleOutsideCoachmarkTap, true);
+  try{ localStorage.setItem(SEARCH_COACHMARK_KEY, "true"); }catch(e){}
 }
 
 function clearSearch(){
@@ -1522,6 +1600,7 @@ function updateSupportCallout(){
 updateSupportCallout();
 
 loadFilterPrefs();
+initSearchCoachmark();
 document.getElementById("weekFeed").innerHTML=`<div class="empty-state">Loading this week's events…</div>`;
 loadData();
 const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
