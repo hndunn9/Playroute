@@ -2491,7 +2491,7 @@ async function runWeeklyEngagementDigest(env) {
        SUM(CASE WHEN lc.action_type='source_click' THEN 1 ELSE 0 END),
        COUNT(*), NULL, NULL, NULL
      FROM link_clicks lc
-     LEFT JOIN events e ON e.id = lc.event_id
+     INNER JOIN events e ON e.id = lc.event_id
      WHERE lc.clicked_at >= datetime('now','-7 days')
      GROUP BY lc.event_id, lc.event_title`
   ).run();
@@ -2514,19 +2514,58 @@ async function runWeeklyEngagementDigest(env) {
      WHERE week_start = date('now','-7 days')`
   ).run();
 
+  // Popular badge, two tiers. Tier 1 (core coverage cities): percentile
+  // computed against ONLY that city's own events -- without this,
+  // Boulder/Longmont's much higher raw volume structurally crowded out
+  // every other city (verified against real data: the old global-only
+  // version gave zero 'popular' badges to Westminster, Lyons, Arvada, or
+  // Superior despite real scored activity in each). Tier 2 (everywhere
+  // else): incidental one-off cities fall back to the old global
+  // percentile rather than getting their own slot -- simulated first, and
+  // giving every city its own tier meant a city with one random event
+  // auto-qualified just for being the only thing that happened there that
+  // week, which is noise, not signal. Both tiers require >=3
+  // total_interactions -- 'popular' previously had no absolute floor.
+  const CORE_CITIES = ["Boulder","Longmont","Erie","Lafayette","Louisville","Westminster","Superior","Broomfield","Arvada"];
+  const coreCitiesSql = CORE_CITIES.map((c) => `'${c}'`).join(",");
+  // UPDATE...FROM with preceding CTEs, not nested correlated subqueries --
+  // an earlier version of this used subqueries nested inside an OFFSET
+  // clause (matching the original single-tier code this replaced), and it
+  // was NEVER ACTUALLY TESTED against real D1 before being written. It was
+  // caught here, before shipping: D1's SQLite does not support that depth
+  // of correlation and throws "no such column" on both a SELECT and an
+  // UPDATE using that shape. This CTE + UPDATE...FROM version was verified
+  // working directly against production data before being put here.
   await env.DB.prepare(
-    `UPDATE engagement_digests
+    `WITH city_ranked AS (
+       SELECT id,
+         ROW_NUMBER() OVER (PARTITION BY event_city ORDER BY total_interactions DESC) as city_rnk,
+         COUNT(*) OVER (PARTITION BY event_city) as city_n
+       FROM engagement_digests WHERE week_start = date('now','-7 days')
+     ),
+     global_ranked AS (
+       SELECT id,
+         ROW_NUMBER() OVER (ORDER BY total_interactions DESC) as g_rnk,
+         COUNT(*) OVER () as g_n
+       FROM engagement_digests WHERE week_start = date('now','-7 days')
+     )
+     UPDATE engagement_digests
      SET badge = CASE
        WHEN trend_ratio >= 1.5 AND total_interactions >= 5 THEN 'trending'
-       WHEN total_interactions >= (
-         SELECT total_interactions FROM engagement_digests
-         WHERE week_start = date('now','-7 days')
-         ORDER BY total_interactions DESC
-         LIMIT 1 OFFSET (SELECT CAST(COUNT(*) * 0.12 AS INTEGER) FROM engagement_digests WHERE week_start = date('now','-7 days'))
-       ) THEN 'popular'
+       WHEN event_city IN (${coreCitiesSql})
+         AND total_interactions >= 3
+         AND cr.city_rnk <= CAST(cr.city_n * 0.12 AS INTEGER) + 1
+       THEN 'popular'
+       WHEN event_city NOT IN (${coreCitiesSql})
+         AND total_interactions >= 3
+         AND gr.g_rnk <= CAST(gr.g_n * 0.12 AS INTEGER) + 1
+       THEN 'popular'
        ELSE NULL
      END
-     WHERE week_start = date('now','-7 days')`
+     FROM city_ranked cr, global_ranked gr
+     WHERE engagement_digests.id = cr.id
+       AND engagement_digests.id = gr.id
+       AND engagement_digests.week_start = date('now','-7 days')`
   ).run();
 
   const scored = await env.DB.prepare(`SELECT COUNT(*) n FROM engagement_digests WHERE week_start = date('now','-7 days')`).first();
