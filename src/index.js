@@ -1451,6 +1451,19 @@ function currentWeekSalt() {
   return `${mtNow.getFullYear()}-${String(mtNow.getMonth() + 1).padStart(2, "0")}-${String(mtNow.getDate()).padStart(2, "0")}`;
 }
 
+// Same privacy model as currentWeekSalt, but rotating monthly instead of
+// weekly — needed for MAU. IMPORTANT: this is deliberately a *separate*
+// hash (see visitorHashMonth in hashVisitor below), not a wider window on
+// the weekly one. The weekly salt rotates every Monday, so a naive
+// COUNT(DISTINCT visitor_hash) over a 30-day span would span 4-5 salt
+// rotations and could count the same real visitor multiple times. A
+// dedicated monthly-rotating hash keeps MAU an honest unique count while
+// leaving DAU/WAU untouched.
+function currentMonthSalt() {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  return `${mtNow.getFullYear()}-${String(mtNow.getMonth() + 1).padStart(2, "0")}`;
+}
+
 // Formats a Date as 'YYYY-MM-DD HH:MM:SS' in UTC, matching the string format
 // SQLite's CURRENT_TIMESTAMP produces (page_views.viewed_at's default) — the
 // stats queries below compare against this as plain strings, so the format
@@ -1502,17 +1515,41 @@ function mountainMondayOffsetUTC(weeksAgo) {
   mtNow.setDate(mtNow.getDate() - day + 1 - 7 * weeksAgo);
   return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
 }
+// Start of "this month" (the 1st) in Mountain Time, as the equivalent UTC
+// instant -- the MAU counterpart to mountainMidnightThisWeekUTC.
+function mountainMidnightThisMonthUTC() {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  mtNow.setDate(1);
+  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
+}
+// Start of "last month" (the 1st of the prior calendar month) in Mountain
+// Time -- the comparison window for month-over-month stats, paired with
+// mountainMidnightThisMonthUTC as the window's end.
+function mountainMidnightPrevMonthUTC() {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  mtNow.setMonth(mtNow.getMonth() - 1, 1);
+  return toSqliteUTCString(toMountainDate(mtCalendarDateStr(mtNow), 0, 0));
+}
 
+// Returns both hashes -- visitorHash rotates weekly (existing DAU/WAU
+// behavior, unchanged), visitorHashMonth rotates monthly (new, for MAU).
+// Computed together since they share the same IP+UA input; only the salt
+// differs.
 async function hashVisitor(request) {
   const ip = request.headers.get("CF-Connecting-IP") || "";
   const ua = request.headers.get("User-Agent") || "";
-  const data = new TextEncoder().encode(`${ip}|${ua}|${currentWeekSalt()}`);
-  const buf = await crypto.subtle.digest("SHA-256", data);
-  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+  const toHex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+  const weeklyData = new TextEncoder().encode(`${ip}|${ua}|${currentWeekSalt()}`);
+  const monthlyData = new TextEncoder().encode(`${ip}|${ua}|${currentMonthSalt()}`);
+  const [weekBuf, monthBuf] = await Promise.all([
+    crypto.subtle.digest("SHA-256", weeklyData),
+    crypto.subtle.digest("SHA-256", monthlyData),
+  ]);
+  return { visitorHash: toHex(weekBuf), visitorHashMonth: toHex(monthBuf) };
 }
 
 async function handlePageView(request, env) {
-  const visitorHash = await hashVisitor(request);
+  const { visitorHash, visitorHashMonth } = await hashVisitor(request);
   const cf = request.cf || {};
   const ua = request.headers.get("User-Agent") || "";
   const deviceType = /Mobi|Android/i.test(ua) ? "mobile" : "desktop";
@@ -1522,8 +1559,8 @@ async function handlePageView(request, env) {
     if (body && body.source) source = String(body.source).slice(0, 50);
   } catch { /* no body / not JSON — fine, organic visit */ }
   await env.DB.prepare(
-    `INSERT INTO page_views (visitor_hash, city, country, region, device_type, source) VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(visitorHash, cf.city || null, cf.country || null, cf.regionCode || null, deviceType, source).run();
+    `INSERT INTO page_views (visitor_hash, visitor_hash_month, city, country, region, device_type, source) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(visitorHash, visitorHashMonth, cf.city || null, cf.country || null, cf.regionCode || null, deviceType, source).run();
   return json({ ok: true });
 }
 
@@ -1534,7 +1571,9 @@ async function handlePageView(request, env) {
 // client-side (see trackSearch() in index.html) so this logs the settled
 // query, not every keystroke.
 async function handleTrackSearch(request, env) {
-  const visitorHash = await hashVisitor(request);
+  // Search tracking only ever needed the weekly hash -- monthly isn't
+  // used here, just destructured and left unused.
+  const { visitorHash } = await hashVisitor(request);
   const cf = request.cf || {};
   let body;
   try {
@@ -1697,6 +1736,8 @@ async function handleStats(env) {
   const weekStart = mountainMidnightThisWeekUTC();
   const yesterdayStart = mountainMidnightYesterdayUTC();
   const prevWeekStart = mountainMidnightPrevWeekUTC();
+  const monthStart = mountainMidnightThisMonthUTC();
+  const prevMonthStart = mountainMidnightPrevMonthUTC();
   // Filtering to US only — your product is Colorado-specific, but country-level
   // geo data (from Cloudflare's edge) is reliable enough to use as the main
   // filter; state-level data below is a bonus, finer-grained signal on top.
@@ -1716,6 +1757,16 @@ async function handleStats(env) {
   const wauPrev = await env.DB.prepare(
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US}`
   ).bind(prevWeekStart, weekStart).first();
+  // MAU uses visitor_hash_month, NOT visitor_hash -- the weekly hash rotates
+  // every Monday, so counting DISTINCT visitor_hash across a full calendar
+  // month would span 4-5 salt rotations and overcount real unique visitors.
+  // See currentMonthSalt() for why this needed its own hash column.
+  const mau = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash_month) AS n FROM page_views WHERE viewed_at >= ? ${US}`
+  ).bind(monthStart).first();
+  const mauPrev = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash_month) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US}`
+  ).bind(prevMonthStart, monthStart).first();
   const totalViewsThisWeek = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? ${US}`
   ).bind(weekStart).first();
@@ -1792,6 +1843,7 @@ async function handleStats(env) {
 
   const dauN = dau?.n || 0, dauPrevN = dauPrev?.n || 0;
   const wauN = wau?.n || 0, wauPrevN = wauPrev?.n || 0;
+  const mauN = mau?.n || 0, mauPrevN = mauPrev?.n || 0;
   const views7dN = totalViewsThisWeek?.n || 0, views7dPrevN = totalViewsPrevWeek?.n || 0;
   const clicks7dN = totalClicks7d?.n || 0, clicks7dPrevN = totalClicks7dPrev?.n || 0;
   const newsletter7dN = newsletterVisits7d?.n || 0, newsletter7dPrevN = newsletterVisits7dPrev?.n || 0;
@@ -1808,11 +1860,31 @@ async function handleStats(env) {
   const pageViewsAllTime = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM page_views WHERE country = 'US'`
   ).first();
+  // "All-time" unique visitors, patched to reduce (not eliminate) the same
+  // overcounting problem MAU had to solve. visitor_hash rotates weekly, so
+  // COUNT(DISTINCT visitor_hash) across the app's entire lifetime spans
+  // every weekly rotation since tracking_since -- a single real visitor who
+  // returns across multiple weeks gets counted once per week they showed up.
+  //
+  // Fix: prefer visitor_hash_month (rotates monthly, ~4x fewer rotations
+  // per year than the weekly hash) wherever it's populated, and only fall
+  // back to visitor_hash for rows written before this column existed. That
+  // fallback period is small and fixed (everything before this deploy) and
+  // won't grow, so its contribution to the overcount shrinks over time as a
+  // share of total traffic.
+  //
+  // This is a real improvement, not a full fix -- visitor_hash_month still
+  // rotates, so a visitor active in both July and September is still two
+  // distinct hashes. A fully accurate all-time unique count would need a
+  // non-rotating (or very-long-rotating) identifier, which is a deliberate
+  // trade this app doesn't make -- see currentWeekSalt()'s privacy comment.
+  // If a truly accurate lifetime number ever matters more than the current
+  // privacy model, that's a product decision, not just a query fix.
   const uniqueVisitorsAllTime = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE country = 'US'`
+    `SELECT COUNT(DISTINCT COALESCE(visitor_hash_month, visitor_hash)) AS n FROM page_views WHERE country = 'US'`
   ).first();
   const coloradoVisitorsAllTime = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE country = 'US' AND region = 'CO'`
+    `SELECT COUNT(DISTINCT COALESCE(visitor_hash_month, visitor_hash)) AS n FROM page_views WHERE country = 'US' AND region = 'CO'`
   ).first();
   const linkClicksAllTime = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM link_clicks`
@@ -1832,6 +1904,9 @@ async function handleStats(env) {
   const coloradoAllTimeN = coloradoVisitorsAllTime?.n || 0;
 
   return json({
+    monthly_active_users: mauN,
+    monthly_active_users_prev: mauPrevN,
+    monthly_active_users_change_pct: pctChange(mauN, mauPrevN),
     weekly_active_users: wauN,
     weekly_active_users_prev: wauPrevN,
     weekly_active_users_change_pct: pctChange(wauN, wauPrevN),
