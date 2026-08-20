@@ -2226,13 +2226,23 @@ function cleanSourceForDisplay(source) {
 async function getWeekAheadEvents(env) {
   const { results } = await env.DB.prepare("SELECT * FROM events").all();
   const now = new Date();
-  const cutoff = new Date(now.getTime() + DIGEST_MAX_DAYS * 864e5);
+  // The digest should cover "starting tomorrow," not "starting right now" --
+  // sending Sunday's own remaining events in a Sunday digest is redundant
+  // (anyone who'd see it in their inbox that morning could've already
+  // caught it in the app), and reads oddly next to "This week" framing that
+  // implies what's still ahead. Computed the same DST-aware way as the
+  // other mountainMidnight* helpers in this file (see below) rather than a
+  // naive +24h, which would drift across the spring/fall DST transitions.
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  mtNow.setDate(mtNow.getDate() + 1);
+  const windowStart = toMountainDate(mtCalendarDateStr(mtNow), 0, 0);
+  const cutoff = new Date(windowStart.getTime() + DIGEST_MAX_DAYS * 864e5);
   // Used to build a subject line that actually varies week to week (see
   // runWeeklyDigest) -- Gmail threads emails by matching subject text, so
   // a fully static subject like "This week on Playroute" sent every single
   // week would merge every week's digest into one ever-growing thread,
   // collapsing all but the latest behind "Show trimmed/quoted content."
-  const startLabel = now.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
+  const startLabel = windowStart.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
   const endLabel = cutoff.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
   // Only abbreviate the end date to just a day number when both dates
   // share a month (e.g. "Aug 3-9") -- across a month boundary, spelling
@@ -2255,7 +2265,7 @@ async function getWeekAheadEvents(env) {
   const withOccurrence = [];
   for (const ev of results) {
     if (ev.recurrence === "irregular") continue;
-    const occ = getOccurrence(ev, now);
+    const occ = getOccurrence(ev, windowStart);
     if (!occ || occ > cutoff) continue;
     withOccurrence.push({ ...ev, occurrence: occ, occurrence_label: formatOccurrenceLabel(occ), badge: badgeByEventId.get(ev.id) || null });
   }
@@ -2272,16 +2282,21 @@ async function getWeekAheadEvents(env) {
   // (real engagement data); a one-off dated special (is_special) is the
   // next best signal even before it's accumulated any clicks (a new farm
   // festival won't have engagement history yet, but it's still clearly
-  // more noteworthy than a routine weekly storytime). Routine recurring
-  // events are the baseline. This replaces an earlier free-before-paid
-  // sort that technically prevented an early paid drop-in from always
-  // winning the top slot, but overcorrected into crowding paid events out
-  // of the digest entirely on days with several free options.
+  // more noteworthy than a routine weekly storytime). A small freshness
+  // bonus for recently-added events (is_new) gives brand-new listings a
+  // fighting chance against established badge-holders, rather than always
+  // losing out until they've accumulated a week of clicks. Routine
+  // recurring events are the baseline. This replaces an earlier
+  // free-before-paid sort that technically prevented an early paid drop-in
+  // from always winning the top slot, but overcorrected into crowding paid
+  // events out of the digest entirely on days with several free options.
   function interestScore(ev) {
-    if (ev.badge === "trending") return 3;
-    if (ev.badge === "popular") return 2;
-    if (ev.is_special) return 1;
-    return 0;
+    let score = 0;
+    if (ev.badge === "trending") score = 3;
+    else if (ev.badge === "popular") score = 2;
+    else if (ev.is_special) score = 1;
+    if (ev.is_new) score += 0.5;
+    return score;
   }
 
   const byDayAll = new Map();
@@ -2326,20 +2341,43 @@ async function getWeekAheadEvents(env) {
     byDay.set(label, { shown, total });
   }
 
-  // Spotlight picks for the top-of-email highlight section: the 2 most
+  // Spotlight picks for the top-of-email highlight section: the most
   // genuinely notable events of the week, reusing the same interest score
-  // as day-level selection above (trending > popular > one-off special).
-  // Deliberately NOT limited to weekly-recurring events -- a one-off farm
-  // festival or concert is exactly the kind of thing worth surfacing here,
-  // it just won't have a badge yet if it's brand new.
-  const spotlight = withOccurrence
+  // as day-level selection above (trending > popular > one-off special,
+  // plus a freshness nudge). Deliberately NOT limited to weekly-recurring
+  // events -- a one-off farm festival or concert is exactly the kind of
+  // thing worth surfacing here, it just won't have a badge yet if it's
+  // brand new.
+  //
+  // Diversity-aware on purpose, not just top-3 by raw score: without this,
+  // 3 similar high-scoring events (e.g. three different storytimes that
+  // all happen to be trending) can crowd out a great one-off in a
+  // different category, and the "best picks" section reads as repetitive
+  // week over week. Greedily picks the single best-scored event per
+  // category first, then only reuses a category if there genuinely aren't
+  // 3 distinct categories worth including.
+  const spotlightCandidates = withOccurrence
     .filter((ev) => interestScore(ev) > 0)
     .sort((a, b) => {
       const scoreDiff = interestScore(b) - interestScore(a);
       if (scoreDiff !== 0) return scoreDiff;
       return a.occurrence - b.occurrence;
-    })
-    .slice(0, 2);
+    });
+  const spotlight = [];
+  const usedCategories = new Set();
+  for (const ev of spotlightCandidates) {
+    if (spotlight.length >= 3) break;
+    if (usedCategories.has(ev.category)) continue;
+    spotlight.push(ev);
+    usedCategories.add(ev.category);
+  }
+  if (spotlight.length < 3) {
+    for (const ev of spotlightCandidates) {
+      if (spotlight.length >= 3) break;
+      if (spotlight.includes(ev)) continue;
+      spotlight.push(ev);
+    }
+  }
 
   // Same real number used elsewhere (/api/public-stats, the app footer) --
   // total tracked interactions with event content, not a fabricated figure.
@@ -2472,6 +2510,14 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl) {
       </td></tr></table>
     </td></tr></table>
 
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:0 24px 18px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1E7D2;border-radius:12px;"><tr>
+        <td align="center" style="padding:14px 16px;font-family:-apple-system,sans-serif;font-size:12.5px;color:#6B7268;">
+          <span style="font-size:13px;">\uD83D\uDC55 We love <a href="https://bestdayeverkids.com?sca_ref=11971740.LIQBY7i7kE" style="color:#A8623A;font-weight:700;text-decoration:none;" target="_blank" rel="noopener noreferrer sponsored">Best Day Ever Kids'</a> clothes for adventure-ready kids <span style="color:#a89478;">(affiliate link)</span></span>
+        </td>
+      </tr></table>
+    </td></tr></table>
+
     <p style="text-align:center;font-size:11px;color:#b5a88f;font-family:-apple-system,sans-serif;padding-bottom:20px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
   </div>`;
 }
@@ -2504,6 +2550,9 @@ function buildDigestText(byDay, spotlight, eventsDiscovered) {
     lines.push("");
   }
   lines.push(`${eventsDiscovered.toLocaleString()} events discovered through Playroute so far`);
+  lines.push("");
+  lines.push(`We love Best Day Ever Kids' clothes for adventure-ready kids (affiliate link): https://bestdayeverkids.com?sca_ref=11971740.LIQBY7i7kE`);
+  lines.push("");
   lines.push(`Open Playroute: ${DIGEST_SITE_URL}/?src=newsletter`);
   return lines.join("\n");
 }
