@@ -120,6 +120,16 @@ body{
 }
 .support-btn-primary{background:var(--clay);color:#fff;}
 .support-btn-secondary{background:var(--bark);color:#fff;}
+.affiliate-row{
+  display:flex;align-items:center;gap:12px;text-align:left;
+}
+.affiliate-thumb{
+  flex-shrink:0;display:block;width:72px;height:72px;border-radius:var(--radius-sm);
+  overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.14);
+}
+.affiliate-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+.affiliate-copy{flex:1;min-width:0;}
+.affiliate-copy .support-btn-secondary{width:auto;display:inline-block;padding:9px 16px;}
 .hero-wordmark{
   position:absolute;top:14px;left:14px;
   color:#FFFFFF;
@@ -422,6 +432,27 @@ main{
   text-decoration:none;cursor:pointer;font-size:17px;
 }
 
+/* ── AFFILIATE — day-closer card in feed ── */
+.affiliate-closer-card{
+  display:flex;align-items:center;
+  background:var(--parchment);border:1.5px solid var(--clay);
+  border-radius:var(--radius-md);overflow:hidden;
+  box-shadow:0 2px 8px rgba(20,24,22,0.07);
+  margin-bottom:14px;cursor:pointer;
+}
+.affiliate-closer-photo{width:96px;height:96px;object-fit:cover;flex-shrink:0;display:block;}
+.affiliate-closer-body{padding:10px 12px;flex:1;min-width:0;}
+.affiliate-closer-label{
+  font-size:9.5px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;
+  color:var(--clay);margin-bottom:3px;
+}
+.affiliate-closer-title{font-weight:700;font-size:13.5px;color:var(--ink);margin-bottom:3px;}
+.affiliate-closer-text{font-size:11.5px;color:var(--ink-soft);line-height:1.4;margin-bottom:7px;}
+.affiliate-closer-btn{
+  display:inline-block;background:var(--bark);color:#fff;
+  font-size:11.5px;font-weight:600;padding:6px 13px;border-radius:7px;text-decoration:none;
+}
+
 /* ── PLAYGROUNDS ── */
 .pg-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
 .pg-card{
@@ -712,6 +743,15 @@ footer{
       <div class="support-callout-text" id="coffeeCalloutText">🧡 I built this app — buy my wife, the stay-at-home parent who inspired it, a coffee.</div>
       <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (footer callout)',category:'support',action:'support_click'})">☕ Wife's coffee fund</a>
     </div>
+    <div class="support-row affiliate-row">
+      <a class="affiliate-thumb" href="https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set?sca_ref=11971740.LIQBY7i7kE" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set',{title:'Best Day Ever Kids photo (footer callout)',category:'affiliate',action:'affiliate_click'})">
+        <img src="https://cdn.uppromote.com/storage/uploads/banner/best-day-ever-clothing/22cadda651e758670671c66687464501_Photoroom_20240521_162426.JPG" alt="Best Day Ever Kids" loading="lazy">
+      </a>
+      <div class="affiliate-copy">
+        <div class="support-callout-text" style="margin-bottom:6px;">👕 We love Best Day Ever Kids' clothes for adventure-ready kids (affiliate link).</div>
+        <a class="support-btn-secondary" href="https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set?sca_ref=11971740.LIQBY7i7kE" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set',{title:'Best Day Ever Kids (footer callout)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
+      </div>
+    </div>
     <div class="support-row">
       <div class="support-callout-text" id="feedbackCalloutText">💬 Got a tip, a typo, or a wish-list item? We'd love to hear it.</div>
       <a class="support-btn-primary" href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A">Send feedback</a>
@@ -808,6 +848,8 @@ footer{
       Built by a mom of two in Boulder County who works in tech — married to the person who actually does the work of finding stuff to do with the kids every week. Playroute exists so she can get some of that mental load (and her evenings) back.
       <br><br>
       <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (About drawer)',category:'support',action:'support_click'})">☕ Buy my wife a coffee (she's earned it)</a>
+      <br><br>
+      <a href="https://bestdayeverkids.com?sca_ref=11971740.LIQBY7i7kE" target="_blank" rel="noopener noreferrer sponsored" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://bestdayeverkids.com',{title:'Best Day Ever Kids (About drawer)',category:'affiliate',action:'affiliate_click'})">👕 Best Day Ever Kids (affiliate)</a>
       <br><br>
       <a href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A" style="color:var(--ink-soft);text-decoration:underline;">💬 Send feedback</a>
     </div>
@@ -1258,6 +1300,27 @@ function closeAboutDrawer(){
   document.getElementById('aboutDrawer').classList.remove('open');
 }
 
+/* ── AFFILIATE — day-closer card (see renderFeed) ── */
+function renderAffiliateCloserCard(){
+  const url = "https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set?sca_ref=11971740.LIQBY7i7kE";
+  const card = document.createElement("div");
+  card.className = "affiliate-closer-card";
+  card.onclick = function(){
+    trackClick(url, {title:'Best Day Ever Kids (feed closer card)', category:'affiliate', action:'affiliate_click'});
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+  card.innerHTML = `
+    <img class="affiliate-closer-photo" src="https://cdn.uppromote.com/storage/uploads/banner/best-day-ever-clothing/22cadda651e758670671c66687464501_Photoroom_20240521_162426.JPG" alt="Best Day Ever Kids" loading="lazy">
+    <div class="affiliate-closer-body">
+      <div class="affiliate-closer-label">Affiliate</div>
+      <div class="affiliate-closer-title">Best Day Ever Kids</div>
+      <div class="affiliate-closer-text">Adventure-ready clothes for kids on the go.</div>
+      <a class="affiliate-closer-btn" href="${url}" target="_blank" rel="noopener noreferrer sponsored" onclick="event.stopPropagation();trackClick('${url}',{title:'Best Day Ever Kids (feed closer card btn)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
+    </div>
+  `;
+  return card;
+}
+
 /* ── RENDER FEED ── */
 function renderFeed(){
   const feed = document.getElementById("weekFeed");
@@ -1284,12 +1347,19 @@ function renderFeed(){
     // too, it should be a badge/label, not a reordering that breaks
     // chronological scanning.
 
-  let shown=0, lastHeading=null;
+  let shown=0, lastHeading=null, affiliateInserted=false;
   const dayCounts={};
   upcoming.forEach(ev=>{ dayCounts[ev.occurrence_label]=(dayCounts[ev.occurrence_label]||0)+1; });
   upcoming.forEach(ev=>{
     const heading = ev.occurrence_label;
     if(heading!==lastHeading){
+      // Affiliate day-closer: appears once, after the first day group
+      // finishes and before the next day heading starts. Not repeated
+      // per day -- one quiet placement per feed load, not an ad slot.
+      if(lastHeading!==null && !affiliateInserted){
+        feed.appendChild(renderAffiliateCloserCard());
+        affiliateInserted=true;
+      }
       const h=document.createElement("div");
       h.className="day-heading";
       h.id="day-"+heading.replace(/[^a-z0-9]/gi,"-");
