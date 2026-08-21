@@ -1315,6 +1315,149 @@ async function fetchAndScanLongmontLibrary() {
 
 SOURCE_RUNNERS.longmont_library = async () => fetchAndScanLongmontLibrary();
 
+// --- Anythink Thornton Community Center (Communico v2 XML export feed) --
+// Source: https://api.communico.co/v2/anythinklibraries/events/export.xml
+//   ?locations=Anythink+Thornton+Community+Center
+//
+// Genuinely more reliable than most other scrapers here: this is a real,
+// documented XML export (not scraped HTML), and it already gives weekday,
+// start/end time, and location as clean separate fields -- no chunk-
+// boundary guessing, no regex against raw markup. Verified against real
+// sample output before writing this (a live "Chair Yoga with Bo for
+// Seniors" entry), not just the generic docs example.
+//
+// One real data-quality gotcha found in that same sample: the structured
+// StartTime/EndTime fields for a specific date CAN disagree with what the
+// event's own LongDescription prose says for that date (an 8:00-8:30am
+// entry whose description text said "10-10:30 a.m." for that exact date).
+// Trusting the structured fields as the source of truth here rather than
+// trying to parse prose overrides -- too fragile, and the structured
+// fields are what a human would see first anyway. Flagged with
+// confidence='review' like every other scraper, so this is caught by a
+// human either way, not silently trusted.
+const ANYTHINK_THORNTON_URL = "https://api.communico.co/v2/anythinklibraries/events/export.xml?locations=Anythink+Thornton+Community+Center";
+// Ages tags that mean "not for kids" on their own -- an event tagged
+// ONLY with these (no kid/family tag alongside) gets skipped. Matches the
+// denylist-over-allowlist approach used for other sources with no
+// structured age field; this one DOES have a structured field, so this is
+// simpler and more reliable than most.
+const ANYTHINK_ADULT_ONLY_AGES = new Set(["adults", "seniors"]);
+const ANYTHINK_AGE_RANGES = {
+  babies: [0, 1], toddlers: [1, 3], children: [3, 10], elementary: [5, 11],
+  tweens: [9, 13], teens: [13, 18], families: [0, 18]
+};
+
+function parseAnythinkAges(agesRaw) {
+  const tags = agesRaw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (tags.length === 0) return null; // no age info at all -- can't safely classify, skip
+  const hasKidTag = tags.some((t) => !ANYTHINK_ADULT_ONLY_AGES.has(t));
+  if (!hasKidTag) return null; // adults/seniors only -- not for this app
+  // "families" is a modifier ("appropriate to attend together"), not a
+  // real age constraint -- a real bug caught in testing: "Toddlers,
+  // Families" was collapsing to a blanket 0-18 because Families' own
+  // 0-18 range swamped Toddlers' much more specific 1-3 in a plain
+  // min/max merge. Only fall back to it if nothing more specific exists.
+  const specificTags = tags.filter((t) => t !== "families" && ANYTHINK_AGE_RANGES[t]);
+  const tagsToUse = specificTags.length > 0 ? specificTags : tags;
+  let min = 18, max = 0;
+  for (const t of tagsToUse) {
+    const range = ANYTHINK_AGE_RANGES[t];
+    if (!range) continue;
+    min = Math.min(min, range[0]);
+    max = Math.max(max, range[1]);
+  }
+  if (max === 0) return { age_min: 0, age_max: 18 }; // had a kid-relevant tag but not one we mapped -- default broad
+  return { age_min: min, age_max: max };
+}
+
+// The feed's <Date> field is like "Aug 21" with no year. Infer the year:
+// if that month/day has already passed this year (more than ~2 months
+// ago, to tolerate the feed listing a few recent-past events), assume
+// it's next year -- handles the Dec/Jan rollover without needing the feed
+// to ever say a plain year.
+function resolveAnythinkYear(monthDayStr, now) {
+  const thisYear = now.getFullYear();
+  const guess = new Date(`${monthDayStr} ${thisYear} 12:00:00`);
+  if (isNaN(guess.getTime())) return null;
+  const daysDiff = (guess - now) / 86400000;
+  if (daysDiff < -60) return thisYear + 1;
+  return thisYear;
+}
+
+function to24HourAnythink(label) {
+  const m = label.trim().match(/(\d{1,2}):(\d{2})\s*([ap])m/i);
+  if (!m) return null;
+  let [, h, min, ap] = m;
+  h = +h;
+  if (ap.toLowerCase() === "p" && h !== 12) h += 12;
+  if (ap.toLowerCase() === "a" && h === 12) h = 0;
+  return `${String(h).padStart(2, "0")}:${min}`;
+}
+
+async function fetchAndScanAnythinkThornton() {
+  const res = await fetch(ANYTHINK_THORNTON_URL, {
+    headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
+  });
+  if (!res.ok) throw new Error(`Anythink Thornton feed returned ${res.status}`);
+  const xml = await res.text();
+  const now = new Date();
+
+  const candidates = [];
+  const eventBlockRe = /<event>([\s\S]*?)<\/event>/g;
+  const seen = new Set();
+  let m;
+  while ((m = eventBlockRe.exec(xml)) !== null) {
+    const block = m[1];
+    const field = (tag) => {
+      const fm = block.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`));
+      return fm ? decodeHtmlEntities(fm[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/, "$1")).trim() : "";
+    };
+
+    const agesRaw = field("Ages");
+    const ages = parseAnythinkAges(agesRaw);
+    if (!ages) continue; // adults/seniors-only or unparseable -- skip, not for this app
+
+    const title = field("Title");
+    if (!title) continue;
+    const monthDay = field("Date"); // e.g. "Aug 21"
+    const weekday = field("Weekday");
+    const startLabel = field("StartTime");
+    const endLabel = field("EndTime");
+    const location = field("Location");
+    const shortDesc = field("ShortDescription");
+    const startTime = to24HourAnythink(startLabel);
+    if (!startTime || !monthDay || !weekday) continue; // can't build a usable event without these
+
+    const year = resolveAnythinkYear(monthDay, now);
+    if (!year) continue;
+    const eventDate = new Date(`${monthDay} ${year} 12:00:00`).toISOString().slice(0, 10);
+
+    const dedupSig = `${title}|${eventDate}|${startTime}|${location}`;
+    if (seen.has(dedupSig)) continue;
+    seen.add(dedupSig);
+
+    candidates.push({
+      title,
+      source: /^anythink/i.test(location) ? location : `Anythink ${location || "Thornton Community Center"}`,
+      city: "Thornton",
+      category: "library",
+      cost: "free",
+      age_min: ages.age_min,
+      age_max: ages.age_max,
+      day_of_week: weekday,
+      start_time: startTime,
+      display_time: endLabel ? `${startLabel} - ${endLabel}` : startLabel,
+      recurrence: "dated",
+      event_date: eventDate,
+      note: shortDesc ? shortDesc.slice(0, 350) : null,
+      source_url: "https://events.anythinklibraries.org/events?l=Anythink+Thornton+Community+Center"
+    });
+  }
+  return candidates;
+}
+
+SOURCE_RUNNERS.anythink_thornton = async () => fetchAndScanAnythinkThornton();
+
 // --- My Nature Lab (Louisville) Story Time scraper (pending-review only) ---
 // Source: https://www.mynaturelab.org/story-time -- a Wix site. Confirmed
 // server-rendered (a plain fetch returns the actual dated listings, not an
@@ -1953,8 +2096,8 @@ async function upsertEvent(env, ev) {
     `INSERT INTO events
       (title, source, city, category, cost, age_min, age_max, day_of_week,
        start_time, display_time, recurrence, event_date, note, source_url,
-       verified, libcal_event_id, season_start, season_end, last_scraped_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       verified, libcal_event_id, season_start, season_end, source_id, last_scraped_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(libcal_event_id) WHERE libcal_event_id IS NOT NULL DO UPDATE SET
        title=excluded.title,
        source=excluded.source,
@@ -1971,6 +2114,7 @@ async function upsertEvent(env, ev) {
        verified=excluded.verified,
        season_start=excluded.season_start,
        season_end=excluded.season_end,
+       source_id=excluded.source_id,
        last_scraped_at=CURRENT_TIMESTAMP
      ON CONFLICT(title, city, source, day_of_week, start_time, COALESCE(event_date,'')) DO UPDATE SET
        category=excluded.category,
@@ -1984,6 +2128,7 @@ async function upsertEvent(env, ev) {
        libcal_event_id=excluded.libcal_event_id,
        season_start=excluded.season_start,
        season_end=excluded.season_end,
+       source_id=excluded.source_id,
        last_scraped_at=CURRENT_TIMESTAMP`
   ).bind(
     ev.title,
@@ -2003,7 +2148,8 @@ async function upsertEvent(env, ev) {
     ev.verified,
     ev.libcal_event_id,
     ev.season_start ?? null,
-    ev.season_end ?? null
+    ev.season_end ?? null,
+    ev.source_id ?? null
   ).run();
 }
 
@@ -2592,6 +2738,140 @@ async function sendDigestEmail(env, toEmail, html, text, subject = "This week on
 // below). handleEvents() reads the latest week's badges and attaches them
 // to the /api/events response for the frontend to render.
 // ---------------------------------------------------------------------
+// Checks already-PUBLISHED events against their source, looking for
+// cancellations or time changes -- different from every other function in
+// this file, which only looks for NEW candidates. Reuses pending_events
+// (via the change_type/existing_event_id columns) rather than a separate
+// admin dialog: same approve/reject tokens, same weekly review email, same
+// one-tap UI. Only works for events with a source_id (added 2026-08-21) --
+// events approved before that column existed have no link back to verify
+// against, so this only covers sources built after that point (starting
+// with Anythink Thornton) until/unless older approved events get backfilled
+// with a source_id some other way.
+async function queueChangeCandidate(env, ev) {
+  await env.DB.prepare(
+    `INSERT INTO pending_events
+      (title, source, city, category, cost, age_min, age_max, day_of_week,
+       event_date, start_time, display_time, recurrence, note, source_url,
+       raw_excerpt, dedup_key, approval_token, severity, validation_notes,
+       source_id, change_type, existing_event_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'review', '[]', ?, ?, ?)
+     ON CONFLICT(dedup_key) DO NOTHING`
+  ).bind(
+    ev.title, ev.source, ev.city, ev.category, ev.cost, ev.age_min, ev.age_max,
+    ev.day_of_week, ev.event_date, ev.start_time, ev.display_time, ev.recurrence,
+    ev.note, ev.source_url, ev.note, ev.dedup_key, crypto.randomUUID(),
+    ev.source_id, ev.change_type, ev.existing_event_id
+  ).run();
+}
+
+async function runSourceVerification(env) {
+  const { results: sources } = await env.DB.prepare(
+    `SELECT * FROM scrape_sources WHERE mode = 'auto' AND enabled = 1`
+  ).all();
+
+  let totalFlagged = 0;
+  const errors = [];
+
+  for (const source of sources) {
+    const runner = SOURCE_RUNNERS[source.source_key];
+    if (!runner) continue;
+
+    // Only bother re-fetching a source's feed if anything is actually
+    // linked to it -- most auto sources feed the review queue directly and
+    // nothing gets approved from them with a source_id carried through
+    // until a human approves it, so this naturally stays cheap.
+    const { results: linkedEvents } = await env.DB.prepare(
+      `SELECT * FROM events WHERE source_id = ? AND ((recurrence = 'dated' AND event_date >= date('now')) OR recurrence = 'weekly')`
+    ).bind(source.id).all();
+    if (linkedEvents.length === 0) continue;
+
+    let freshCandidates;
+    try {
+      freshCandidates = await runner();
+    } catch (err) {
+      // A fetch failure must NOT be treated as "everything got cancelled"
+      // -- that would turn a temporary site outage into dozens of false
+      // cancellation flags. Skip verifying this source for this run and
+      // move on; the next weekly run tries again.
+      errors.push({ source: source.source_key, error: String(err) });
+      continue;
+    }
+
+    for (const existing of linkedEvents) {
+      const match = freshCandidates.find((c) =>
+        c.title === existing.title &&
+        (existing.recurrence === "dated" ? c.event_date === existing.event_date : c.day_of_week === existing.day_of_week)
+      );
+
+      if (!match) {
+        // Skip if there's already an unresolved flag for this exact event
+        // -- don't clutter the queue with a second copy of the same
+        // question while the first is still sitting there. Once resolved
+        // (approved or rejected either way), this check no longer blocks
+        // it, so a later run can flag it again if the condition recurs.
+        const alreadyFlagged = await env.DB.prepare(
+          `SELECT 1 FROM pending_events WHERE existing_event_id = ? AND change_type = 'cancelled' AND status = 'pending'`
+        ).bind(existing.id).first();
+        if (alreadyFlagged) continue;
+        await queueChangeCandidate(env, {
+          change_type: "cancelled",
+          existing_event_id: existing.id,
+          title: `\u26A0\uFE0F Possibly cancelled: ${existing.title}`,
+          source: existing.source, city: existing.city, category: existing.category,
+          cost: existing.cost, age_min: existing.age_min, age_max: existing.age_max,
+          day_of_week: existing.day_of_week, event_date: existing.event_date,
+          start_time: existing.start_time, display_time: existing.display_time,
+          recurrence: existing.recurrence,
+          note: `No longer appears in ${source.platform}'s current listing as of this week's check. Could be a real cancellation, or the source just changed how it's listed -- confirm before approving (approving removes it from Playroute).`,
+          source_url: existing.source_url,
+          // Includes today's date, not just the event id -- a dedup_key
+          // with no time component would permanently block ever flagging
+          // this same event again once this row is resolved (rejected as
+          // a false alarm, or approved), even if it genuinely gets
+          // cancelled for real weeks later. The "already flagged" check
+          // above is what prevents duplicate clutter while unresolved;
+          // this is what prevents a stale key from blocking it forever.
+          dedup_key: `verify-cancelled:${existing.id}:${mtCalendarDateStr(new Date())}`,
+          source_id: source.id
+        });
+        totalFlagged++;
+        continue;
+      }
+
+      const timeChanged = match.start_time !== existing.start_time ||
+        (existing.recurrence === "weekly" && match.day_of_week !== existing.day_of_week) ||
+        (existing.recurrence === "dated" && match.event_date !== existing.event_date);
+      if (timeChanged) {
+        const alreadyFlagged = await env.DB.prepare(
+          `SELECT 1 FROM pending_events WHERE existing_event_id = ? AND change_type = 'time_changed' AND status = 'pending'`
+        ).bind(existing.id).first();
+        if (alreadyFlagged) continue;
+        await queueChangeCandidate(env, {
+          change_type: "time_changed",
+          existing_event_id: existing.id,
+          title: `\u26A0\uFE0F Time changed: ${existing.title}`,
+          source: existing.source, city: existing.city, category: existing.category,
+          cost: existing.cost, age_min: existing.age_min, age_max: existing.age_max,
+          day_of_week: match.day_of_week, event_date: match.event_date,
+          start_time: match.start_time, display_time: match.display_time,
+          recurrence: existing.recurrence,
+          note: `Currently on Playroute as ${existing.display_time}${existing.day_of_week ? " " + existing.day_of_week : ""}. The source now shows ${match.display_time}${match.day_of_week ? " " + match.day_of_week : ""} instead. Approving updates the live event to this new time.`,
+          source_url: existing.source_url,
+          dedup_key: `verify-timechange:${existing.id}:${match.start_time}:${match.day_of_week || match.event_date}:${mtCalendarDateStr(new Date())}`,
+          source_id: source.id
+        });
+        totalFlagged++;
+      }
+    }
+  }
+
+  await env.DB.prepare(`INSERT INTO job_runs (job_name, status, details) VALUES (?, 'success', ?)`)
+    .bind("source_verification", JSON.stringify({ sourcesChecked: sources.length, totalFlagged, errors })).run();
+
+  return { sourcesChecked: sources.length, totalFlagged, errors };
+}
+
 async function runWeeklyEngagementDigest(env) {
   // INSERT OR REPLACE relies on idx_engagement_digest_unique (event_id,
   // event_title, week_start) -- without it, re-running this job for a week
@@ -2805,6 +3085,31 @@ async function handleApprovePending(env, url) {
   const row = await env.DB.prepare(`SELECT * FROM pending_events WHERE approval_token = ? AND status = 'pending'`).bind(token).first();
   if (!row) return new Response("This item was already handled or doesn't exist.", { status: 404, headers: { "Content-Type": "text/plain" } });
 
+  // Cancellation / time-change flags take a completely different path than
+  // a normal new-event candidate: approving one doesn't INSERT a new row,
+  // it acts on the existing live event this flag is about. Reuses the same
+  // pending_events queue/approve/reject flow rather than a separate admin
+  // dialog on purpose -- same tokens, same one-tap approve/reject, same
+  // weekly pending-review email, nothing new to learn.
+  if (row.change_type === "cancelled") {
+    if (!row.existing_event_id) {
+      return new Response("This cancellation flag is missing its target event id -- can't act on it safely. Reject it instead.", { status: 422, headers: { "Content-Type": "text/plain" } });
+    }
+    await env.DB.prepare(`DELETE FROM events WHERE id = ?`).bind(row.existing_event_id).run();
+    await env.DB.prepare(`UPDATE pending_events SET status = 'approved', decided_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
+    return new Response(`Removed "${row.title.replace(/^\u26A0\uFE0F Possibly cancelled: /, "")}" from Playroute.`, { headers: { "Content-Type": "text/plain" } });
+  }
+  if (row.change_type === "time_changed") {
+    if (!row.existing_event_id) {
+      return new Response("This time-change flag is missing its target event id -- can't act on it safely. Reject it instead.", { status: 422, headers: { "Content-Type": "text/plain" } });
+    }
+    await env.DB.prepare(
+      `UPDATE events SET start_time = ?, day_of_week = ?, event_date = ?, display_time = ?, last_scraped_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).bind(row.start_time, row.day_of_week, row.event_date, row.display_time, row.existing_event_id).run();
+    await env.DB.prepare(`UPDATE pending_events SET status = 'approved', decided_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
+    return new Response(`Updated "${row.title.replace(/^\u26A0\uFE0F Time changed: /, "")}" to its new time on Playroute.`, { headers: { "Content-Type": "text/plain" } });
+  }
+
   // Re-validate server-side rather than trusting whatever severity was
   // stamped when this was first queued — a stale/tampered token shouldn't
   // be able to skip this check. This is also where the old code used to
@@ -2845,7 +3150,8 @@ async function handleApprovePending(env, url) {
       note: row.note,
       source_url: row.source_url,
       verified: 0,
-      libcal_event_id: row.dedup_key
+      libcal_event_id: row.dedup_key,
+      source_id: row.source_id ?? null
     });
   } catch (err) {
     // Belt-and-suspenders: upsertEvent's two chained ON CONFLICT clauses
@@ -2885,9 +3191,11 @@ async function handlePendingEventsList(env) {
   const { results } = await env.DB.prepare(
     `SELECT id, title, source, city, category, cost, age_min, age_max, day_of_week,
             event_date, start_time, display_time, note, source_url, dedup_key,
-            approval_token, discovered_at, severity, validation_notes
+            approval_token, discovered_at, severity, validation_notes,
+            change_type, existing_event_id
      FROM pending_events WHERE status = 'pending'
-     ORDER BY CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, discovered_at DESC`
+     ORDER BY CASE WHEN change_type IS NOT NULL THEN 0 ELSE 1 END,
+              CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, discovered_at DESC`
   ).all();
   return json({ count: results.length, pending: results });
 }
@@ -3040,7 +3348,11 @@ export default {
         ctx.waitUntil(
           runWeeklyEngagementDigest(env).then(() => runWeeklyDigest(env))
         );
-        ctx.waitUntil(runSources(env, { cadence: "weekly" }).then(() => emailPendingReviewIfAny(env)));
+        ctx.waitUntil(
+          runSources(env, { cadence: "weekly" })
+            .then(() => runSourceVerification(env))
+            .then(() => emailPendingReviewIfAny(env))
+        );
       }
       return;
     }
