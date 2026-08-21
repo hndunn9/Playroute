@@ -627,15 +627,15 @@ async function loadPendingEvents(){
       return;
     }
     out.innerHTML = items.map(item => `
-      <div class="pending-item" id="pending-${item.id}">
-        <div class="pending-title">${escapeHtml(item.title)} &nbsp; ${severityBadge(item)}</div>
+      <div class="pending-item" id="pending-${item.id}" ${item.change_type?`style="border-left:3px solid #B2555A;padding-left:11px;"`:''}>
+        <div class="pending-title">${item.change_type?'<span style="color:#B2555A;">⚠ '+(item.change_type==='cancelled'?'POSSIBLE CANCELLATION':'TIME CHANGED')+'</span> — ':''}${escapeHtml(item.title)} &nbsp; ${severityBadge(item)}</div>
         <div class="pending-meta">${escapeHtml(item.city||'')} ${item.source?'· '+escapeHtml(item.source):''} ${item.day_of_week?'· '+escapeHtml(item.day_of_week):''} ${item.display_time?'· '+escapeHtml(item.display_time):''} ${item.event_date?'· <strong>'+escapeHtml(item.event_date)+'</strong>':'<strong style="color:#7a2a2a;"> · no date</strong>'}</div>
         ${item.note?`<div class="pending-note">${escapeHtml(item.note).slice(0,220)}</div>`:''}
         ${validationReasons(item)}
         ${item.source_url?`<div class="pending-meta"><a href="${item.source_url}" target="_blank" rel="noopener noreferrer">View source ↗</a></div>`:''}
         <div class="pending-actions">
-          <button onclick="decidePending('${item.approval_token}', 'approve', ${item.id})" ${item.severity==='error'?'disabled title="Blocked — missing required info, see above"':''}>Approve</button>
-          <button class="reject" onclick="decidePending('${item.approval_token}', 'reject', ${item.id})">Reject</button>
+          <button onclick="decidePending('${item.approval_token}', 'approve', ${item.id})" ${item.severity==='error'?'disabled title="Blocked — missing required info, see above"':''}>${item.change_type==='cancelled'?'Confirm & remove':item.change_type==='time_changed'?'Confirm & update':'Approve'}</button>
+          <button class="reject" onclick="decidePending('${item.approval_token}', 'reject', ${item.id})">${item.change_type?'False alarm, keep as-is':'Reject'}</button>
         </div>
       </div>
     `).join('');
