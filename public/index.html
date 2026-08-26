@@ -106,14 +106,20 @@ body{
    "PREVIEW" tag makes it unmistakable that regular visitors don't see this,
    in case a screenshot ever gets shared before it's rolled out for real. */
 .native-affiliate{
-  display:flex;gap:11px;align-items:center;
+  display:flex;gap:11px;align-items:flex-start;
   background:var(--parchment);border:1px dashed var(--fog);border-radius:12px;
   padding:10px 12px;margin-bottom:16px;position:relative;
 }
 .native-affiliate img{width:56px;height:70px;border-radius:8px;object-fit:contain;flex-shrink:0;background:#fff;padding:3px;}
-.native-affiliate-text{font-size:12px;color:var(--ink-soft);line-height:1.4;flex:1;}
+.native-affiliate-body{flex:1;min-width:0;}
+.native-affiliate-text{font-size:12px;color:var(--ink-soft);line-height:1.4;}
 .native-affiliate-text b{color:var(--ink);font-weight:600;}
 .native-affiliate-tag{font-size:9.5px;color:#a89478;margin-top:2px;}
+.native-affiliate-btn{
+  display:inline-block;margin-top:7px;padding:6px 12px;border-radius:100px;
+  background:var(--bark);color:#fff;font-size:11px;font-weight:600;
+  text-decoration:none;
+}
 .native-affiliate-preview-tag{
   position:absolute;top:-8px;right:8px;background:var(--clay);color:#fff;
   font-size:9px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:100px;
@@ -459,7 +465,7 @@ main{
   box-shadow:0 2px 8px rgba(20,24,22,0.07);
   margin-bottom:14px;cursor:pointer;
 }
-.affiliate-closer-photo{width:96px;height:96px;object-fit:cover;flex-shrink:0;display:block;}
+.affiliate-closer-photo{width:96px;height:120px;object-fit:contain;flex-shrink:0;display:block;background:#fff;padding:4px;}
 .affiliate-closer-body{padding:10px 12px;flex:1;min-width:0;}
 .affiliate-closer-label{
   font-size:9.5px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;
@@ -768,7 +774,7 @@ footer{
         <img src="https://keepthelittleswild.com/cdn/shop/files/00CD83EA-97E3-4022-AD03-75BB6C2514C0.jpg?v=1753487227&width=200" alt="Keep the Littles Wild" loading="lazy">
       </a>
       <div class="affiliate-copy">
-        <div class="support-callout-text" style="margin-bottom:6px;">🧥 We love Keep the Littles Wild's gear for adventure-ready kids — Colorado-owned! (affiliate link)</div>
+        <div class="support-callout-text" style="margin-bottom:6px;">🧥 We love Keep the Littles Wild's gear for adventure-ready kids — Colorado-owned! (Affiliate)</div>
         <a class="support-btn-secondary" href="https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth?sca_ref=12113179.4RaQoQFcXXdl" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth',{title:'Keep the Littles Wild (footer callout)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
       </div>
     </div>
@@ -869,7 +875,7 @@ footer{
       <br><br>
       <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (About drawer)',category:'support',action:'support_click'})">☕ Buy my wife a coffee (she's earned it)</a>
       <br><br>
-      <a href="https://bestdayeverkids.com?sca_ref=11971740.LIQBY7i7kE" target="_blank" rel="noopener noreferrer sponsored" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://bestdayeverkids.com',{title:'Best Day Ever Kids (About drawer)',category:'affiliate',action:'affiliate_click'})">👕 Best Day Ever Kids (affiliate)</a>
+      <a href="https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth?sca_ref=12113179.4RaQoQFcXXdl" target="_blank" rel="noopener noreferrer sponsored" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth',{title:'Keep the Littles Wild (About drawer)',category:'affiliate',action:'affiliate_click'})">🧥 Keep the Littles Wild (affiliate)</a>
       <br><br>
       <a href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A" style="color:var(--ink-soft);text-decoration:underline;">💬 Send feedback</a>
     </div>
@@ -1123,22 +1129,20 @@ function initTopFeedAffiliate(){
 
   const el = document.getElementById("topFeedAffiliate");
   if(!el) return;
+  const productUrl = "https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth";
+  const trackingUrl = `${productUrl}?sca_ref=12113179.4RaQoQFcXXdl`;
   el.innerHTML = `
     <div class="native-affiliate">
       <span class="native-affiliate-preview-tag">PREVIEW</span>
       <img src="https://keepthelittleswild.com/cdn/shop/files/00CD83EA-97E3-4022-AD03-75BB6C2514C0.jpg?v=1753487227&width=200" alt="">
-      <div class="native-affiliate-text">
-        <b>Keep the Littles Wild</b> — gear for whatever adventure you find today.
-        <div class="native-affiliate-tag">Colorado-owned · affiliate link</div>
+      <div class="native-affiliate-body">
+        <div class="native-affiliate-text"><b>Keep the Littles Wild</b> — gear for your next adventure.</div>
+        <div class="native-affiliate-tag">Colorado-owned · Affiliate</div>
+        <a class="native-affiliate-btn" href="${trackingUrl}" target="_blank" rel="noopener noreferrer sponsored" onclick="event.stopPropagation();trackClick('${productUrl}',{title:'Keep the Littles Wild (top-of-feed preview)',category:'affiliate',action:'affiliate_click'})">Explore products →</a>
       </div>
       <div class="native-affiliate-close" onclick="dismissTopFeedAffiliate(event)">✕</div>
     </div>
   `;
-  el.querySelector(".native-affiliate").addEventListener("click", (e)=>{
-    if(e.target.classList.contains("native-affiliate-close")) return;
-    trackClick("https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth", {title:"Keep the Littles Wild (top-of-feed preview)", category:"affiliate", action:"affiliate_click"});
-    window.open("https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth?sca_ref=12113179.4RaQoQFcXXdl", "_blank", "noopener,noreferrer");
-  });
 }
 function dismissTopFeedAffiliate(e){
   e.stopPropagation();
@@ -1367,20 +1371,20 @@ function closeAboutDrawer(){
 
 /* ── AFFILIATE — day-closer card (see renderFeed) ── */
 function renderAffiliateCloserCard(){
-  const url = "https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set?sca_ref=11971740.LIQBY7i7kE";
+  const url = "https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth?sca_ref=12113179.4RaQoQFcXXdl";
   const card = document.createElement("div");
   card.className = "affiliate-closer-card";
   card.onclick = function(){
-    trackClick(url, {title:'Best Day Ever Kids (feed closer card)', category:'affiliate', action:'affiliate_click'});
+    trackClick(url, {title:'Keep the Littles Wild (feed closer card)', category:'affiliate', action:'affiliate_click'});
     window.open(url, '_blank', 'noopener,noreferrer');
   };
   card.innerHTML = `
-    <img class="affiliate-closer-photo" src="https://cdn.uppromote.com/storage/uploads/banner/best-day-ever-clothing/22cadda651e758670671c66687464501_Photoroom_20240521_162426.JPG" alt="Best Day Ever Kids" loading="lazy">
+    <img class="affiliate-closer-photo" src="https://keepthelittleswild.com/cdn/shop/files/00CD83EA-97E3-4022-AD03-75BB6C2514C0.jpg?v=1753487227&width=200" alt="Keep the Littles Wild" loading="lazy">
     <div class="affiliate-closer-body">
       <div class="affiliate-closer-label">Affiliate</div>
-      <div class="affiliate-closer-title">Best Day Ever Kids</div>
-      <div class="affiliate-closer-text">Adventure-ready clothes for kids on the go.</div>
-      <a class="affiliate-closer-btn" href="${url}" target="_blank" rel="noopener noreferrer sponsored" onclick="event.stopPropagation();trackClick('${url}',{title:'Best Day Ever Kids (feed closer card btn)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
+      <div class="affiliate-closer-title">Keep the Littles Wild</div>
+      <div class="affiliate-closer-text">Colorado-owned gear for kids on the go.</div>
+      <a class="affiliate-closer-btn" href="${url}" target="_blank" rel="noopener noreferrer sponsored" onclick="event.stopPropagation();trackClick('${url}',{title:'Keep the Littles Wild (feed closer card btn)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
     </div>
   `;
   return card;
