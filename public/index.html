@@ -101,6 +101,25 @@ body{
   color:#fff;background:var(--clay);cursor:pointer;-webkit-tap-highlight-color:transparent;
   box-shadow:0 2px 6px rgba(0,0,0,0.18);
 }
+/* ── TOP-OF-FEED NATIVE AD ── admin preview only, see initTopFeedAffiliate.
+   Visit once with ?preview=nativead to enable on this device; a visible
+   "PREVIEW" tag makes it unmistakable that regular visitors don't see this,
+   in case a screenshot ever gets shared before it's rolled out for real. */
+.native-affiliate{
+  display:flex;gap:11px;align-items:center;
+  background:var(--parchment);border:1px dashed var(--fog);border-radius:12px;
+  padding:10px 12px;margin-bottom:16px;position:relative;
+}
+.native-affiliate img{width:40px;height:40px;border-radius:8px;object-fit:cover;flex-shrink:0;background:var(--fog);}
+.native-affiliate-text{font-size:12px;color:var(--ink-soft);line-height:1.4;flex:1;}
+.native-affiliate-text b{color:var(--ink);font-weight:600;}
+.native-affiliate-tag{font-size:9.5px;color:#a89478;margin-top:2px;}
+.native-affiliate-preview-tag{
+  position:absolute;top:-8px;right:8px;background:var(--clay);color:#fff;
+  font-size:9px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:100px;
+}
+.native-affiliate-close{color:var(--ink-soft);opacity:.4;font-size:14px;flex-shrink:0;padding:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+
 .support-callout{
   margin:20px 16px 4px;
   background:var(--parchment);
@@ -736,6 +755,7 @@ footer{
     <h2>Coming up</h2>
     <span class="section-sub" id="resultCount"></span>
   </div>
+  <div id="topFeedAffiliate"></div>
   <div id="weekFeed"></div>
 
   <div class="support-callout">
@@ -744,12 +764,12 @@ footer{
       <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (footer callout)',category:'support',action:'support_click'})">☕ Wife's coffee fund</a>
     </div>
     <div class="support-row affiliate-row">
-      <a class="affiliate-thumb" href="https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set?sca_ref=11971740.LIQBY7i7kE" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set',{title:'Best Day Ever Kids photo (footer callout)',category:'affiliate',action:'affiliate_click'})">
-        <img src="https://cdn.uppromote.com/storage/uploads/banner/best-day-ever-clothing/22cadda651e758670671c66687464501_Photoroom_20240521_162426.JPG" alt="Best Day Ever Kids" loading="lazy">
+      <a class="affiliate-thumb" href="https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth?sca_ref=12113179.4RaQoQFcXXdl" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth',{title:'Keep the Littles Wild photo (footer callout)',category:'affiliate',action:'affiliate_click'})">
+        <img src="https://keepthelittleswild.com/cdn/shop/files/00CD83EA-97E3-4022-AD03-75BB6C2514C0.jpg?v=1753487227&width=200" alt="Keep the Littles Wild" loading="lazy">
       </a>
       <div class="affiliate-copy">
-        <div class="support-callout-text" style="margin-bottom:6px;">👕 We love Best Day Ever Kids' clothes for adventure-ready kids (affiliate link).</div>
-        <a class="support-btn-secondary" href="https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set?sca_ref=11971740.LIQBY7i7kE" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://bestdayeverkids.com/products/totally-rad-cropped-sweat-set',{title:'Best Day Ever Kids (footer callout)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
+        <div class="support-callout-text" style="margin-bottom:6px;">🧥 We love Keep the Littles Wild's gear for adventure-ready kids — Colorado-owned! (affiliate link)</div>
+        <a class="support-btn-secondary" href="https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth?sca_ref=12113179.4RaQoQFcXXdl" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth',{title:'Keep the Littles Wild (footer callout)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
       </div>
     </div>
     <div class="support-row">
@@ -1081,6 +1101,51 @@ function toggleSearch(){
 // load so it doesn't compete with the initial render for attention.
 const SEARCH_COACHMARK_KEY = "pr_searchCoachmarkSeen";
 let searchCoachmarkTimer = null;
+// ── TOP-OF-FEED NATIVE AFFILIATE CARD ── admin preview only. Nobody sees
+// this by default. Visiting once with ?preview=nativead sets a permanent
+// localStorage flag on THIS device only (same pattern as the search
+// coachmark's one-time-seen flag) -- every other visitor, on every other
+// device, never sees it and never gets the flag set. A visible "PREVIEW"
+// tag on the card itself makes it unmistakable this isn't live for
+// everyone, in case a screenshot gets shared before a real rollout
+// decision is made.
+const TOPFEED_AFFILIATE_PREVIEW_KEY = "pr_topFeedAffiliatePreview";
+const TOPFEED_AFFILIATE_DISMISSED_KEY = "pr_topFeedAffiliateDismissed";
+function initTopFeedAffiliate(){
+  try{
+    const params = new URLSearchParams(window.location.search);
+    if(params.get("preview") === "nativead"){
+      localStorage.setItem(TOPFEED_AFFILIATE_PREVIEW_KEY, "true");
+    }
+    if(localStorage.getItem(TOPFEED_AFFILIATE_PREVIEW_KEY) !== "true") return;
+    if(localStorage.getItem(TOPFEED_AFFILIATE_DISMISSED_KEY) === "true") return;
+  }catch(e){ return; }
+
+  const el = document.getElementById("topFeedAffiliate");
+  if(!el) return;
+  el.innerHTML = `
+    <div class="native-affiliate">
+      <span class="native-affiliate-preview-tag">PREVIEW</span>
+      <img src="https://keepthelittleswild.com/cdn/shop/files/00CD83EA-97E3-4022-AD03-75BB6C2514C0.jpg?v=1753487227&width=200" alt="">
+      <div class="native-affiliate-text">
+        <b>Keep the Littles Wild</b> — gear for whatever adventure you find today.
+        <div class="native-affiliate-tag">Colorado-owned · affiliate link</div>
+      </div>
+      <div class="native-affiliate-close" onclick="dismissTopFeedAffiliate(event)">✕</div>
+    </div>
+  `;
+  el.querySelector(".native-affiliate").addEventListener("click", (e)=>{
+    if(e.target.classList.contains("native-affiliate-close")) return;
+    trackClick("https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth", {title:"Keep the Littles Wild (top-of-feed preview)", category:"affiliate", action:"affiliate_click"});
+    window.open("https://keepthelittleswild.com/products/pre-order-waterproof-snowsuit-for-toddler-and-youth?sca_ref=12113179.4RaQoQFcXXdl", "_blank", "noopener,noreferrer");
+  });
+}
+function dismissTopFeedAffiliate(e){
+  e.stopPropagation();
+  document.getElementById("topFeedAffiliate").innerHTML = "";
+  try{ localStorage.setItem(TOPFEED_AFFILIATE_DISMISSED_KEY, "true"); }catch(e){}
+}
+
 function initSearchCoachmark(){
   try{
     if(localStorage.getItem(SEARCH_COACHMARK_KEY)) return;
@@ -1671,6 +1736,7 @@ updateSupportCallout();
 
 loadFilterPrefs();
 initSearchCoachmark();
+initTopFeedAffiliate();
 document.getElementById("weekFeed").innerHTML=`<div class="empty-state">Loading this week's events…</div>`;
 loadData();
 const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
