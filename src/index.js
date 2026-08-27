@@ -439,7 +439,48 @@ function wowAgeFromTitle(title) {
 // over the terser grid version for any event that appears in both.
 const WOW_EVENT_LINK_RE = /<a\s+[^>]*href="([^"]*\/event\/(\d{4})\/(\d{2})\/(\d{2})\/[^"]*\/(\d+))"[^>]*>(.*?)<\/a>/gis;
 
-function parseWowCalendarHtml(html, city) {
+// WOW's list/calendar page only gives title + time in each link — the real
+// program description lives on each event's own detail page. These are the
+// site's repeated sidebar/CTA strings that show up on every detail page
+// (membership pitch, donation ask, rental blurb, registration-capacity
+// note) — stripped out so what's left is the actual program description.
+const WOW_BOILERPLATE = [
+  "The Museum is available for private playtime and private party rentals. Contact us for availability and options!",
+  "Support the Museum by purchasing an annual family membership. Memberships include unlimited admission for a year and other great benefits!",
+  "Make a donation!",
+  "If the registration link is inactive, that means our event is at full capacity and we cannot accept new registrations."
+];
+
+// Fetches one WOW event's detail page and extracts its real description,
+// stripping the sidebar boilerplate above and de-duping the description
+// text (WOW's template renders it twice on most detail pages).
+async function fetchWowEventDescription(url) {
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.app)" } });
+    if (!res.ok) return null;
+    const html = await res.text();
+    let text = decodeHtmlEntities(
+      stripTags(html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " "))
+    );
+    for (const bp of WOW_BOILERPLATE) text = text.split(bp).join(" ");
+    const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+    const seen = new Set();
+    const unique = sentences.filter((s) => {
+      const key = s.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const desc = unique.join(" ").trim();
+    return desc.length > 20 ? desc.slice(0, 400) : null;
+  } catch {
+    // A single event's description fetch failing shouldn't break the whole
+    // scrape run — the caller falls back to the generic placeholder note.
+    return null;
+  }
+}
+
+async function parseWowCalendarHtml(html, city) {
   const byId = new Map();
   let m;
   while ((m = WOW_EVENT_LINK_RE.exec(html)) !== null) {
@@ -493,6 +534,9 @@ function parseWowCalendarHtml(html, city) {
       ? new Date(`2000-01-01T${finalStartTime}:00`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
       : "See source for time";
 
+    const sourceUrl = href.startsWith("http") ? href : `https://wowchildrensmuseum.org${href}`;
+    const realDescription = allDay ? null : await fetchWowEventDescription(sourceUrl);
+
     events.push({
       title,
       source: `${city} \u2014 WOW! Children's Museum`,
@@ -515,8 +559,8 @@ function parseWowCalendarHtml(html, city) {
       event_date: eventDate,
       note: allDay
         ? "Multi-day program \u2014 check the museum's event page for the full daily schedule."
-        : "Pulled from WOW! Children's Museum's public calendar.",
-      source_url: href.startsWith("http") ? href : `https://wowchildrensmuseum.org${href}`,
+        : (realDescription || "Pulled from WOW! Children's Museum's public calendar."),
+      source_url: sourceUrl,
       verified: 1,
       libcal_event_id: `wow:${id}`
     });
@@ -567,7 +611,7 @@ async function fetchAndNormalizeWowCalendar() {
     const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.app)" } });
     if (!res.ok) throw new Error(`WOW calendar fetch failed for ${url}: ${res.status}`);
     const html = await res.text();
-    allEvents.push(...parseWowCalendarHtml(html, WOW_MUSEUM.city));
+    allEvents.push(...(await parseWowCalendarHtml(html, WOW_MUSEUM.city)));
   }
   // De-dupe across month pages (boundary events can appear on two month
   // pages) and drop anything already in the past or past the lookahead window.
