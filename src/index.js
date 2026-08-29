@@ -2627,8 +2627,14 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl) {
     <p style="padding:22px 24px 8px;margin:0;font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:#3C5548;font-family:-apple-system,sans-serif;">Don't miss these</p>
     ${spotlight.map((ev) => {
       const cleanSource = cleanSourceForDisplay(ev.source);
+      // Each spotlight card is a full <a> block wrapping the whole table so
+      // the entire card (not just a "more" link elsewhere) is tappable --
+      // previously these cards had no href at all. display:block + color:
+      // inherit keeps the link from visually looking/behaving like inline
+      // text while remaining a single tap target on mobile mail clients.
       return `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 24px 12px;width:calc(100% - 48px);background:#F1E7D2;border:1px solid #D3D8C8;border-radius:14px;">
+      <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:block;text-decoration:none;color:inherit;margin:0 24px 12px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:#F1E7D2;border:1px solid #D3D8C8;border-radius:14px;">
         <tr>
           <td width="46" style="padding:14px 0 14px 14px;vertical-align:top;">
             ${digestColorBlock(ev.category, 34)}
@@ -2639,21 +2645,28 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl) {
             ${digestBadgeHtml(ev.badge)}
           </td>
         </tr>
-      </table>`;
+      </table>
+      </a>`;
     }).join("")}
   ` : "";
 
   const dayBlocks = days.map(([label, { shown, total }]) => {
     const rows = shown.map((ev) => {
       const cleanSource = cleanSourceForDisplay(ev.source);
+      // Same fix as the spotlight cards above: wrap the row content in an
+      // <a> (via a block-level anchor inside the cell, since <a> can't
+      // legally wrap a <tr>/<td> directly) so each daily list item opens
+      // Playroute instead of being inert text.
       return `
       <tr>
         <td width="24" valign="top" style="padding:9px 0;">${digestColorBlock(ev.category, 16)}</td>
-        <td style="padding:9px 0 9px 10px;font-family:-apple-system,sans-serif;border-bottom:1px solid #F1E7D2;">
-          <div style="font-weight:600;font-size:13.5px;color:#1F2A22;">${escapeHtml(ev.title)}</div>
-          <div style="font-size:11.5px;color:#6B7268;margin-top:2px;">${escapeHtml(cleanSource)}${cleanSource ? " \u00B7 " : ""}${escapeHtml(ev.display_time)}</div>
-          <span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;margin-top:4px;${ev.cost === "free" ? "background:#D4EBC9;color:#3A5C2A;" : "background:#E8DED0;color:#5C4A38;"}">${ev.cost === "free" ? "Free" : "Paid"}</span>
-          ${ev.is_new ? `<span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;margin:4px 0 0 4px;background:#3C5548;color:#fff;">New</span>` : ""}
+        <td style="padding:0;border-bottom:1px solid #F1E7D2;">
+          <a href="${DIGEST_SITE_URL}/?src=newsletter" style="display:block;text-decoration:none;color:inherit;padding:9px 0 9px 10px;font-family:-apple-system,sans-serif;">
+            <div style="font-weight:600;font-size:13.5px;color:#1F2A22;">${escapeHtml(ev.title)}</div>
+            <div style="font-size:11.5px;color:#6B7268;margin-top:2px;">${escapeHtml(cleanSource)}${cleanSource ? " \u00B7 " : ""}${escapeHtml(ev.display_time)}</div>
+            <span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;margin-top:4px;${ev.cost === "free" ? "background:#D4EBC9;color:#3A5C2A;" : "background:#E8DED0;color:#5C4A38;"}">${ev.cost === "free" ? "Free" : "Paid"}</span>
+            ${ev.is_new ? `<span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;margin:4px 0 0 4px;background:#3C5548;color:#fff;">New</span>` : ""}
+          </a>
         </td>
       </tr>`;
     }).join("");
