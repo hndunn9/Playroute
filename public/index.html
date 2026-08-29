@@ -267,6 +267,12 @@ body{
   position:absolute;top:8px;right:9px;color:rgba(244,245,240,0.55);
   width:16px;height:16px;display:flex;align-items:center;justify-content:center;
 }
+/* ── STICKY-FILTERS COACHMARK ── same visual language as the search
+   coachmark above, but anchored left (under the Filters toggle label)
+   instead of right, since it's pointing at the filter panel, not the
+   search icon. Shown once ever -- see showStickyFilterCoachmark(). */
+.coachmark.filters-coachmark{left:0;right:auto;top:38px;}
+.coachmark.filters-coachmark::before{left:14px;right:auto;}
 @keyframes coachmark-in{
   from{opacity:0;transform:translateY(-6px) scale(0.96);}
   to{opacity:1;transform:translateY(0) scale(1);}
@@ -720,6 +726,11 @@ footer{
       <div class="filters-toggle" onclick="toggleFilters()">
         <span class="filters-toggle-label">Filters <span id="activeCount" class="active-count"></span></span>
         <span class="chevron" id="chevron">▾</span>
+        <div class="coachmark filters-coachmark" id="stickyFilterCoachmark" style="display:none;" onclick="dismissStickyFilterCoachmark(event)">
+          <div class="coachmark-close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+          <div class="coachmark-title">📌 Handy tip</div>
+          Your filters stick around — come back anytime and pick up right where you left off.
+        </div>
       </div>
       <div class="search-btn" id="searchBtn" onclick="toggleSearch()" aria-label="Search events">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -1119,6 +1130,41 @@ function toggleSearch(){
 // load so it doesn't compete with the initial render for attention.
 const SEARCH_COACHMARK_KEY = "pr_searchCoachmarkSeen";
 let searchCoachmarkTimer = null;
+// ── STICKY-FILTERS COACHMARK ── one-time tip telling people their filter
+// choices persist across visits. Two triggers share ONE seen-flag, so
+// whichever fires first is the only one that ever shows -- the flag gets
+// set the moment it's displayed (via the same auto-dismiss-after-6s
+// pattern as the search coachmark), not on explicit dismissal, so there's
+// no window where a second trigger could sneak a duplicate showing in:
+//   1) saveFilterPrefs() -- the first time someone ever changes a filter,
+//      shown right as their choice is saved, proving the point live.
+//   2) loadFilterPrefs() -- for people who already had saved filters
+//      before this tip existed (so trigger 1 never fired for them), shown
+//      when those old filters silently re-apply on a return visit.
+const STICKY_FILTER_COACHMARK_KEY = "pr_stickyFilterCoachmarkSeen";
+let stickyFilterCoachmarkTimer = null;
+function showStickyFilterCoachmark(){
+  try{
+    if(localStorage.getItem(STICKY_FILTER_COACHMARK_KEY)) return;
+  }catch(e){ return; }
+  const mark = document.getElementById("stickyFilterCoachmark");
+  if(!mark) return;
+  mark.style.display = "block";
+  document.addEventListener("click", handleOutsideStickyFilterCoachmarkTap, true);
+  stickyFilterCoachmarkTimer = setTimeout(dismissStickyFilterCoachmark, 6000);
+  try{ localStorage.setItem(STICKY_FILTER_COACHMARK_KEY, "true"); }catch(e){}
+}
+function handleOutsideStickyFilterCoachmarkTap(e){
+  const mark = document.getElementById("stickyFilterCoachmark");
+  if(mark && !mark.contains(e.target)) dismissStickyFilterCoachmark();
+}
+function dismissStickyFilterCoachmark(e){
+  if(e) e.stopPropagation();
+  const mark = document.getElementById("stickyFilterCoachmark");
+  if(mark) mark.style.display = "none";
+  clearTimeout(stickyFilterCoachmarkTimer);
+  document.removeEventListener("click", handleOutsideStickyFilterCoachmarkTap, true);
+}
 // ── TOP-OF-FEED NATIVE AFFILIATE CARD ── admin preview only. Nobody sees
 // this by default. Visiting once with ?preview=nativead sets a permanent
 // localStorage flag on THIS device only (same pattern as the search
@@ -1691,6 +1737,7 @@ function showLinkPopover(anchorEl,url){
 const FILTER_STORAGE_KEY="playroute-filters-v1";
 function saveFilterPrefs(){
   try{ localStorage.setItem(FILTER_STORAGE_KEY,JSON.stringify({cities:[...activeCities],ages:[...activeAges],cats:[...activeCats],cost:activeCost,when:activeWhen})); }catch(e){}
+  showStickyFilterCoachmark(); // trigger 1: first-ever filter change
 }
 function loadFilterPrefs(){
   try{
@@ -1703,6 +1750,9 @@ function loadFilterPrefs(){
     // should land on the same lightweight default a first-time visitor
     // gets, not silently the heaviest view.
     activeCats=new Set(p.cats||[]); activeCost=p.cost||"all"; activeWhen=p.when||"week";
+    // trigger 2: saved filters from a visit before this tip existed are
+    // re-applying right now -- tell them why, this once.
+    setTimeout(showStickyFilterCoachmark, 1500);
   }catch(e){}
 }
 
