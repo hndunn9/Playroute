@@ -346,7 +346,7 @@ function normalizeICalEvent(ev, city) {
     display_time: formatDisplayTime(ev.dtstart, ev.dtend),
     recurrence: "dated",
     event_date: mtDateStr,
-    note: (ev.description || "").replace(/<[^>]+>/g, "").slice(0, 300) || `Pulled from ${city} library's public iCal feed.`,
+    note: truncateAtBoundary((ev.description || "").replace(/<[^>]+>/g, ""), 300) || `Pulled from ${city} library's public iCal feed.`,
     source_url: ev.url || "",
     verified: 1,
     libcal_event_id: ev.uid
@@ -408,6 +408,24 @@ function decodeHtmlEntities(s) {
 
 function stripTags(s) {
   return (s || "").replace(/<[^>]+>/g, "");
+}
+
+// Every scraper that stores free-text descriptions (`note` field) must run
+// long text through this instead of a bare .slice(0, N) -- a hard slice cuts
+// mid-word/mid-sentence (this is exactly how ~256 events, e.g. "Toddler
+// Explorers", ended up visibly cut off: multiple scrapers each had their own
+// unbounded `.slice(0, 300)`). This backs off to the nearest sentence end
+// within the last ~40% of the budget, else the nearest word boundary, and
+// appends an ellipsis so a truncation is visibly a truncation rather than
+// looking like a complete-but-abrupt sentence.
+function truncateAtBoundary(text, maxLen = 300) {
+  const s = (text || "").trim();
+  if (s.length <= maxLen) return s;
+  const cut = s.slice(0, maxLen);
+  const lastSentenceEnd = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("! "), cut.lastIndexOf("? "));
+  if (lastSentenceEnd > maxLen * 0.6) return cut.slice(0, lastSentenceEnd + 1).trim();
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > maxLen * 0.6 ? cut.slice(0, lastSpace) : cut).trim() + "\u2026";
 }
 
 // Rough age heuristic from WOW's known recurring program names — WOW's
@@ -472,7 +490,7 @@ async function fetchWowEventDescription(url) {
       return true;
     });
     const desc = unique.join(" ").trim();
-    return desc.length > 20 ? desc.slice(0, 400) : null;
+    return desc.length > 20 ? truncateAtBoundary(desc, 400) : null;
   } catch {
     // A single event's description fetch failing shouldn't break the whole
     // scrape run — the caller falls back to the generic placeholder note.
@@ -762,7 +780,7 @@ async function fetchAndNormalizeMeadCalendar() {
         title,
         source: "Town of Mead Parks & Recreation",
         city: "Mead",
-        note: plainBody.slice(0, 300),
+        note: truncateAtBoundary(plainBody, 300),
         source_url: `https://www.townofmead.org${item.link}`,
         dedup_key: `mead-review:${item.id}`
       });
@@ -795,7 +813,7 @@ async function fetchAndNormalizeMeadCalendar() {
       display_time: displayTime,
       recurrence: "dated",
       event_date: eventDateStr,
-      note: plainBody.slice(0, 300),
+      note: truncateAtBoundary(plainBody, 300),
       source_url: `https://www.townofmead.org${item.link}`,
       verified: 0, // auto-parsed from prose — flagged unverified, unlike hand-curated entries
       libcal_event_id: `mead:${item.id}`,
@@ -892,7 +910,7 @@ function parseWestminsterLibraryDetail(html, url) {
       : null,
     audience,
     categories,
-    raw_excerpt: text.slice(0, 400)
+    raw_excerpt: truncateAtBoundary(text, 400)
   };
 }
 
@@ -1029,7 +1047,7 @@ function parseLyonsEventBlock(blockText, href) {
     endLabel,
     room: roomMatch ? decodeHtmlEntities(roomMatch[1]).trim() : null,
     ageGroup: ageGroupMatch ? ageGroupMatch[1].trim() : null,
-    details: detailsMatch ? decodeHtmlEntities(detailsMatch[1]).trim().slice(0, 400) : null,
+    details: detailsMatch ? truncateAtBoundary(decodeHtmlEntities(detailsMatch[1]).trim(), 400) : null,
     notSponsored: LYONS_NOT_SPONSORED_RE.test(blockText),
     href
   };
@@ -1595,7 +1613,7 @@ async function fetchAndScanMyNatureLab() {
         recurrence: "dated",
         note: `Story: ${book.trim()} by ${author.trim()}. Animal encounter: ${animal.trim()}. Doors open 9am; storytime runs 9:15-9:45. Free, all ages. UNVERIFIED SCRAPE -- selectors written against rendered text, not raw HTML; confirm this matches the live page before trusting it.`,
         source_url: MY_NATURE_LAB_URL,
-        raw_excerpt: m[0].slice(0, 400),
+        raw_excerpt: truncateAtBoundary(m[0], 400),
         dedup_key: `mynaturelab:${eventDateStr}:${rawTitle.trim().toLowerCase().replace(/\s+/g, "-")}`,
         _assumedTime: true, // 09:15 is always hardcoded here, never actually parsed from the page
         _ageGuessed: true   // 0-18 is a broad fallback, not derived from real per-topic age info
