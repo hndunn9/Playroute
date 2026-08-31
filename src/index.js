@@ -1943,10 +1943,37 @@ async function getReferralsTrend(env, weeks = 8) {
 // nothing at all when everything's fine instead of a wall of green rows.
 //
 // Tunable thresholds, all in one place:
-const COVERAGE_LOOKAHEAD_DAYS = 30; // window used to count "upcoming" dated events
+const COVERAGE_LOOKAHEAD_DAYS = 30; // window used to count "upcoming" events
 const COVERAGE_DEADLINE_DAYS = 14;  // furthest dated event closer than this = "running out soon"
-const COVERAGE_LOW_THRESHOLD = 8;   // fewer than this many dated events in the lookahead window = "low"
+const COVERAGE_LOW_THRESHOLD = 8;   // fewer than this many upcoming events in the window = "low"
 const COVERAGE_CRITICAL_THRESHOLD = 3; // fewer than this = "critical"
+
+const WEEKDAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
+
+// Weekly/monthly recurring rows have no event_date, so they were previously
+// invisible to the alert math entirely -- a city could have 20 weekly
+// storytimes and zero dated events and still get flagged "critical: no
+// events." This estimates how many times each recurring row will actually
+// occur within the lookahead window, so real ongoing coverage counts as
+// coverage. Deliberately approximate (calendar-exact recurrence, e.g. "1st
+// Friday" cadences, isn't worth modeling here) -- close enough to separate
+// "well covered" from "actually thin," which is all this needs to do.
+function estimateOccurrencesInWindow(dayOfWeek, recurrence, windowDays) {
+  const rec = (recurrence || "").toLowerCase();
+  if (rec.startsWith("monthly")) return 1; // roughly one occurrence per 30-day window
+  if (rec !== "weekly") return dayOfWeek ? 1 : 0; // unrecognized cadence: count conservatively rather than not at all
+  if (dayOfWeek === "Weekend") return Math.round((windowDays / 7) * 2);
+  const idx = WEEKDAY_INDEX[dayOfWeek];
+  if (idx === undefined) return Math.floor(windowDays / 7); // e.g. multi-day labels like "Tue-Fri" -- treat as one weekly slot
+  const today = new Date();
+  let count = 0;
+  for (let d = 0; d < windowDays; d++) {
+    const day = new Date(today);
+    day.setUTCDate(day.getUTCDate() + d);
+    if (day.getUTCDay() === idx) count++;
+  }
+  return count;
+}
 
 async function handleCoverageAlerts(env) {
   const { results } = await env.DB.prepare(
@@ -1961,15 +1988,6 @@ async function handleCoverageAlerts(env) {
          AND event_date <= date('now', '+${COVERAGE_LOOKAHEAD_DAYS} days')
        GROUP BY city
      ),
-     recurring_active AS (
-       -- Weekly/monthly recurring rows have no event_date and don't "run
-       -- out" the way a dated/seasonal listing does -- counted separately
-       -- as a baseline, not folded into dated_upcoming.
-       SELECT city, COUNT(*) AS n
-       FROM events
-       WHERE event_date IS NULL
-       GROUP BY city
-     ),
      furthest_dated AS (
        SELECT city, MAX(event_date) AS last_date
        FROM events
@@ -1979,39 +1997,53 @@ async function handleCoverageAlerts(env) {
      SELECT
        cl.city,
        COALESCE(du.n, 0) AS dated_next_30d,
-       COALESCE(ra.n, 0) AS recurring_active,
        fd.last_date AS runway_end,
        CAST(julianday(fd.last_date) - julianday('now') AS INTEGER) AS runway_days
      FROM city_list cl
      LEFT JOIN dated_upcoming du ON du.city = cl.city
-     LEFT JOIN recurring_active ra ON ra.city = cl.city
-     LEFT JOIN furthest_dated fd ON fd.city = cl.city
-     ORDER BY dated_next_30d ASC`
+     LEFT JOIN furthest_dated fd ON fd.city = cl.city`
   ).all();
+
+  // Recurring rows fetched separately (need day_of_week + recurrence per
+  // row to estimate occurrences, which isn't expressible as a plain COUNT).
+  const { results: recurringRows } = await env.DB.prepare(
+    `SELECT city, day_of_week, recurrence FROM events WHERE event_date IS NULL AND city IS NOT NULL AND city != ''`
+  ).all();
+  const recurringByCity = new Map();
+  for (const r of recurringRows) {
+    const occurrences = estimateOccurrencesInWindow(r.day_of_week, r.recurrence, COVERAGE_LOOKAHEAD_DAYS);
+    recurringByCity.set(r.city, (recurringByCity.get(r.city) || 0) + occurrences);
+  }
 
   const alerts = [];
   for (const row of results) {
+    const recurringUpcoming = recurringByCity.get(row.city) || 0;
+    const totalUpcoming = row.dated_next_30d + recurringUpcoming;
+
     // Priority order matters -- a city can technically match more than one
     // condition, but each city gets exactly ONE status: the most urgent
-    // thing true about it, not a pile of overlapping badges.
+    // thing true about it, not a pile of overlapping badges. "Deadline"
+    // (a seasonal/dated series about to lapse) only surfaces as urgent when
+    // recurring coverage ISN'T already backstopping it -- a city with solid
+    // weekly storytimes isn't actually in trouble just because one dated
+    // series is ending.
     let status = null, message = null;
-    if (row.runway_end === null) {
+    if (totalUpcoming < COVERAGE_CRITICAL_THRESHOLD) {
       status = "critical";
-      message = `No upcoming dated events at all${row.recurring_active > 0 ? ` (only ${row.recurring_active} recurring listing${row.recurring_active === 1 ? "" : "s"})` : ""}`;
-    } else if (row.runway_days <= COVERAGE_DEADLINE_DAYS) {
+      message = totalUpcoming === 0
+        ? `Nothing coming up in the next ${COVERAGE_LOOKAHEAD_DAYS} days at all`
+        : `Only ${totalUpcoming} event${totalUpcoming === 1 ? "" : "s"} coming up in the next ${COVERAGE_LOOKAHEAD_DAYS} days (dated + recurring combined)`;
+    } else if (row.runway_end !== null && row.runway_days <= COVERAGE_DEADLINE_DAYS && recurringUpcoming < COVERAGE_LOW_THRESHOLD) {
       status = "deadline";
       message = row.runway_days <= 0
-        ? `Dated coverage already ran out (last known event was ${row.runway_end})`
-        : `Dated coverage runs out in ${row.runway_days} day${row.runway_days === 1 ? "" : "s"} (${row.runway_end})`;
-    } else if (row.dated_next_30d < COVERAGE_CRITICAL_THRESHOLD) {
-      status = "critical";
-      message = `Only ${row.dated_next_30d} dated event${row.dated_next_30d === 1 ? "" : "s"} in the next ${COVERAGE_LOOKAHEAD_DAYS} days`;
-    } else if (row.dated_next_30d < COVERAGE_LOW_THRESHOLD) {
+        ? `Dated coverage already ran out (last known event was ${row.runway_end}), and recurring coverage is thin too`
+        : `Dated coverage runs out in ${row.runway_days} day${row.runway_days === 1 ? "" : "s"} (${row.runway_end}), and recurring coverage is thin too`;
+    } else if (totalUpcoming < COVERAGE_LOW_THRESHOLD) {
       status = "low";
-      message = `Just ${row.dated_next_30d} dated events in the next ${COVERAGE_LOOKAHEAD_DAYS} days`;
+      message = `Just ${totalUpcoming} events coming up in the next ${COVERAGE_LOOKAHEAD_DAYS} days (dated + recurring combined)`;
     }
     if (status) {
-      alerts.push({ city: row.city, status, message, dated_next_30d: row.dated_next_30d, recurring_active: row.recurring_active, runway_end: row.runway_end });
+      alerts.push({ city: row.city, status, message, dated_next_30d: row.dated_next_30d, recurring_upcoming_30d: recurringUpcoming, runway_end: row.runway_end });
     }
   }
   // Worst first: critical, then deadline, then low.
