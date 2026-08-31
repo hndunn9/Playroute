@@ -79,6 +79,22 @@
   .pending-actions button.reject{background:#eee;color:#5C4A38;}
   .pending-empty{font-size:12.5px;color:#7A6650;text-align:center;padding:10px 0;}
 
+  /* ── Coverage alerts ── deliberately terse: a colored dot, the city,
+     one line explaining why. No charts, no thresholds shown -- if you
+     want the numbers behind it, that's what /api/coverage-alerts is for. */
+  .coverage-alerts{margin-bottom:14px;}
+  .coverage-alerts:empty{display:none;margin:0;}
+  .coverage-row{
+    display:flex;align-items:center;gap:8px;background:#fff;
+    border:1px solid #C8BA9E;border-left-width:4px;border-radius:8px;
+    padding:9px 11px;margin-bottom:6px;font-size:12.5px;
+  }
+  .coverage-row.critical{border-left-color:#B4432E;}
+  .coverage-row.deadline{border-left-color:#D4863A;}
+  .coverage-row.low{border-left-color:#C8A93E;}
+  .coverage-row .coverage-city{font-weight:700;flex-shrink:0;}
+  .coverage-row .coverage-msg{color:#7A6650;}
+
   /* ── Section grouping ── */
   .section-label{
     font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;
@@ -126,6 +142,8 @@
   <div class="summary-strip" id="summaryStrip">
     <div class="sum-item"><span>Loading summary…</span></div>
   </div>
+
+  <div class="coverage-alerts" id="coverageAlerts"></div>
 
   <div class="section-label">Analytics</div>
 
@@ -843,23 +861,38 @@ function toggleCardCollapse(cardId){
 
 async function loadSummaryStrip(){
   const el = document.getElementById('summaryStrip');
+  const coverageEl = document.getElementById('coverageAlerts');
   try{
-    const [pendingRes, sourcesRes] = await Promise.all([
+    const [pendingRes, sourcesRes, coverageRes] = await Promise.all([
       fetch('/api/pending-events'),
-      fetch('/api/sources')
+      fetch('/api/sources'),
+      fetch('/api/coverage-alerts')
     ]);
     const pending = await pendingRes.json();
     const sources = await sourcesRes.json();
+    const coverage = await coverageRes.json();
 
     const pendingCount = pending.count || 0;
     const blockedCount = (pending.pending||[]).filter(p=>p.severity==='error').length;
     const erroredSources = (Array.isArray(sources)?sources:[])
       .filter(s=>s.last_run_status==='error'||s.last_run_status==='partial_error');
+    const cityAlerts = coverage.alerts || [];
 
     el.innerHTML = `
       <div class="sum-item"><span>📋 Pending review</span><span class="sum-num${pendingCount>0?'':''}">${pendingCount}${blockedCount>0?` <span style="color:#E08A6A;">(${blockedCount} blocked)</span>`:''}</span></div>
       <div class="sum-item"><span>🗂️ Sources with errors</span><span class="sum-num${erroredSources.length>0?' alert':''}">${erroredSources.length}</span></div>
+      <div class="sum-item"><span>🏙️ Cities needing attention</span><span class="sum-num${cityAlerts.length>0?' alert':''}">${cityAlerts.length}</span></div>
     `;
+
+    // Empty on purpose when there's nothing to flag -- .coverage-alerts:empty
+    // collapses to zero height, so a fully-covered week shows literally
+    // nothing here instead of a reassuring-but-pointless "all good" card.
+    coverageEl.innerHTML = cityAlerts.map(a => `
+      <div class="coverage-row ${a.status}">
+        <span class="coverage-city">${escapeHtml(a.city)}</span>
+        <span class="coverage-msg">${escapeHtml(a.message)}</span>
+      </div>
+    `).join('');
   }catch(err){
     el.innerHTML = `<div class="sum-item"><span>Couldn't load summary</span></div>`;
   }
