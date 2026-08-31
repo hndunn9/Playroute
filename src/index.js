@@ -1936,7 +1936,92 @@ async function getReferralsTrend(env, weeks = 8) {
   };
 }
 
+// ── COVERAGE ALERTS ── answers two questions in one place: "which city am I
+// about to run dry on" and "which city just doesn't have enough coming up
+// right now." Deliberately does NOT try to be a full analytics view --
+// only surfaces cities that need attention, so the admin page can show
+// nothing at all when everything's fine instead of a wall of green rows.
+//
+// Tunable thresholds, all in one place:
+const COVERAGE_LOOKAHEAD_DAYS = 30; // window used to count "upcoming" dated events
+const COVERAGE_DEADLINE_DAYS = 14;  // furthest dated event closer than this = "running out soon"
+const COVERAGE_LOW_THRESHOLD = 8;   // fewer than this many dated events in the lookahead window = "low"
+const COVERAGE_CRITICAL_THRESHOLD = 3; // fewer than this = "critical"
+
+async function handleCoverageAlerts(env) {
+  const { results } = await env.DB.prepare(
+    `WITH city_list AS (
+       SELECT DISTINCT city FROM events WHERE city IS NOT NULL AND city != ''
+     ),
+     dated_upcoming AS (
+       SELECT city, COUNT(*) AS n
+       FROM events
+       WHERE event_date IS NOT NULL
+         AND event_date >= date('now')
+         AND event_date <= date('now', '+${COVERAGE_LOOKAHEAD_DAYS} days')
+       GROUP BY city
+     ),
+     recurring_active AS (
+       -- Weekly/monthly recurring rows have no event_date and don't "run
+       -- out" the way a dated/seasonal listing does -- counted separately
+       -- as a baseline, not folded into dated_upcoming.
+       SELECT city, COUNT(*) AS n
+       FROM events
+       WHERE event_date IS NULL
+       GROUP BY city
+     ),
+     furthest_dated AS (
+       SELECT city, MAX(event_date) AS last_date
+       FROM events
+       WHERE event_date IS NOT NULL AND event_date >= date('now')
+       GROUP BY city
+     )
+     SELECT
+       cl.city,
+       COALESCE(du.n, 0) AS dated_next_30d,
+       COALESCE(ra.n, 0) AS recurring_active,
+       fd.last_date AS runway_end,
+       CAST(julianday(fd.last_date) - julianday('now') AS INTEGER) AS runway_days
+     FROM city_list cl
+     LEFT JOIN dated_upcoming du ON du.city = cl.city
+     LEFT JOIN recurring_active ra ON ra.city = cl.city
+     LEFT JOIN furthest_dated fd ON fd.city = cl.city
+     ORDER BY dated_next_30d ASC`
+  ).all();
+
+  const alerts = [];
+  for (const row of results) {
+    // Priority order matters -- a city can technically match more than one
+    // condition, but each city gets exactly ONE status: the most urgent
+    // thing true about it, not a pile of overlapping badges.
+    let status = null, message = null;
+    if (row.runway_end === null) {
+      status = "critical";
+      message = `No upcoming dated events at all${row.recurring_active > 0 ? ` (only ${row.recurring_active} recurring listing${row.recurring_active === 1 ? "" : "s"})` : ""}`;
+    } else if (row.runway_days <= COVERAGE_DEADLINE_DAYS) {
+      status = "deadline";
+      message = row.runway_days <= 0
+        ? `Dated coverage already ran out (last known event was ${row.runway_end})`
+        : `Dated coverage runs out in ${row.runway_days} day${row.runway_days === 1 ? "" : "s"} (${row.runway_end})`;
+    } else if (row.dated_next_30d < COVERAGE_CRITICAL_THRESHOLD) {
+      status = "critical";
+      message = `Only ${row.dated_next_30d} dated event${row.dated_next_30d === 1 ? "" : "s"} in the next ${COVERAGE_LOOKAHEAD_DAYS} days`;
+    } else if (row.dated_next_30d < COVERAGE_LOW_THRESHOLD) {
+      status = "low";
+      message = `Just ${row.dated_next_30d} dated events in the next ${COVERAGE_LOOKAHEAD_DAYS} days`;
+    }
+    if (status) {
+      alerts.push({ city: row.city, status, message, dated_next_30d: row.dated_next_30d, recurring_active: row.recurring_active, runway_end: row.runway_end });
+    }
+  }
+  // Worst first: critical, then deadline, then low.
+  const order = { critical: 0, deadline: 1, low: 2 };
+  alerts.sort((a, b) => order[a.status] - order[b.status]);
+  return json({ alerts, checkedCities: results.length, generatedAt: new Date().toISOString() });
+}
+
 async function handleStats(env) {
+
   const todayStart = mountainMidnightTodayUTC();
   const weekStart = mountainMidnightThisWeekUTC();
   const yesterdayStart = mountainMidnightYesterdayUTC();
@@ -3465,6 +3550,7 @@ export default {
       if (url.pathname === "/api/search-insights" && request.method === "GET") return await handleSearchInsights(env);
       if (url.pathname === "/api/pageview" && request.method === "POST") return await handlePageView(request, env);
       if (url.pathname === "/api/stats") return await handleStats(env);
+      if (url.pathname === "/api/coverage-alerts") return await handleCoverageAlerts(env);
       if (url.pathname === "/api/referrals-trend") {
         return json(await getReferralsTrend(env, Number(url.searchParams.get("weeks")) || 8));
       }
