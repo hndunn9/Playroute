@@ -27,7 +27,7 @@ import { WorkflowEntrypoint } from "cloudflare:workers";
 import { ingestCandidate } from "./pipeline.js";
 import { CATEGORIES, DISCOVERY_SYSTEM_PROMPT, passesQueueBar } from "./discovery-rules.js";
 
-const DISCOVERY_MODEL = "claude-sonnet-5"; // confirm current model availability/pricing before relying on this long-term
+const DISCOVERY_MODEL = "claude-opus-5"; // upgraded from Sonnet 5 (2026-09) -- low call volume (weekly, one city/run) makes the cost delta negligible, and stronger judgment directly targets this pipeline's real failure mode (fabricated/unconfirmed candidates)
 
 // Picks whichever registered city has gone longest without a discovery run
 // (or has never run at all -- NULL last_run_at sorts first). Verified
