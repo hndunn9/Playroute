@@ -47,9 +47,27 @@ async function pickNextCity(env) {
 // tell Claude what NOT to rediscover. Keeps this compact (distinct source
 // names only, not full event listings) since it just needs to be enough
 // context to avoid obvious re-finds, not a complete inventory dump.
+//
+// TOKEN COST NOTE (2026-09): originally had no filtering at all -- every
+// source ever added stayed in this list forever, including one-time events
+// from months ago that will never recur. Boulder alone had accumulated 55
+// distinct sources with zero pruning, and this list is resent in full on
+// EVERY discovery call, forever, growing without bound as the catalog
+// grows. Since this workflow runs weekly with one city per run, calls for
+// the same city are weeks apart -- well outside Anthropic's prompt-cache
+// TTL, so caching can't absorb this cost; it has to be fixed at the query
+// level. Filtering to only sources with a still-relevant event (recurring,
+// or a one-time event that hasn't happened yet) keeps the list meaningful
+// -- there's no reason to warn the model off "rediscovering" an org whose
+// only listing was a single event that already happened -- and caps
+// long-term growth to roughly "how many things are currently running",
+// not "how many things have ever been added since launch."
 async function fetchExistingSources(env, city) {
   const { results } = await env.DB.prepare(
-    `SELECT DISTINCT source FROM events WHERE city = ? ORDER BY source`
+    `SELECT DISTINCT source FROM events
+     WHERE city = ?
+       AND (recurrence = 'weekly' OR (event_date IS NOT NULL AND event_date >= date('now')))
+     ORDER BY source`
   ).bind(city).all();
   return results.map((r) => r.source).filter(Boolean);
 }
