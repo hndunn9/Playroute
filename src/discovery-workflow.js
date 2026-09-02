@@ -24,7 +24,7 @@
 // deploy checklist in the PR/commit message.
 
 import { WorkflowEntrypoint } from "cloudflare:workers";
-import { ingestCandidate } from "./pipeline.js";
+import { ingestCandidate, validateCandidate } from "./pipeline.js";
 import { CATEGORIES, DISCOVERY_SYSTEM_PROMPT, passesQueueBar } from "./discovery-rules.js";
 
 const DISCOVERY_MODEL = "claude-opus-5"; // upgraded from Sonnet 5 (2026-09) -- low call volume (weekly, one city/run) makes the cost delta negligible, and stronger judgment directly targets this pipeline's real failure mode (fabricated/unconfirmed candidates)
@@ -72,17 +72,57 @@ async function fetchExistingSources(env, city) {
   return results.map((r) => r.source).filter(Boolean);
 }
 
+// Candidates a human has explicitly rejected from THIS pipeline before, for
+// this city. Distinct from fetchExistingSources above (which is "already
+// live in the app") -- this is "already looked at and declined," which is
+// its own signal the model needs to see, worded differently in the prompt
+// so it reads as a firm no rather than a duplicate check.
+//
+// Why this needs to exist at all, not just rely on dedup_key: the ON
+// CONFLICT(dedup_key) guard in ingestCandidate only blocks an exact repeat.
+// That holds up fine for "weekly" candidates (the key is built from
+// day_of_week, which doesn't shift) but not for one-off/monthly "dated"
+// items, where the key includes event_date and the prompt explicitly asks
+// for "the next real upcoming occurrence" -- a genuinely different date,
+// and therefore a different key, every time it's rediscovered. And even
+// for weekly items, a fresh web-search-backed run isn't byte-for-byte
+// deterministic -- slightly different title/time phrasing on a rediscovery
+// produces a different key too. Feeding rejections back into the prompt as
+// text is robust to all of that, since it works on the model's
+// understanding of "this thing," not on exact string matching.
+//
+// Capped at the 30 most recent, same reasoning as the existingSources fix
+// above: an unbounded "everything ever rejected" list only grows over
+// time and eventually dominates the prompt. 30 recent rejections is enough
+// to stop the model from repeating a mistake it just made without the list
+// becoming its own token-cost problem months from now.
+async function fetchRejectedCandidates(env, city) {
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT p.title, p.source
+     FROM pending_events p
+     JOIN scrape_sources s ON s.id = p.source_id
+     WHERE p.city = ? AND p.status = 'rejected' AND s.source_key LIKE 'llm_discovery_%'
+     ORDER BY p.decided_at DESC
+     LIMIT 30`
+  ).bind(city).all();
+  return results.filter((r) => r.title);
+}
+
 // The actual Anthropic API call. NOTE: this code is written carefully
 // against documented API patterns (web_search server tool + a final
 // JSON-code-block response) but has NOT been live-tested end-to-end --
 // this sandbox has no ANTHROPIC_API_KEY available to call the real API
 // with. Treat the first few real runs as a trial, not a fire-and-forget --
 // check the pending_events results by hand before trusting the cadence.
-async function discoverEvents(env, city, existingSources) {
+async function discoverEvents(env, city, existingSources, rejectedCandidates) {
+  const rejectedSection = rejectedCandidates && rejectedCandidates.length
+    ? `\n\nItems a human has already reviewed and REJECTED for this city -- do NOT suggest these again, even if your search finds them independently. This is a firm no, not a duplicate to merge:\n${rejectedCandidates.map((r) => `- "${r.title}"${r.source ? ` (${r.source})` : ""}`).join("\n")}`
+    : "";
+
   const userMessage = `City: ${city}, Colorado
 
 Providers Playroute already has for this city (do not rediscover these):
-${existingSources.length ? existingSources.map((s) => `- ${s}`).join("\n") : "(none yet)"}
+${existingSources.length ? existingSources.map((s) => `- ${s}`).join("\n") : "(none yet)"}${rejectedSection}
 
 Find genuinely new family/kids activity providers or events for this city.`;
 
@@ -153,11 +193,15 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
       return await fetchExistingSources(this.env, target.city);
     });
 
+    const rejectedCandidates = await step.do("fetch-rejected-candidates", async () => {
+      return await fetchRejectedCandidates(this.env, target.city);
+    });
+
     const candidates = await step.do(
       "discover-via-llm",
       { retries: { limit: 2, delay: "30 seconds", backoff: "exponential" }, timeout: "5 minutes" },
       async () => {
-        return await discoverEvents(this.env, target.city, existingSources);
+        return await discoverEvents(this.env, target.city, existingSources, rejectedCandidates);
       }
     );
 
@@ -169,7 +213,7 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
         platform: "LLM Discovery",
         confidence: "review"
       };
-      let queued = 0, skippedDuplicate = 0, droppedLowBar = 0, errors = [];
+      let queued = 0, skippedDuplicate = 0, droppedLowBar = 0, droppedNeedsInfo = 0, errors = [];
       const dropped = [];
       for (const raw of candidates) {
         try {
@@ -181,6 +225,25 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
             droppedLowBar++;
             dropped.push({ title: raw.title, reasons: bar.reasons });
             continue; // never reaches ingestCandidate / pending_events at all
+          }
+
+          // Checked BEFORE ingestCandidate, not after -- ingestCandidate
+          // itself has no "dry run" mode, it inserts unconditionally for
+          // any non-duplicate candidate regardless of severity. Unlike the
+          // regular scrapers (where a human already vetted the underlying
+          // source, so a "warn" is worth surfacing -- e.g. a real schedule
+          // conflict worth a second look), a "warn" or "error" here means
+          // the LLM's own extraction is incomplete or shaky. Queuing that
+          // for pending-review just means asking a human to go verify
+          // something the model already wasn't sure about -- exactly the
+          // "needs more info before I can approve it" clutter this is
+          // meant to keep out of the review queue entirely, not flag with
+          // a badge for later.
+          const { severity, issues } = validateCandidate(ev, sourceRow);
+          if (severity !== "clean") {
+            droppedNeedsInfo++;
+            dropped.push({ title: raw.title, reasons: issues.map((i) => i.reason) });
+            continue;
           }
 
           const res = await ingestCandidate(this.env, sourceRow, ev);
@@ -198,7 +261,7 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
         candidates.length,
         target.id
       ).run();
-      return { city: target.city, found: candidates.length, queued, skippedDuplicate, droppedLowBar, dropped, errors };
+      return { city: target.city, found: candidates.length, queued, skippedDuplicate, droppedLowBar, droppedNeedsInfo, dropped, errors };
     });
 
     return result;
