@@ -4,6 +4,12 @@
 <!-- Awin Publisher Account Verification -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  try {
+    var t = localStorage.getItem('playroute-theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
 <title>Playroute — Things to Do with Kids in Boulder, Lafayette, Erie, Louisville, Longmont & More</title>
 <meta name="description" content="Find family-friendly activities, storytimes, playgrounds, hikes, and events for kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado — updated daily.">
 <link rel="canonical" href="https://playroute.co/">
@@ -55,6 +61,40 @@
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
+  --pill-green-bg:   #D4EBC9;
+  --pill-green-text: #3A5C2A;
+  --pill-neutral-bg:   #D7DBD3;
+  --pill-neutral-text: #5B6560;
+  --icon-sparkle: #3C4E7A;
+  --nav-border: rgba(255,255,255,0.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --cream:     #1D231F;
+    --parchment: #12100F;
+    --fog:       #63726A;
+    --ink:       #EDEFE9;
+    --ink-soft:  #A7B0A4;
+    --pill-green-bg:   #2B3B2B;
+    --pill-green-text: #A8D9A0;
+    --pill-neutral-bg:   #313A34;
+    --pill-neutral-text: #A7B0A4;
+    --icon-sparkle: #8698D6;
+    --nav-border: rgba(255,255,255,0.14);
+  }
+}
+:root[data-theme="dark"] {
+  --cream:     #1D231F;
+  --parchment: #12100F;
+  --fog:       #63726A;
+  --ink:       #EDEFE9;
+  --ink-soft:  #A7B0A4;
+  --pill-green-bg:   #2B3B2B;
+  --pill-green-text: #A8D9A0;
+  --pill-neutral-bg:   #313A34;
+  --pill-neutral-text: #A7B0A4;
+  --icon-sparkle: #8698D6;
+  --nav-border: rgba(255,255,255,0.14);
 }
 .sr-only{
   position:absolute;width:1px;height:1px;padding:0;margin:-1px;
@@ -234,6 +274,20 @@ body{
 }
 .search-btn.active{background:var(--clay);color:#fff;}
 
+.theme-toggle{
+  width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  color:var(--ink-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  border-radius:100px;transition:background .15s ease,color .15s ease,transform .25s ease;
+}
+.theme-toggle:active{transform:scale(0.88) rotate(-8deg);}
+.theme-icon-moon{display:none;}
+[data-theme="dark"] .theme-icon-sun{display:none;}
+[data-theme="dark"] .theme-icon-moon{display:block;}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-icon-sun{display:none;}
+  :root:not([data-theme="light"]) .theme-icon-moon{display:block;}
+}
+
 /* ── SEARCH COACHMARK ── shown once ever (see initSearchCoachmark), never
    again after the first dismissal on any given device. */
 .search-btn.spotlight{color:var(--clay);}
@@ -284,7 +338,7 @@ body{
 .search-input-wrap{position:relative;display:flex;align-items:center;}
 .search-input{
   width:100%;padding:9px 34px 9px 13px;border-radius:10px;
-  border:1px solid var(--fog);background:#fff;
+  border:1px solid var(--fog);background:var(--cream);
   font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);
   outline:none;box-sizing:border-box;
 }
@@ -415,9 +469,9 @@ main{
   padding:2px 8px;border-radius:6px;
 }
 .tag.city{background:var(--clay);color:#fff;font-weight:600;}
-.tag.free{background:#D4EBC9;color:#3A5C2A;}
-.tag.paid{background:#D7DBD3;color:#5B6560;}
-.tag.age{background:#D8E8D8;color:#3A5438;}
+.tag.free{background:var(--pill-green-bg);color:var(--pill-green-text);}
+.tag.paid{background:var(--pill-neutral-bg);color:var(--pill-neutral-text);}
+.tag.age{background:var(--pill-green-bg);color:var(--pill-green-text);}
 .tag.badge-trending{
   display:inline-flex;align-items:center;gap:3px;
   background:var(--ember);color:#fff;font-weight:700;
@@ -611,7 +665,7 @@ main{
 .link-popover input{
   width:100%;font-size:11px;font-family:'DM Sans',sans-serif;
   padding:6px 7px;border-radius:6px;
-  border:1px solid var(--fog);background:#fff;color:var(--ink);box-sizing:border-box;
+  border:1px solid var(--fog);background:var(--cream);color:var(--ink);box-sizing:border-box;
 }
 .link-popover-actions{display:flex;gap:6px;margin-top:8px;}
 .link-popover-actions button,.link-popover-actions a{
@@ -668,7 +722,7 @@ main{
   position:fixed;bottom:0;left:0;right:0;
   display:flex;background:var(--soil);
   padding:10px 16px max(16px,env(safe-area-inset-bottom));
-  border-top:1px solid rgba(255,255,255,0.06);
+  border-top:1px solid var(--nav-border);
   z-index:10;
 }
 .bottom-nav-item{
@@ -736,6 +790,15 @@ footer{
           <div class="coachmark-close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
           <div class="coachmark-title">✨ New</div>
           Search for anything — pottery classes, storytime, a venue name, whatever you're after.
+        </div>
+      </div>
+      <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Toggle dark mode" role="button">
+        <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6" y2="6"/><line x1="18" y1="18" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6" y2="18"/><line x1="18" y1="6" x2="19.8" y2="4.2"/></svg>
+        <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+        <div class="coachmark" id="themeCoachmark" style="display:none;" onclick="dismissThemeCoachmark(event)">
+          <div class="coachmark-close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+          <div class="coachmark-title">🌙 Night owl?</div>
+          Dark mode keeps the glow down — so you can plan tomorrow's outing without waking the house tonight.
         </div>
       </div>
     </div>
@@ -952,7 +1015,7 @@ const blazes = {
   flower: `<circle cx="16" cy="11" r="3" fill="#A3852F"/><circle cx="13.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="8.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="6" cy="11" r="3" fill="#A3852F"/><circle cx="8.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="13.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="11" cy="11" r="2.8" fill="#6B5A38"/>`,
   music: `<ellipse cx="7" cy="17" rx="3" ry="2.3" fill="#8A6A9E"/><rect x="9.6" y="3" width="1.8" height="14" fill="#8A6A9E"/><polygon points="9.6,3 15,5 15,8 9.6,6" fill="#8A6A9E"/>`,
   splash: `<path d="M11 3 C8 8 4 12.5 4 16 A7 7 0 0 0 18 16 C18 12.5 14 8 11 3 Z" fill="#5B84A0"/>`,
-  sparkleNight: `<polygon points="11,1.5 13.8,8.2 21,10 13.8,11.8 11,18.5 8.2,11.8 1,10 8.2,8.2" fill="#3C4E7A"/>`
+  sparkleNight: `<polygon points="11,1.5 13.8,8.2 21,10 13.8,11.8 11,18.5 8.2,11.8 1,10 8.2,8.2" fill="var(--icon-sparkle)"/>`
 };
 const SMART_ICON_KEYWORDS = {
   flower: ["sunflower","u-pick","pumpkin patch","tulip","flower field"],
@@ -1248,6 +1311,35 @@ function dismissSearchCoachmark(e){
   clearTimeout(searchCoachmarkTimer);
   document.removeEventListener("click", handleOutsideCoachmarkTap, true);
   try{ localStorage.setItem(SEARCH_COACHMARK_KEY, "true"); }catch(e){}
+}
+
+const THEME_COACHMARK_KEY = "pr_themeCoachmarkSeen";
+let themeCoachmarkTimer = null;
+// Staggered to 3s (search coachmark fires at 1.5s) so the two never show
+// at once on a first visit -- sequential, not competing for attention.
+function initThemeCoachmark(){
+  try{
+    if(localStorage.getItem(THEME_COACHMARK_KEY)) return;
+  }catch(e){ return; }
+  setTimeout(()=>{
+    const mark = document.getElementById("themeCoachmark");
+    if(!mark) return;
+    mark.style.display = "block";
+    document.addEventListener("click", handleOutsideThemeCoachmarkTap, true);
+    themeCoachmarkTimer = setTimeout(dismissThemeCoachmark, 6000);
+  }, 3000);
+}
+function handleOutsideThemeCoachmarkTap(e){
+  const mark = document.getElementById("themeCoachmark");
+  if(mark && !mark.contains(e.target)) dismissThemeCoachmark();
+}
+function dismissThemeCoachmark(e){
+  if(e) e.stopPropagation();
+  const mark = document.getElementById("themeCoachmark");
+  if(mark) mark.style.display = "none";
+  clearTimeout(themeCoachmarkTimer);
+  document.removeEventListener("click", handleOutsideThemeCoachmarkTap, true);
+  try{ localStorage.setItem(THEME_COACHMARK_KEY, "true"); }catch(e){}
 }
 
 function clearSearch(){
@@ -1817,8 +1909,18 @@ function updateSupportCallout(){
 }
 updateSupportCallout();
 
+const THEME_STORAGE_KEY = "playroute-theme";
+function toggleTheme(){
+  const current = document.documentElement.getAttribute("data-theme")
+    || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = current === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try{ localStorage.setItem(THEME_STORAGE_KEY, next); }catch(e){}
+}
+
 loadFilterPrefs();
 initSearchCoachmark();
+initThemeCoachmark();
 initTopFeedAffiliate();
 document.getElementById("weekFeed").innerHTML=`<div class="empty-state">Loading this week's events…</div>`;
 loadData();
