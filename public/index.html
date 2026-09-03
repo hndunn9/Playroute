@@ -4,6 +4,21 @@
 <!-- Awin Publisher Account Verification -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Theme blocking script -- deliberately the very first thing after
+     charset/viewport, before any CSS or body content. Reads the saved
+     manual override (if any) and sets data-theme on <html> synchronously,
+     so the correct theme is already active by the time CSS is parsed.
+     Without this, a manual dark-mode choice would only apply after the
+     main script runs post-render -- a visible flash of the wrong theme
+     on every load. No such flash risk for the *system*-preference path
+     (no override set) since prefers-color-scheme is pure CSS and applies
+     before first paint on its own. */
+<script>
+  try {
+    var t = localStorage.getItem('playroute-theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
 <title>Playroute — Things to Do with Kids in Boulder, Lafayette, Erie, Louisville, Longmont & More</title>
 <meta name="description" content="Find family-friendly activities, storytimes, playgrounds, hikes, and events for kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado — updated daily.">
 <link rel="canonical" href="https://playroute.co/">
@@ -55,9 +70,66 @@
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
+  /* Badge pairs -- kept as their own variables (not reusing --fog/--ink-soft
+     for the fill, even where the light-mode hex happens to match) because
+     border color and badge-fill color are different jobs that only need
+     different dark-mode treatment: a badge fill needs to read as a filled
+     pill against the page, a border just needs to be visible as a hairline. */
+  --pill-green-bg:   #D4EBC9;
+  --pill-green-text: #3A5C2A;
+  --pill-neutral-bg:   #D7DBD3;
+  --pill-neutral-text: #5B6560;
+  --icon-sparkle: #3C4E7A;
+  --nav-border: rgba(255,255,255,0.06);
 }
 
-*{box-sizing:border-box;margin:0;padding:0;}
+/* ── DARK MODE ──
+   Only the "surface + text" variables flip -- --soil/--bark/--clay/--wheat/
+   --sage/--sky/--ember/--gold stay constant. Verified by hand (see repo
+   notes) that those are used as self-contained, already-dark UI chrome
+   (bottom nav, signup CTA, coachmarks -- all var(--soil) with light text
+   already baked in) or as filled accent buttons with white text, both of
+   which read correctly against either page theme without changing. Only
+   --parchment/--cream/--fog/--ink/--ink-soft actually define whether the
+   page reads light or dark, so those are the only ones with a dark twin.
+
+   Every dark value below was checked against WCAG contrast minimums
+   (4.5:1 for text, 3:1 for borders/UI components) against every real
+   pairing found in this file, not guessed -- see the two things that
+   verification actually caught: --fog needed to be substantially
+   brighter than a naive "just darken everything" pass would produce
+   (an under-lit border is invisible, not subtle), and the sparkleNight
+   icon fill needed a dedicated dark-mode override since the original
+   was tuned to sit on a light page and nearly vanishes on a dark one. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --cream:     #1D231F;
+    --parchment: #12100F;
+    --fog:       #63726A;
+    --ink:       #EDEFE9;
+    --ink-soft:  #A7B0A4;
+    --pill-green-bg:   #2B3B2B;
+    --pill-green-text: #A8D9A0;
+    --pill-neutral-bg:   #313A34;
+    --pill-neutral-text: #A7B0A4;
+    --icon-sparkle: #8698D6;
+    --nav-border: rgba(255,255,255,0.14);
+  }
+}
+/* Manual override (toggle), takes precedence over system preference either direction */
+:root[data-theme="dark"] {
+  --cream:     #1D231F;
+  --parchment: #12100F;
+  --fog:       #63726A;
+  --ink:       #EDEFE9;
+  --ink-soft:  #A7B0A4;
+  --pill-green-bg:   #2B3B2B;
+  --pill-green-text: #A8D9A0;
+  --pill-neutral-bg:   #313A34;
+  --pill-neutral-text: #A7B0A4;
+  --icon-sparkle: #8698D6;
+  --nav-border: rgba(255,255,255,0.14);
+}
 .sr-only{
   position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;
@@ -236,6 +308,30 @@ body{
 }
 .search-btn.active{background:var(--clay);color:#fff;}
 
+/* ── THEME TOGGLE ── same button footprint as .search-btn for visual
+   rhythm in the row. Both icons always exist in the DOM; which one shows
+   is pure CSS (mirrors the palette's own light/dark logic below), not
+   JS-computed on load -- avoids the icon ever drifting out of sync with
+   an OS-level theme change made while the tab stays open. */
+.theme-toggle{
+  width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  color:var(--ink-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  border-radius:100px;transition:background .15s ease,color .15s ease,transform .25s ease;
+}
+.theme-toggle:active{transform:scale(0.88) rotate(-8deg);}
+.theme-icon-moon{display:none;}
+[data-theme="dark"] .theme-icon-sun{display:none;}
+[data-theme="dark"] .theme-icon-moon{display:block;}
+/* Mirrors the palette logic above: when there's no manual override, the
+   icon follows system preference via pure CSS, same as the colors do --
+   no load-time JS needed to "detect and set" an initial icon state, which
+   would risk drifting out of sync with an OS-level theme change made
+   while the tab is open. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-icon-sun{display:none;}
+  :root:not([data-theme="light"]) .theme-icon-moon{display:block;}
+}
+
 /* ── SEARCH COACHMARK ── shown once ever (see initSearchCoachmark), never
    again after the first dismissal on any given device. */
 .search-btn.spotlight{color:var(--clay);}
@@ -286,7 +382,7 @@ body{
 .search-input-wrap{position:relative;display:flex;align-items:center;}
 .search-input{
   width:100%;padding:9px 34px 9px 13px;border-radius:10px;
-  border:1px solid var(--fog);background:#fff;
+  border:1px solid var(--fog);background:var(--cream);
   font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);
   outline:none;box-sizing:border-box;
 }
@@ -417,9 +513,9 @@ main{
   padding:2px 8px;border-radius:6px;
 }
 .tag.city{background:var(--clay);color:#fff;font-weight:600;}
-.tag.free{background:#D4EBC9;color:#3A5C2A;}
-.tag.paid{background:#D7DBD3;color:#5B6560;}
-.tag.age{background:#D8E8D8;color:#3A5438;}
+.tag.free{background:var(--pill-green-bg);color:var(--pill-green-text);}
+.tag.paid{background:var(--pill-neutral-bg);color:var(--pill-neutral-text);}
+.tag.age{background:var(--pill-green-bg);color:var(--pill-green-text);}
 .tag.badge-trending{
   display:inline-flex;align-items:center;gap:3px;
   background:var(--ember);color:#fff;font-weight:700;
@@ -670,7 +766,7 @@ main{
   position:fixed;bottom:0;left:0;right:0;
   display:flex;background:var(--soil);
   padding:10px 16px max(16px,env(safe-area-inset-bottom));
-  border-top:1px solid rgba(255,255,255,0.06);
+  border-top:1px solid var(--nav-border);
   z-index:10;
 }
 .bottom-nav-item{
@@ -739,6 +835,10 @@ footer{
           <div class="coachmark-title">✨ New</div>
           Search for anything — pottery classes, storytime, a venue name, whatever you're after.
         </div>
+      </div>
+      <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Toggle dark mode" role="button">
+        <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6" y2="6"/><line x1="18" y1="18" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6" y2="18"/><line x1="18" y1="6" x2="19.8" y2="4.2"/></svg>
+        <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
       </div>
     </div>
     <div class="search-bar" id="searchBar">
@@ -954,7 +1054,7 @@ const blazes = {
   flower: `<circle cx="16" cy="11" r="3" fill="#A3852F"/><circle cx="13.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="8.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="6" cy="11" r="3" fill="#A3852F"/><circle cx="8.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="13.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="11" cy="11" r="2.8" fill="#6B5A38"/>`,
   music: `<ellipse cx="7" cy="17" rx="3" ry="2.3" fill="#8A6A9E"/><rect x="9.6" y="3" width="1.8" height="14" fill="#8A6A9E"/><polygon points="9.6,3 15,5 15,8 9.6,6" fill="#8A6A9E"/>`,
   splash: `<path d="M11 3 C8 8 4 12.5 4 16 A7 7 0 0 0 18 16 C18 12.5 14 8 11 3 Z" fill="#5B84A0"/>`,
-  sparkleNight: `<polygon points="11,1.5 13.8,8.2 21,10 13.8,11.8 11,18.5 8.2,11.8 1,10 8.2,8.2" fill="#3C4E7A"/>`
+  sparkleNight: `<polygon points="11,1.5 13.8,8.2 21,10 13.8,11.8 11,18.5 8.2,11.8 1,10 8.2,8.2" fill="var(--icon-sparkle)"/>`
 };
 const SMART_ICON_KEYWORDS = {
   flower: ["sunflower","u-pick","pumpkin patch","tulip","flower field"],
@@ -1636,13 +1736,17 @@ function handleSignup(){
   const input=document.getElementById("emailInput");
   const note=document.getElementById("signupNote");
   const email=input.value.trim();
-  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ note.textContent="Enter a real-looking email."; note.style.color="#B2555A"; return; }
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ note.textContent="Enter a real-looking email."; note.style.color="var(--ember)"; return; }
   note.textContent="Signing you up...";
-  note.style.color="#5B6560";
+  note.style.color="var(--wheat)"; // was a hardcoded light-mode-only hex here (#5B6560) that
+    // actually failed contrast against this card's dark --soil background even before any
+    // dark-mode work -- 2.45:1, nearly illegible. --wheat is the pairing already established
+    // elsewhere in this file for text-on-soil (e.g. the open search bar), and works in both themes
+    // since --wheat is one of the constant accent colors, not one of the ones that flips.
   fetch(`${API_BASE}/api/subscribe`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})})
     .then(r=>{ if(!r.ok) throw new Error(); return r.json(); })
     .then(()=>{ note.textContent="You're in! One email a week, every Sunday."; note.style.color="#A7C0A0"; input.value=""; })
-    .catch(()=>{ note.textContent="Something went wrong — try again in a bit."; note.style.color="#B2555A"; });
+    .catch(()=>{ note.textContent="Something went wrong — try again in a bit."; note.style.color="var(--ember)"; });
 }
 
 let filtersOpen=false;
@@ -1814,6 +1918,24 @@ function updateSupportCallout(){
   }
 }
 updateSupportCallout();
+
+const THEME_STORAGE_KEY = "playroute-theme";
+// Toggling always sets an EXPLICIT override going forward (not a 3-way
+// cycle through "system/light/dark") -- simplest interaction, and matches
+// how the blocking <script> in <head> and the CSS above both already only
+// look for an explicit "light"/"dark" value, treating its absence as
+// "follow system." To flip correctly from an unset (system-following)
+// state, this reads the CURRENTLY EFFECTIVE theme first -- not just
+// "what's in localStorage" -- so the very first tap always goes to the
+// opposite of what's actually on screen, regardless of whether that came
+// from a prior override or from the OS.
+function toggleTheme(){
+  const current = document.documentElement.getAttribute("data-theme")
+    || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = current === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try{ localStorage.setItem(THEME_STORAGE_KEY, next); }catch(e){}
+}
 
 loadFilterPrefs();
 initSearchCoachmark();
