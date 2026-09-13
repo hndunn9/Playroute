@@ -2681,6 +2681,17 @@ async function getWeekAheadEvents(env) {
   // week over week. Greedily picks the single best-scored event per
   // category first, then only reuses a category if there genuinely aren't
   // 3 distinct categories worth including.
+  //
+  // Source diversity added alongside category diversity (2026-09):
+  // a venue with several separate weekly rows (e.g. a museum open every
+  // weekday, each day stored as its own row) could otherwise win its
+  // category's spotlight slot almost every week purely by having more
+  // rows to accumulate engagement on than a single-occurrence event has
+  // -- winning fair and square by the scoring rule, but not because it's
+  // actually more noteworthy. Same two-pass structure as category: try
+  // for both category AND source diversity first, only relax source
+  // diversity in the last-resort fill pass if there genuinely aren't
+  // enough distinct sources to reach 3 picks.
   const spotlightCandidates = withOccurrence
     .filter((ev) => interestScore(ev) > 0)
     .sort((a, b) => {
@@ -2690,13 +2701,33 @@ async function getWeekAheadEvents(env) {
     });
   const spotlight = [];
   const usedCategories = new Set();
+  const usedSources = new Set();
   for (const ev of spotlightCandidates) {
     if (spotlight.length >= 3) break;
     if (usedCategories.has(ev.category)) continue;
+    if (usedSources.has(ev.source)) continue;
     spotlight.push(ev);
     usedCategories.add(ev.category);
+    usedSources.add(ev.source);
   }
   if (spotlight.length < 3) {
+    // Second pass: category reuse allowed, but still hold the line on
+    // source -- the same venue shouldn't take 2 of 3 slots just because
+    // its category ran out of other options.
+    for (const ev of spotlightCandidates) {
+      if (spotlight.length >= 3) break;
+      if (spotlight.includes(ev)) continue;
+      if (usedSources.has(ev.source)) continue;
+      spotlight.push(ev);
+      usedSources.add(ev.source);
+    }
+  }
+  if (spotlight.length < 3) {
+    // Last resort: the candidate pool is genuinely too thin (fewer than
+    // 3 distinct sources with any positive interest score this week) --
+    // only now allow a repeat source, since 3 picks total still beats
+    // an artificially short spotlight over a diversity rule with nothing
+    // left to apply it to.
     for (const ev of spotlightCandidates) {
       if (spotlight.length >= 3) break;
       if (spotlight.includes(ev)) continue;
