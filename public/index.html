@@ -17,7 +17,18 @@
 <meta property="og:description" content="Family-friendly activities, storytimes, playgrounds, hikes, and events across Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead — updated daily.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://playroute.co/">
-<meta name="twitter:card" content="summary">
+<!-- Without an explicit og:image/twitter:image, link-preview crawlers
+     (iMessage, Facebook, Slack, etc.) fall back to scanning the page and
+     grabbing the first <img> tag they find in document order -- which
+     was an affiliate product photo, not anything Playroute-branded.
+     Pointing this at the actual hero photo fixes what shows up when the
+     URL is shared, regardless of what images appear later in the page. -->
+<meta property="og:image" content="https://playroute.co/hero-flatirons.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Flatirons above Boulder, Colorado">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://playroute.co/hero-flatirons.jpg">
 <meta name="twitter:title" content="Playroute — Things to Do with Kids in Boulder County & Beyond">
 <meta name="twitter:description" content="Family-friendly activities, storytimes, playgrounds, hikes, and events across Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead — updated daily.">
 <script type="application/ld+json">
@@ -842,12 +853,12 @@ footer{
       <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (footer callout)',category:'support',action:'support_click'})">☕ Wife's coffee fund</a>
     </div>
     <div class="support-row affiliate-row">
-      <a class="affiliate-thumb" href="https://keepthelittleswild.com/products/fish-camo-high-tide-uv-spring-2026?sca_ref=12113179.4RaQoQFcXXdl&sca_source=Playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/fish-camo-high-tide-uv-spring-2026',{title:'Keep the Littles Wild photo (footer callout)',category:'affiliate',action:'affiliate_click'})">
-        <img src="https://keepthelittleswild.com/cdn/shop/files/IMG-6088.jpg?v=1772588101&width=200" alt="Keep the Littles Wild" loading="lazy">
+      <a class="affiliate-thumb" href="https://keepthelittleswild.com/products/backpack-dark-blue?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/backpack-dark-blue',{title:'Keep the Littles Wild photo (footer callout)',category:'affiliate',action:'affiliate_click'})">
+        <img src="https://keepthelittleswild.com/cdn/shop/files/IMG-1938.png?v=1755261244&width=200" alt="Keep the Littles Wild" loading="lazy">
       </a>
       <div class="affiliate-copy">
         <div class="support-callout-text" style="margin-bottom:6px;">🧥 We love Keep the Littles Wild's gear for adventure-ready kids — Colorado-owned! (Affiliate)</div>
-        <a class="support-btn-secondary" href="https://keepthelittleswild.com/products/fish-camo-high-tide-uv-spring-2026?sca_ref=12113179.4RaQoQFcXXdl&sca_source=Playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/fish-camo-high-tide-uv-spring-2026',{title:'Keep the Littles Wild (footer callout)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
+        <a class="support-btn-secondary" href="https://keepthelittleswild.com/products/backpack-dark-blue?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/backpack-dark-blue',{title:'Keep the Littles Wild (footer callout)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
       </div>
     </div>
     <div class="support-row">
@@ -974,7 +985,7 @@ footer{
       <br><br>
       <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (About drawer)',category:'support',action:'support_click'})">☕ Buy my wife a coffee (she's earned it)</a>
       <br><br>
-      <a href="https://keepthelittleswild.com/products/fish-camo-high-tide-uv-spring-2026?sca_ref=12113179.4RaQoQFcXXdl&sca_source=Playroute" target="_blank" rel="noopener noreferrer sponsored" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://keepthelittleswild.com/products/fish-camo-high-tide-uv-spring-2026',{title:'Keep the Littles Wild (About drawer)',category:'affiliate',action:'affiliate_click'})">🧥 Keep the Littles Wild (affiliate)</a>
+      <a href="https://keepthelittleswild.com/products/backpack-dark-blue?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute" target="_blank" rel="noopener noreferrer sponsored" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://keepthelittleswild.com/products/backpack-dark-blue',{title:'Keep the Littles Wild (About drawer)',category:'affiliate',action:'affiliate_click'})">🎒 Keep the Littles Wild (affiliate)</a>
       <br><br>
       <a href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A" style="color:var(--ink-soft);text-decoration:underline;">💬 Send feedback</a>
     </div>
@@ -1263,12 +1274,12 @@ function initTopFeedAffiliate(){
 
   const el = document.getElementById("topFeedAffiliate");
   if(!el) return;
-  const productUrl = "https://keepthelittleswild.com/products/fish-camo-high-tide-uv-spring-2026";
+  const productUrl = "https://keepthelittleswild.com/products/backpack-dark-blue";
   const trackingUrl = `${productUrl}?sca_ref=12113179.4RaQoQFcXXdl`;
   el.innerHTML = `
     <div class="native-affiliate">
       <span class="native-affiliate-preview-tag">PREVIEW</span>
-      <img src="https://keepthelittleswild.com/cdn/shop/files/IMG-6088.jpg?v=1772588101&width=200" alt="">
+      <img src="https://keepthelittleswild.com/cdn/shop/files/IMG-1938.png?v=1755261244&width=200" alt="">
       <div class="native-affiliate-body">
         <div class="native-affiliate-text"><b>Keep the Littles Wild</b> — gear for your next adventure.</div>
         <div class="native-affiliate-tag">Colorado-owned · Affiliate</div>
@@ -1534,7 +1545,7 @@ function closeAboutDrawer(){
 
 /* ── AFFILIATE — day-closer card (see renderFeed) ── */
 function renderAffiliateCloserCard(){
-  const url = "https://keepthelittleswild.com/products/fish-camo-high-tide-uv-spring-2026?sca_ref=12113179.4RaQoQFcXXdl&sca_source=Playroute";
+  const url = "https://keepthelittleswild.com/products/backpack-dark-blue?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute";
   const card = document.createElement("div");
   card.className = "affiliate-closer-card";
   card.onclick = function(){
@@ -1542,7 +1553,7 @@ function renderAffiliateCloserCard(){
     window.open(url, '_blank', 'noopener,noreferrer');
   };
   card.innerHTML = `
-    <img class="affiliate-closer-photo" src="https://keepthelittleswild.com/cdn/shop/files/IMG-6088.jpg?v=1772588101&width=200" alt="Keep the Littles Wild" loading="lazy">
+    <img class="affiliate-closer-photo" src="https://keepthelittleswild.com/cdn/shop/files/IMG-1938.png?v=1755261244&width=200" alt="Keep the Littles Wild" loading="lazy">
     <div class="affiliate-closer-body">
       <div class="affiliate-closer-label">Affiliate</div>
       <div class="affiliate-closer-title">Keep the Littles Wild</div>
