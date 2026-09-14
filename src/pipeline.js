@@ -206,6 +206,21 @@ async function ingestCandidate(env, sourceRow, ev) {
     });
   }
   const finalSeverity = issues.some((i) => i.level === "error") ? "error" : issues.length ? "warn" : "clean";
+
+  // Error-severity candidates are never actually queued -- 2026-09 fix.
+  // "error" here always means something a human CAN'T just accept or
+  // reject as-is (a required field is missing, an enum value is invalid,
+  // display_time is a literal placeholder) -- it needs manual data entry
+  // first regardless, so queuing it just adds clutter to sort through.
+  // "warn" is left queued on purpose: for a regular scraper (unlike the
+  // LLM discovery pipeline, which drops both) a warn is typically a real,
+  // actionable signal about a source a human already vetted -- e.g. a
+  // schedule-conflict flag worth a second look -- not the scraper being
+  // unsure whether something exists at all.
+  if (finalSeverity === "error") {
+    return { queued: false, reason: "blocked-by-validation", severity: finalSeverity, issues };
+  }
+
   const dedupKey = ev.dedup_key || buildStableDedupKey(sourceKey, ev);
   const token = crypto.randomUUID();
 
@@ -257,20 +272,20 @@ async function runSources(env, { cadence = null } = {}) {
     }
     try {
       const candidates = await runner(env, source);
-      let queued = 0, skippedDuplicate = 0, errors = 0, warnings = 0;
+      let queued = 0, skippedDuplicate = 0, blockedInvalid = 0, warnings = 0;
       for (const ev of candidates) {
         const result = await ingestCandidate(env, source, ev);
         if (result.reason === "duplicate-in-events") { skippedDuplicate++; continue; }
+        if (result.reason === "blocked-by-validation") { blockedInvalid++; continue; }
         if (result.queued) {
           queued++;
-          if (result.severity === "error") errors++;
-          else if (result.severity === "warn") warnings++;
+          if (result.severity === "warn") warnings++;
         }
       }
       await env.DB.prepare(
         `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = 'ok', last_error = NULL, last_found = ? WHERE id = ?`
       ).bind(candidates.length, source.id).run();
-      summary.push({ source: source.source_key, status: "ok", found: candidates.length, queued, skippedDuplicate, errors, warnings });
+      summary.push({ source: source.source_key, status: "ok", found: candidates.length, queued, skippedDuplicate, blockedInvalid, warnings });
     } catch (e) {
       await env.DB.prepare(
         `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = 'error', last_error = ? WHERE id = ?`

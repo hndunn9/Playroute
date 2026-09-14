@@ -868,12 +868,13 @@ function extractWestminsterEventPaths(html) {
 
 /**
  * Parses a Westminster library event detail page from raw HTML text.
- * Confirmed against real page text (via search-engine snippets, not a
- * live render): location renders as "Branch · Street Address · City, ST
- * ZIP", and category/audience tags appear as a plain comma-separated line
- * before the description. Date/time markup is NOT confirmed — the regexes
- * below are placeholders. Check raw_excerpt in the pending-review email
- * against what's actually there before trusting this beyond manual review.
+ * Location renders as "Branch · Street Address · City, ST ZIP", and
+ * category/audience tags appear as a plain comma-separated line before
+ * the description. Date/time regexes confirmed 2026-09 against real
+ * detail-page text (via search-engine snippets, not a live render) --
+ * previously flagged as unverified placeholders; both matched correctly,
+ * the actual bug was downstream in fetchAndScanWestminsterLibrary
+ * discarding the successfully-parsed start time instead of using it.
  */
 function parseWestminsterLibraryDetail(html, url) {
   const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
@@ -893,7 +894,7 @@ function parseWestminsterLibraryDetail(html, url) {
   const categories = categoryAudienceMatch ? categoryAudienceMatch[1].trim() : null;
   const audience = categoryAudienceMatch ? categoryAudienceMatch[2].trim() : null;
 
-  // UNVERIFIED placeholders — replace once you've seen a real detail page.
+  // Confirmed 2026-09 against real detail-page text — see the doc comment above.
   const dateMatch = text.match(/(\w+day),?\s+([A-Za-z]+\.?\s+\d{1,2}\.?,?\s+\d{4})/i);
   const timeMatch = text.match(/(\d{1,2}:\d{2}\s*[ap]m)\s*[-–]\s*(\d{1,2}:\d{2}\s*[ap]m)/i);
 
@@ -947,14 +948,31 @@ async function fetchAndScanWestminsterLibrary() {
 
     needsReview.push({
       title: detail.title,
-      source: `Westminster Public Library${detail.location ? " — " + detail.location : ""}`,
+      // Some events' location text names the branch specifically ("College
+      // Hill", "Irving Street"), others just say "Westminster Public
+      // Library" with no sub-branch -- in the latter case, unconditionally
+      // prepending "Westminster Public Library — " again duplicated it
+      // (confirmed via a real end-to-end test, 2026-09). Only prepend when
+      // the parsed location doesn't already start with it.
+      source: detail.location && detail.location.startsWith("Westminster Public Library")
+        ? detail.location
+        : `Westminster Public Library${detail.location ? " — " + detail.location : ""}`,
       city: "Westminster",
       category: "library",
       cost: "free",
       age_min: ages.age_min,
       age_max: ages.age_max,
       day_of_week: detail.raw_day,
-      start_time: null, // unverified extraction — leave for the reviewer to fill in on approval
+      // Was hardcoded to null with a comment punting this to manual
+      // review "for every candidate" -- even though raw_start had
+      // already been successfully parsed right above and was sitting
+      // unused. Confirmed against real detail-page text (2026-09) that
+      // the date/time regexes in parseWestminsterLibraryDetail do work;
+      // to24HourFromLabel converts the result the rest of the app
+      // expects. Only falls through to null (and therefore gets held
+      // back by ingestCandidate's error-severity gate, rather than
+      // queued incomplete) on a genuine extraction miss.
+      start_time: detail.raw_start ? to24HourFromLabel(detail.raw_start) : null,
       display_time: detail.raw_start
         ? detail.raw_end
           ? `${detail.raw_start} – ${detail.raw_end}`
