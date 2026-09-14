@@ -411,6 +411,24 @@ const ICAL_LIBRARIES = [
     // No source-side age filter confirmed for Erie — this pulls
     // everything, so isKidRelevant needs to do the real filtering work.
     trustSourceFilter: false
+  },
+  {
+    city: "Lafayette",
+    url: "https://lafayettepubliclibrary.libcal.com/ical_subscribe.php?src=p&cid=10144&aud=1493",
+    // Same platform (Springshare LibCal) and same URL structure as Boulder
+    // above, cid/aud taken from the real calendar page
+    // (lafayettepubliclibrary.libcal.com/calendar/main?cid=10144&audience=1493)
+    // that Playroute's owner was manually copying events from -- built
+    // 2026-09 to replace that manual process. UNCONFIRMED, 2026-09: could
+    // not directly fetch/verify this exact URL (it's a JS-generated
+    // download link, not a crawlable page, and search wouldn't surface it
+    // to unlock a direct fetch). Very high confidence given the identical
+    // platform/pattern already confirmed working for Boulder and Erie
+    // above, but check the pending-review queue after the first live run
+    // to confirm before trusting this fully -- if cid/aud turn out wrong,
+    // this will either 404 or (more likely, given how LibCal degrades)
+    // silently return an empty/generic calendar instead of Lafayette's.
+    trustSourceFilter: true
   }
 ];
 
@@ -1597,6 +1615,41 @@ function stripHtmlToText(html) {
     .trim();
 }
 
+// Distinct from stripHtmlToText above on purpose: that one collapses ALL
+// whitespace to single spaces, which is fine for a single-line text-match
+// (My Nature Lab's schedule confirmation) but destroys the line structure
+// a block-based field-label parser (Broomfield below) depends on. This
+// inserts a newline at common block-level tag boundaries BEFORE stripping
+// tags, so labeled fields ("Location:", "Room:", etc.) stay on their own
+// lines the way they visually render.
+//
+// HONEST CAVEAT, 2026-09: this was built and tested against Broomfield's
+// page content as returned by Claude's own web-fetch tool, which already
+// does its own HTML-to-readable-text conversion -- not against the raw
+// HTML a live Cloudflare Worker's plain fetch() actually receives, which
+// could use different block tags than assumed here (div/p/li/tr/br/
+// headings) and produce different line breaks. The regex in
+// parseBroomfieldEventList was verified against the real *shape* of the
+// content (confirmed field order, confirmed badge-line variability,
+// confirmed date format) but this specific conversion step is a
+// best-effort match, not something confirmed against genuine raw source.
+// Check the pending-review queue after the first live run -- if this
+// produces zero candidates despite Broomfield's calendar clearly having
+// kids' events, this line-break assumption is the first thing to revisit.
+function htmlToLineText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|tr|td|th|section|article|header|footer|h[1-6])>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
+    .replace(/[ \t]+/g, " ")           // collapse horizontal whitespace only
+    .replace(/\n[ \t]+/g, "\n")        // trim leading spaces on each line
+    .replace(/\n{3,}/g, "\n\n")        // cap consecutive blank lines
+    .trim();
+}
+
 // REWRITTEN 2026-09 -- the site's Story Time program changed shape entirely
 // since this was first built: it used to be a themed, rotating book/animal
 // series on Sunday + Thursday at 9:15am, scraped as individually-dated
@@ -2370,6 +2423,129 @@ SOURCE_RUNNERS.erie_ical = async () => {
   const lib = ICAL_LIBRARIES.find((l) => l.city === "Erie");
   return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
 };
+SOURCE_RUNNERS.lafayette_ical = async () => {
+  const lib = ICAL_LIBRARIES.find((l) => l.city === "Lafayette");
+  return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
+};
+
+// ---------------------------------------------------------------------
+// Broomfield Library (compass.broomfield.org) -- text-block scraper.
+// Built 2026-09 to replace fully manual entry (this source previously had
+// no runner at all -- mode: "manual" in scrape_sources, meaning every
+// Broomfield Library event in the app had been hand-typed from
+// screenshots/PDF exports the owner sent).
+//
+// Uses /events/list, NOT /events/upcoming -- upcoming's rendered text has
+// no per-event date at all (confirmed by direct comparison), while list's
+// date line ("Monday, December 23, 2024 at 4:00pm - 5:00pm") is present,
+// unambiguous, and used here as the primary anchor for each event block,
+// rather than relying on fragile fixed line-position parsing. Verified
+// against real fetched page text, including the awkward cases: a variable
+// number of interstitial badge lines (Full/Required/Registration Open/
+// Cancelled/Seats Remaining) between the location line and the next
+// labeled field, and a cancelled event ("CANCELLED - " title prefix,
+// filtered out below).
+//
+// CAVEAT, 2026-09: the real content fetched to build and test this
+// parser returned December 2024 dates despite being fetched today --
+// the same stale-cache behavior hit earlier with other sources through
+// this same fetch tool. The regex/parsing logic itself is verified
+// against real markup; live freshness from the actual Cloudflare Worker
+// (a plain server-side fetch, not subject to this tool's caching) could
+// not be independently confirmed the same way. Check the pending-review
+// queue after the first real run.
+const BROOMFIELD_LIST_URL = "https://compass.broomfield.org/events/list";
+
+// Broomfield's own audience taxonomy, mapped to age ranges. Events tagged
+// with NONE of these (i.e. only Adults/55+/Teens) are filtered out
+// entirely rather than queued -- this source covers the whole library's
+// calendar, most of which (tech tutoring, adult book clubs, etc.) is
+// correctly out of scope for a kids/family app.
+function ageFromBroomfieldGroups(groupText) {
+  const g = (groupText || "").toLowerCase();
+  let min = null, max = null;
+  const widen = (lo, hi) => {
+    if (min === null || lo < min) min = lo;
+    if (max === null || hi > max) max = hi;
+  };
+  if (g.includes("birth to pre-k") || g.includes("birth")) widen(0, 5);
+  if (g.includes("elementary")) widen(5, 11);
+  if (g.includes("tweens")) widen(10, 13);
+  if (g.includes("families") || g.includes("everyone")) widen(0, 18);
+  return min === null ? null : { age_min: min, age_max: max };
+}
+
+function parseBroomfieldEventList(html) {
+  const text = htmlToLineText(html);
+  // \n+ (not a literal \n) throughout on purpose -- genuine block-tag HTML
+  // (div/p per field) produces variable blank-line spacing depending on
+  // markup density, confirmed by testing against constructed raw HTML with
+  // real tags, not just pre-cleaned text. A rigid single-\n version passed
+  // against clean text samples but silently matched zero events against
+  // realistic tag-derived spacing -- exactly the failure mode most likely
+  // to go unnoticed (source "runs fine," finds nothing, nobody investigates
+  // an empty diff).
+  const BADGE = "(?:Full|Required|Virtual Event|Cancelled|Registration Open|Registration Required|Seats Remaining: \\d+)\\n+";
+  const BLOCK_RE = new RegExp(
+    "([^\\n]{2,90})\\n+" +
+    "(\\w+), (\\w+ \\d{1,2}, \\d{4}) at (\\d{1,2}:\\d{2}[ap]m) - (\\d{1,2}:\\d{2}[ap]m)\\n+" +
+    "[^\\n]+\\n+" + // "Room at Location" descriptive line -- not used, the labeled fields below are more reliable
+    "Program Type:\\n+[^\\n]+\\n+" +
+    "Age Group:\\n+[^\\n]+\\n+" +
+    "(?:" + BADGE + ")*" +
+    "Location:\\s*([^\\n]+)\\n+" +
+    "Room:\\s*([^\\n]+)\\n+" +
+    "Age Group:\\s*([^\\n]+)\\n+" +
+    "Program Type:\\s*([^\\n]+)\\n+" +
+    "(?:" + BADGE + ")*" +
+    "Event Details:\\n+" +
+    "([\\s\\S]*?)\\n+" +
+    "Disclaimer",
+    "g"
+  );
+
+  const results = [];
+  let m;
+  while ((m = BLOCK_RE.exec(text)) !== null) {
+    const [, rawTitle, weekday, dateStr, startRaw, endRaw, location, room, ageGroupText, programType, details] = m;
+    const title = decodeHtmlEntities(rawTitle).trim();
+    if (/^CANCELLED\b/i.test(title)) continue; // explicitly cancelled -- don't queue a candidate for it
+
+    const ages = ageFromBroomfieldGroups(ageGroupText);
+    if (!ages) continue; // Adults/55+/Teens-only -- out of scope for this app
+
+    const d = new Date(`${dateStr} ${startRaw}`);
+    if (isNaN(d.getTime()) || d < new Date(Date.now() - 864e5)) continue; // unparseable or already past
+
+    results.push({
+      title,
+      source: `Broomfield Library & Auditorium${room && room !== location ? ` — ${room}` : ""}`,
+      city: "Broomfield",
+      category: "library",
+      cost: "free", // every event seen on this source across both list/upcoming views was free; revisit if a paid one ever surfaces
+      age_min: ages.age_min,
+      age_max: ages.age_max,
+      day_of_week: weekday,
+      event_date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+      start_time: to24HourFromLabel(startRaw),
+      display_time: `${startRaw} – ${endRaw}`,
+      recurrence: "dated", // each occurrence scraped individually; a recurring program naturally re-appears each future date it's listed
+      note: truncateAtBoundary(decodeHtmlEntities(details).trim(), 400) || `Program Type: ${programType.trim()}.`,
+      source_url: BROOMFIELD_LIST_URL,
+      verified: 1
+    });
+  }
+  return results;
+}
+
+async function fetchAndScanBroomfieldLibrary() {
+  const res = await fetch(BROOMFIELD_LIST_URL, {
+    headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
+  });
+  if (!res.ok) throw new Error(`Broomfield Library fetch failed: ${res.status}`);
+  return parseBroomfieldEventList(await res.text());
+}
+SOURCE_RUNNERS.broomfield_library = async () => fetchAndScanBroomfieldLibrary();
 
 async function handleEvents(env, url) {
   const city = url.searchParams.get("city");
