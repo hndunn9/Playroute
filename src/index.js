@@ -1559,8 +1559,7 @@ SOURCE_RUNNERS.anythink_thornton = async () => fetchAndScanAnythinkThornton();
 // it looks -- don't flip that to 'trusted' without confirming the regex
 // against a real page fetch first (log _rawTextSample the way the Boulder
 // scraper does).
-const MY_NATURE_LAB_URL = "https://www.mynaturelab.org/story-time";
-const MY_NATURE_LAB_MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December";
+const MY_NATURE_LAB_URL = "https://www.mynaturelab.org/special-events";
 
 function stripHtmlToText(html) {
   return html
@@ -1572,73 +1571,56 @@ function stripHtmlToText(html) {
     .trim();
 }
 
-// Matches: "<Title> ... Sunday, <Month> <Day> and Thursday, <Month> <Day>
-// ... Story: <Book> by <Author> ... Animal Encounter: <Animal>" blocks,
-// repeated down the page. Title capture is greedy-limited and best-effort --
-// this is the part most likely to need adjusting against real HTML, since
-// heading tags don't survive stripHtmlToText the same way they did in the
-// markdown-style fetch this was drafted against.
-const MY_NATURE_LAB_BLOCK_RE = new RegExp(
-  `([A-Z][A-Za-z0-9:'!,.\\- ]{2,60}?)\\s*` +
-  `Sunday,\\s*(${MY_NATURE_LAB_MONTHS})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\s+and\\s+Thursday,\\s*(${MY_NATURE_LAB_MONTHS})?\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s*` +
-  `Story:\\s*(.+?)\\s+by\\s+(.+?)\\s*` +
-  `Animal Encounter:\\s*(.+?)(?=\\s[A-Z][A-Za-z0-9:'!,.\\- ]{2,60}?\\s*Sunday,|$)`,
-  "gi"
-);
-
-function nextDateForMonthDay(monthName, day, now) {
-  const monthIdx = MY_NATURE_LAB_MONTHS.split("|").findIndex(m => m.toLowerCase() === monthName.toLowerCase());
-  if (monthIdx < 0) return null;
-  let year = now.getFullYear();
-  let d = new Date(year, monthIdx, +day);
-  // If that date already passed by more than a week, assume it's next year's occurrence.
-  if (d < new Date(now.getTime() - 7 * 864e5)) d = new Date(year + 1, monthIdx, +day);
-  return d;
-}
-
+// REWRITTEN 2026-09 -- the site's Story Time program changed shape entirely
+// since this was first built: it used to be a themed, rotating book/animal
+// series on Sunday + Thursday at 9:15am, scraped as individually-dated
+// candidates via a regex matching that specific block structure. The old
+// regex (matched against "Sunday, <Month> <Day> and Thursday...Story:
+// <Book> by <Author>...Animal Encounter: <Animal>") silently stopped
+// matching anything once the page was redesigned, so the scraper kept
+// reporting "ok" every month while actually finding nothing -- the
+// events table quietly filled up with only-ever-older stale entries with
+// no fresh replacements, which is what actually prompted this fix.
+//
+// The current real format ("Don't miss Story Time - FREE on Sundays &
+// Wednesdays!...Sundays and Wednesdays from 9–10 AM — free for all ages")
+// is a simple, stable weekly commitment, not date-specific themed content
+// -- there's no per-date detail left to scrape. So this is no longer a
+// candidate-generating scraper at all: the two weekly rows (Sunday +
+// Wednesday, 9-10am) are entered directly and don't expire. This function's
+// only job now is periodic confirmation that the schedule text on the page
+// still matches what's in the database -- if My Nature Lab changes it
+// again, this surfaces ONE flag for a human to check, rather than trying
+// to guess-parse whatever the new format turns out to be.
 async function fetchAndScanMyNatureLab() {
   const res = await fetch(MY_NATURE_LAB_URL, {
     headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
   });
   if (!res.ok) throw new Error(`My Nature Lab fetch failed: ${res.status}`);
-  const html = await res.text();
-  const text = stripHtmlToText(html);
-  const now = new Date();
-  const needsReview = [];
+  const text = stripHtmlToText(await res.text());
 
-  let m;
-  while ((m = MY_NATURE_LAB_BLOCK_RE.exec(text)) !== null) {
-    const [, rawTitle, sunMonth, sunDay, thuMonthMaybe, thuDay, book, author, animal] = m;
-    const thuMonth = thuMonthMaybe || sunMonth; // "and Thursday, 9th" with no repeated month name
-    const title = `Story Time: ${rawTitle.trim()}`;
+  const scheduleConfirmed = /Sundays?\s*(&|and)\s*Wednesdays?/i.test(text) && /9\s*[–-]\s*10\s*AM/i.test(text);
+  if (scheduleConfirmed) return []; // matches what's already on file -- nothing to queue
 
-    for (const [dow, month, day] of [["Sunday", sunMonth, sunDay], ["Thursday", thuMonth, thuDay]]) {
-      const d = nextDateForMonthDay(month, day, now);
-      if (!d) continue;
-      const eventDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      needsReview.push({
-        title,
-        source: "My Nature Lab",
-        city: "Louisville",
-        category: "museum",
-        cost: "free",
-        age_min: 0,
-        age_max: 18,
-        day_of_week: dow,
-        event_date: eventDateStr,
-        start_time: "09:15",
-        display_time: "9:15 AM – 9:45 AM",
-        recurrence: "dated",
-        note: `Story: ${book.trim()} by ${author.trim()}. Animal encounter: ${animal.trim()}. Doors open 9am; storytime runs 9:15-9:45. Free, all ages. UNVERIFIED SCRAPE -- selectors written against rendered text, not raw HTML; confirm this matches the live page before trusting it.`,
-        source_url: MY_NATURE_LAB_URL,
-        raw_excerpt: truncateAtBoundary(m[0], 400),
-        dedup_key: `mynaturelab:${eventDateStr}:${rawTitle.trim().toLowerCase().replace(/\s+/g, "-")}`,
-        _assumedTime: true, // 09:15 is always hardcoded here, never actually parsed from the page
-        _ageGuessed: true   // 0-18 is a broad fallback, not derived from real per-topic age info
-      });
-    }
-  }
-  return needsReview;
+  // Schedule text no longer matches what the two standing weekly rows
+  // assume -- flag it rather than silently doing nothing (the old
+  // failure mode) or guessing at a new format.
+  return [{
+    title: "My Nature Lab Story Time schedule may have changed",
+    source: "My Nature Lab",
+    city: "Louisville",
+    category: "museum",
+    cost: "free",
+    age_min: 0,
+    age_max: 18,
+    day_of_week: "Sunday",
+    start_time: "09:00",
+    display_time: "9:00 – 10:00 AM (unconfirmed -- see note)",
+    recurrence: "weekly",
+    note: `The page text no longer confirms the expected "Sundays & Wednesdays, 9-10 AM" schedule. Verify against ${MY_NATURE_LAB_URL} and update the two standing weekly Story Time rows directly if it's changed.`,
+    source_url: MY_NATURE_LAB_URL,
+    raw_excerpt: truncateAtBoundary(text, 400)
+  }];
 }
 
 SOURCE_RUNNERS.my_nature_lab = async () => fetchAndScanMyNatureLab();
