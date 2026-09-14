@@ -1582,12 +1582,13 @@ function stripHtmlToText(html) {
 // events table quietly filled up with only-ever-older stale entries with
 // no fresh replacements, which is what actually prompted this fix.
 //
-// The current real format ("Don't miss Story Time - FREE on Sundays &
-// Wednesdays!...Sundays and Wednesdays from 9–10 AM — free for all ages")
-// is a simple, stable weekly commitment, not date-specific themed content
-// -- there's no per-date detail left to scrape. So this is no longer a
-// candidate-generating scraper at all: the two weekly rows (Sunday +
-// Wednesday, 9-10am) are entered directly and don't expire. This function's
+// The current real format is a simple, stable weekly commitment (Fridays
+// & Sundays, 9-10 AM -- confirmed directly, 2026-09, superseding an
+// earlier page-text read that said Sundays & Wednesdays), not
+// date-specific themed content -- there's no per-date detail left to
+// scrape. So this is no longer a candidate-generating scraper at all: the
+// two weekly rows (Friday + Sunday, 9-10am) are entered directly and
+// don't expire. This function's
 // only job now is periodic confirmation that the schedule text on the page
 // still matches what's in the database -- if My Nature Lab changes it
 // again, this surfaces ONE flag for a human to check, rather than trying
@@ -1599,7 +1600,7 @@ async function fetchAndScanMyNatureLab() {
   if (!res.ok) throw new Error(`My Nature Lab fetch failed: ${res.status}`);
   const text = stripHtmlToText(await res.text());
 
-  const scheduleConfirmed = /Sundays?\s*(&|and)\s*Wednesdays?/i.test(text) && /9\s*[–-]\s*10\s*AM/i.test(text);
+  const scheduleConfirmed = /Fridays?\s*(&|and)\s*Sundays?/i.test(text) && /9\s*[–-]\s*10\s*AM/i.test(text);
   if (scheduleConfirmed) return []; // matches what's already on file -- nothing to queue
 
   // Schedule text no longer matches what the two standing weekly rows
@@ -1617,7 +1618,7 @@ async function fetchAndScanMyNatureLab() {
     start_time: "09:00",
     display_time: "9:00 – 10:00 AM (unconfirmed -- see note)",
     recurrence: "weekly",
-    note: `The page text no longer confirms the expected "Sundays & Wednesdays, 9-10 AM" schedule. Verify against ${MY_NATURE_LAB_URL} and update the two standing weekly Story Time rows directly if it's changed.`,
+    note: `The page text no longer confirms the expected "Fridays & Sundays, 9-10 AM" schedule. Verify against ${MY_NATURE_LAB_URL} and update the two standing weekly Story Time rows directly if it's changed.`,
     source_url: MY_NATURE_LAB_URL,
     raw_excerpt: truncateAtBoundary(text, 400)
   }];
