@@ -2988,10 +2988,19 @@ async function queueChangeCandidate(env, ev) {
   ).run();
 }
 
-async function runSourceVerification(env) {
+async function runSourceVerification(env, cadence = null) {
+  // cadence filter added alongside the weekly-a/b/c split above: without
+  // this, verification would re-run the full fetch pattern for EVERY
+  // linked source regardless of which group's invocation called it,
+  // undoing most of the point of splitting the scrape itself into three
+  // separate subrequest budgets -- this function's own re-fetching turned
+  // out to be a bigger contributor to the original overload than the
+  // initial scrape was. Each group now only verifies its own sources.
   const { results: sources } = await env.DB.prepare(
-    `SELECT * FROM scrape_sources WHERE mode = 'auto' AND enabled = 1`
-  ).all();
+    cadence
+      ? `SELECT * FROM scrape_sources WHERE mode = 'auto' AND enabled = 1 AND cadence = ?`
+      : `SELECT * FROM scrape_sources WHERE mode = 'auto' AND enabled = 1`
+  ).bind(...(cadence ? [cadence] : [])).all();
 
   let totalFlagged = 0;
   const errors = [];
@@ -3571,12 +3580,40 @@ export default {
         ctx.waitUntil(
           runWeeklyEngagementDigest(env).then(() => runWeeklyDigest(env))
         );
+        // weekly cadence split into three groups (weekly-a/b/c), each its
+        // OWN scheduled trigger and therefore its own Worker invocation
+        // with a fresh subrequest budget -- 2026-09 fix. Previously all
+        // ~9 weekly scrapers ran sequentially in this ONE invocation and
+        // shared one subrequest limit; once enough sources were added,
+        // exceeding that limit kills the invocation outright (not
+        // catchable by try/catch), so anything later in the loop than
+        // whichever source tipped it over silently never ran at all --
+        // confirmed via two sources (anythink_huron_thornton,
+        // anythink_nature_library) that had literally never executed.
+        // This trigger now only runs group A; B and C fire from their own
+        // cron entries below, at different times the same day.
         ctx.waitUntil(
-          runSources(env, { cadence: "weekly" })
-            .then(() => runSourceVerification(env))
-            .then(() => emailPendingReviewIfAny(env))
+          runSources(env, { cadence: "weekly-a" })
+            .then(() => runSourceVerification(env, "weekly-a"))
         );
       }
+      return;
+    }
+    if (event.cron === "0 20 * * 7") {
+      // Group B -- 2 hours after group A, its own fresh invocation.
+      ctx.waitUntil(runSources(env, { cadence: "weekly-b" }).then(() => runSourceVerification(env, "weekly-b")));
+      return;
+    }
+    if (event.cron === "0 22 * * 7") {
+      // Group C -- last of the three. Runs the pending-review email here
+      // (not on A or B) so you still get ONE consolidated Sunday email
+      // covering all three groups' results, not three separate ones --
+      // timed late enough that A and B have had time to finish first.
+      ctx.waitUntil(
+        runSources(env, { cadence: "weekly-c" })
+          .then(() => runSourceVerification(env, "weekly-c"))
+          .then(() => emailPendingReviewIfAny(env))
+      );
       return;
     }
     if (event.cron === "0 9 1 * *") {
