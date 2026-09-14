@@ -144,14 +144,40 @@ function isInSeason(seasonStart, seasonEnd, date) {
   return dateMD >= startMD || dateMD <= endMD;
 }
 
+// For one-off blackout windows on an otherwise-recurring event (e.g. a
+// library's posted storytime breaks) -- distinct from season_start/end,
+// which only expresses ONE continuous active window and can't represent
+// several separate gaps within a single recurring series. Stored as a
+// JSON array of [startDate, endDate] pairs (full YYYY-MM-DD, not MM-DD --
+// unlike season_start/end these are specific to a given year's posted
+// schedule, not a yearly-recurring rule, so they need refreshing when a
+// venue posts next year's break dates). ev.excluded_ranges is expected to
+// already be a parsed array (see getWeekAheadEvents/getOccurrence
+// call sites, which JSON.parse it once per request rather than
+// re-parsing per candidate inside this loop).
+function isInBlackout(excludedRanges, date) {
+  if (!excludedRanges || !excludedRanges.length) return false;
+  const dateStr = toMountainDateStr(date);
+  return excludedRanges.some(([start, end]) => start && end && dateStr >= start && dateStr <= end);
+}
+
 function getOccurrence(ev, now = new Date()) {
   let occ;
   const durationMs = (ev.duration_minutes || 60) * 60000;
+  // Parsed once per event, not once per candidate-week inside the walk-
+  // forward loop below. Malformed/missing JSON just means "no blackout
+  // ranges" rather than throwing -- a bad value here shouldn't take the
+  // whole event off the site.
+  let excludedRanges = [];
+  if (ev.excluded_ranges) {
+    try { excludedRanges = JSON.parse(ev.excluded_ranges); } catch (e) { excludedRanges = []; }
+  }
   if (ev.recurrence === "dated") {
     occ = getDatedOccurrence(ev.event_date, ev.start_time);
     if (!occ) return null;
     if (occ.getTime() + durationMs < now.getTime()) return null; // fully ended, not just started
     if (occ && !isInSeason(ev.season_start, ev.season_end, occ)) return null;
+    if (occ && isInBlackout(excludedRanges, occ)) return null;
     return occ;
   } else if (ev.recurrence === "irregular") {
     return null;
@@ -184,7 +210,7 @@ function getOccurrence(ev, now = new Date()) {
       occ = getNextWeeklyOccurrence(ev.day_of_week, ev.start_time, cursor, durationMs);
     }
     if (!occ) return null;
-    if (isInSeason(ev.season_start, ev.season_end, occ)) return occ;
+    if (isInSeason(ev.season_start, ev.season_end, occ) && !isInBlackout(excludedRanges, occ)) return occ;
     // Nudge past this occurrence's actual END (not just its start) so the
     // duration-aware helpers above correctly treat it as expired and roll
     // forward to the next cycle, rather than returning the same candidate
