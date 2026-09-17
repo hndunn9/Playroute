@@ -441,6 +441,16 @@ main{
   position:sticky;top:0;z-index:5;
   background:var(--cream);padding:10px 0 8px;
 }
+/* ── RECOMMENDED SECTION ── feature-gated (see isRecommendedFeatureOn),
+   sits above the day-by-day list. Distinct clay accent (not the plain
+   day-heading style) so it visually reads as "different kind of thing,"
+   not just another day group. */
+.recommended-section{margin-bottom:6px;}
+.recommended-heading{
+  font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;
+  text-transform:uppercase;letter-spacing:0.1em;color:var(--clay);
+  margin:4px 0 8px;
+}
 .day-heading .day-label{
   font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;
   text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);
@@ -1565,6 +1575,46 @@ function renderAffiliateCloserCard(){
 }
 
 /* ── RENDER FEED ── */
+// Extracted from renderFeed's day-loop so the same card markup can be
+// reused by the "Recommended for you" strip below without duplicating the
+// whole template -- lifted as-is, not rewritten, to avoid touching
+// working render logic while adding the new feature.
+function buildEventCard(ev){
+  const card=document.createElement("div");
+  card.className="event-card";
+  card.dataset.eventId=ev.id;
+  card.onclick=function(){ toggleCard(this, ev); };
+  card.innerHTML=`
+    <div class="card-summary">
+      <div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>
+      <div class="event-main">
+        <div class="event-title">${ev.title}</div>
+        <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
+        <div class="tag-row">
+          ${ev.badge==="trending"?`<span class="tag badge-trending">${ICONS.trendUp} Trending</span>`:""}
+          ${ev.badge==="popular"?`<span class="tag badge-popular">${ICONS.star} Popular</span>`:""}
+          ${!ev.badge && ev.is_new?`<span class="tag badge-new">${ICONS.sparkle} New</span>`:""}
+          <span class="tag city">${ev.city}</span>
+          <span class="tag ${ev.cost}">${ev.cost==="free"?"Free":"Paid"}</span>
+          <span class="tag age">Ages ${formatAgeRange(ev.age_min,ev.age_max)}</span>
+        </div>
+      </div>
+      <div class="expand-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
+    </div>
+    <div class="card-detail">
+      <div class="card-detail-inner">
+        <div class="card-detail-note">${ev.note||""}</div>
+        <div class="card-detail-actions">
+          <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}',action:'source_click'})">View source ↗</a>
+          <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
+          <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}')" title="Share" aria-label="Share">${ICONS.share}</a>
+        </div>
+      </div>
+    </div>
+  `;
+  return card;
+}
+
 function renderFeed(){
   const feed = document.getElementById("weekFeed");
   feed.innerHTML = "";
@@ -1590,6 +1640,19 @@ function renderFeed(){
     // too, it should be a badge/label, not a reordering that breaks
     // chronological scanning.
 
+  // "Recommended for you" -- feature-gated, see isRecommendedFeatureOn().
+  // Rendered from the SAME already-filtered/already-loaded `upcoming` pool,
+  // not a separate fetch -- no new network cost. Sits above the day-by-day
+  // list, its own labeled section, not mixed into the chronological feed.
+  const recommended = getRecommendedEvents(upcoming);
+  if(recommended.length){
+    const section = document.createElement("div");
+    section.className = "recommended-section";
+    section.innerHTML = `<div class="recommended-heading">✨ Recommended for you</div>`;
+    recommended.forEach(ev=>{ section.appendChild(buildEventCard(ev)); });
+    feed.appendChild(section);
+  }
+
   let shown=0, lastHeading=null, affiliateInserted=false;
   const dayCounts={};
   upcoming.forEach(ev=>{ dayCounts[ev.occurrence_label]=(dayCounts[ev.occurrence_label]||0)+1; });
@@ -1612,38 +1675,7 @@ function renderFeed(){
       lastHeading=heading;
     }
     shown++;
-    const card=document.createElement("div");
-    card.className="event-card";
-    card.dataset.eventId=ev.id;
-    card.onclick=function(){ toggleCard(this, ev); };
-    card.innerHTML=`
-      <div class="card-summary">
-        <div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>
-        <div class="event-main">
-          <div class="event-title">${ev.title}</div>
-          <div class="event-meta"><span class="event-time">${ev.display_time}</span> · ${ev.source}</div>
-          <div class="tag-row">
-            ${ev.badge==="trending"?`<span class="tag badge-trending">${ICONS.trendUp} Trending</span>`:""}
-            ${ev.badge==="popular"?`<span class="tag badge-popular">${ICONS.star} Popular</span>`:""}
-            ${!ev.badge && ev.is_new?`<span class="tag badge-new">${ICONS.sparkle} New</span>`:""}
-            <span class="tag city">${ev.city}</span>
-            <span class="tag ${ev.cost}">${ev.cost==="free"?"Free":"Paid"}</span>
-            <span class="tag age">Ages ${formatAgeRange(ev.age_min,ev.age_max)}</span>
-          </div>
-        </div>
-        <div class="expand-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
-      </div>
-      <div class="card-detail">
-        <div class="card-detail-inner">
-          <div class="card-detail-note">${ev.note||""}</div>
-          <div class="card-detail-actions">
-            <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}',action:'source_click'})">View source ↗</a>
-            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
-            <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}')" title="Share" aria-label="Share">${ICONS.share}</a>
-          </div>
-        </div>
-      </div>
-    `;
+    const card=buildEventCard(ev);
     feed.appendChild(card);
     wireInlineCalendar(ev, card);
   });
@@ -1838,7 +1870,59 @@ function handleEventDeepLink(){
 // the event's real category. Older code sent action-type strings through
 // `category` alone; that's fixed at each call site below, but the server
 // still tolerates the old shape from any stale cached page.
+const AFFINITY_KEY = "playroute-affinity-v1";
+// Tier 1 of the "relevant to me" feature: pure client-side, never leaves
+// the device, no new backend/infra. Tallies category/city on every real
+// click trackClick() already logs (source-click, calendar-add, share --
+// meta.category/meta.city are already passed at every real call site, so
+// this needed zero new instrumentation, just a hook into the existing one).
+function recordAffinity(meta){
+  if(!meta || (!meta.category && !meta.city)) return;
+  try{
+    const raw = localStorage.getItem(AFFINITY_KEY);
+    const aff = raw ? JSON.parse(raw) : {categories:{}, cities:{}, totalClicks:0};
+    if(meta.category) aff.categories[meta.category] = (aff.categories[meta.category]||0) + 1;
+    if(meta.city) aff.cities[meta.city] = (aff.cities[meta.city]||0) + 1;
+    aff.totalClicks = (aff.totalClicks||0) + 1;
+    localStorage.setItem(AFFINITY_KEY, JSON.stringify(aff));
+  }catch(e){}
+}
+
+// Feature gate -- OFF by default. Flip to true to launch for everyone;
+// until then, only visible via ?ff_recommended=1, so you can preview it
+// live on the real site without editing code each time, and without any
+// regular visitor seeing it while it's still being evaluated.
+const FEATURE_RECOMMENDED_ENABLED = false;
+function isRecommendedFeatureOn(){
+  try{
+    if(new URLSearchParams(location.search).get('ff_recommended')==='1') return true;
+  }catch(e){}
+  return FEATURE_RECOMMENDED_ENABLED;
+}
+
+// Don't show anything until there's real signal -- an empty or
+// single-click-based "recommended" section reads as broken, not helpful.
+// Category weighted 2x city on purpose: two clicks in "library" says more
+// about intent than one library + one city coincidence would.
+const RECOMMENDED_MIN_SIGNAL = 3;
+const RECOMMENDED_MAX_ITEMS = 4;
+function getRecommendedEvents(pool){
+  if(!isRecommendedFeatureOn()) return [];
+  let aff;
+  try{
+    const raw = localStorage.getItem(AFFINITY_KEY);
+    aff = raw ? JSON.parse(raw) : null;
+  }catch(e){ aff = null; }
+  if(!aff || (aff.totalClicks||0) < RECOMMENDED_MIN_SIGNAL) return [];
+  const scored = pool
+    .map(ev=>({ ev, score: (aff.categories[ev.category]||0)*2 + (aff.cities[ev.city]||0) }))
+    .filter(s=>s.score>0);
+  scored.sort((a,b)=> b.score-a.score || new Date(a.ev.occurrence)-new Date(b.ev.occurrence));
+  return scored.slice(0, RECOMMENDED_MAX_ITEMS).map(s=>s.ev);
+}
+
 function trackClick(url,meta){
+  recordAffinity(meta);
   try{
     fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action}),keepalive:true}).catch(()=>{});
   }catch(err){}
