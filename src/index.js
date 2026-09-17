@@ -2132,6 +2132,97 @@ async function handleCoverageAlerts(env) {
   return json({ alerts, checkedCities: results.length, generatedAt: new Date().toISOString() });
 }
 
+// ── MANUAL SOURCE GAPS ── Holly's own request: "highlight which [manual
+// sources] don't have any future events listed, so it can remind me to go
+// manually pull them again." Manual sources (mode='manual' in
+// scrape_sources) have no code runner at all -- someone has to visit the
+// real site and re-enter events by hand, so there's no automatic signal
+// when one has quietly gone stale the way there is for scraped sources.
+//
+// Deliberately excludes llm_discovery_* sources even though they're also
+// mode='manual' -- those aren't something Holly manually re-pulls by
+// visiting a site, they're the LLM discovery pipeline's own tracking rows,
+// reviewed through the pending-events queue instead. This feature is
+// specifically about the "go check this website by hand" kind of source.
+//
+// WHY THIS CAN'T BE A CLEAN DATABASE JOIN: only 216 of ~1,300+ events have
+// source_id populated at all -- most events (including nearly everything
+// added by hand this year) have no formal foreign-key link back to
+// scrape_sources. A strict JOIN would report nearly every manual source as
+// "no future events" even when it's actually fine, which is worse than
+// not having this feature at all. So this matches on a hand-curated
+// keyword per source instead, checked as a substring against events.source
+// (case-insensitive, NOT restricted to the source's own city -- several
+// real sources turned out to have their events filed under a different
+// city than the scrape_sources row itself claims, a separate drift worth
+// knowing about but not this feature's job to fix).
+//
+// Sources with no reliable keyword (platform listed as "Squarespace",
+// "Unknown", "Eventbrite", "CivicPlus/CivicEngage", etc. -- describing the
+// underlying website tech, not a specific organization name) are listed
+// separately as "can't auto-check" rather than either guessing a keyword
+// that might silently mismatch, or wrongly asserting they're empty.
+//
+// MAINTENANCE NOTE: add new manual sources here by their scrape_sources.id
+// when they're created, or they'll silently show up as "can't auto-check"
+// forever -- there's no way to derive a reliable keyword automatically
+// from an arbitrary platform-name string.
+const MANUAL_SOURCE_KEYWORDS = {
+  8: "City of Louisville",
+  10: "Thorne",
+  12: "City of Longmont Recreation",
+  13: "YA YA Farm",
+  14: "Bee Hugger",
+  15: "Luvin Arms",
+  16: "Strawberry Fields Farm",
+  18: "Jeff and Paige",
+  19: "Kidcreate",
+  21: "Museum of Boulder",
+  22: "Tinker Art Studio",
+  23: "Junkyard Social Club",
+  24: "Town of Mead",
+  26: "Nederland Community Library",
+  27: "Boulder County Parks",
+  28: "Downtown Longmont",
+  29: "Relish Food Hall",
+  33: "Nature Program"
+};
+
+async function handleManualSourceGaps(env) {
+  const { results: sources } = await env.DB.prepare(
+    `SELECT id, city, platform, source_key FROM scrape_sources
+     WHERE mode = 'manual' AND enabled = 1
+       AND (source_key IS NULL OR source_key NOT LIKE 'llm_discovery_%')`
+  ).all();
+
+  const emptySources = [];
+  const unmappedSources = [];
+  for (const src of sources) {
+    const keyword = MANUAL_SOURCE_KEYWORDS[src.id];
+    if (!keyword) {
+      unmappedSources.push({ id: src.id, city: src.city, platform: src.platform });
+      continue;
+    }
+    // "Has future events" = an upcoming dated/seasonal occurrence, OR any
+    // weekly/monthly row at all (those don't carry their own end date, so
+    // simply existing counts -- whether that recurring row is itself
+    // stale is a job for the coverage-alerts feature, not this one).
+    const { results: hit } = await env.DB.prepare(
+      `SELECT 1 FROM events
+       WHERE source LIKE ?
+         AND (
+           (event_date IS NOT NULL AND event_date >= date('now'))
+           OR event_date IS NULL
+         )
+       LIMIT 1`
+    ).bind(`%${keyword}%`).all();
+    if (hit.length === 0) {
+      emptySources.push({ id: src.id, city: src.city, platform: src.platform, keyword });
+    }
+  }
+  return json({ emptySources, unmappedSources, checkedCount: sources.length, generatedAt: new Date().toISOString() });
+}
+
 async function handleStats(env) {
 
   const todayStart = mountainMidnightTodayUTC();
@@ -3854,6 +3945,7 @@ export default {
       if (url.pathname === "/api/pageview" && request.method === "POST") return await handlePageView(request, env);
       if (url.pathname === "/api/stats") return await handleStats(env);
       if (url.pathname === "/api/coverage-alerts") return await handleCoverageAlerts(env);
+      if (url.pathname === "/api/manual-source-gaps") return await handleManualSourceGaps(env);
       if (url.pathname === "/api/referrals-trend") {
         return json(await getReferralsTrend(env, Number(url.searchParams.get("weeks")) || 8));
       }
