@@ -145,6 +145,8 @@
 
   <div class="coverage-alerts" id="coverageAlerts"></div>
 
+  <div class="coverage-alerts" id="manualSourceGaps"></div>
+
   <div class="section-label">Analytics</div>
 
   <div class="card">
@@ -862,26 +864,31 @@ function toggleCardCollapse(cardId){
 async function loadSummaryStrip(){
   const el = document.getElementById('summaryStrip');
   const coverageEl = document.getElementById('coverageAlerts');
+  const manualGapsEl = document.getElementById('manualSourceGaps');
   try{
-    const [pendingRes, sourcesRes, coverageRes] = await Promise.all([
+    const [pendingRes, sourcesRes, coverageRes, manualGapsRes] = await Promise.all([
       fetch('/api/pending-events'),
       fetch('/api/sources'),
-      fetch('/api/coverage-alerts')
+      fetch('/api/coverage-alerts'),
+      fetch('/api/manual-source-gaps')
     ]);
     const pending = await pendingRes.json();
     const sources = await sourcesRes.json();
     const coverage = await coverageRes.json();
+    const manualGaps = await manualGapsRes.json();
 
     const pendingCount = pending.count || 0;
     const blockedCount = (pending.pending||[]).filter(p=>p.severity==='error').length;
     const erroredSources = (Array.isArray(sources)?sources:[])
       .filter(s=>s.last_run_status==='error'||s.last_run_status==='partial_error');
     const cityAlerts = coverage.alerts || [];
+    const emptyManualSources = manualGaps.emptySources || [];
 
     el.innerHTML = `
       <div class="sum-item"><span>📋 Pending review</span><span class="sum-num${pendingCount>0?'':''}">${pendingCount}${blockedCount>0?` <span style="color:#E08A6A;">(${blockedCount} blocked)</span>`:''}</span></div>
       <div class="sum-item"><span>🗂️ Sources with errors</span><span class="sum-num${erroredSources.length>0?' alert':''}">${erroredSources.length}</span></div>
       <div class="sum-item"><span>🏙️ Cities needing attention</span><span class="sum-num${cityAlerts.length>0?' alert':''}">${cityAlerts.length}</span></div>
+      <div class="sum-item"><span>✋ Manual sources gone quiet</span><span class="sum-num${emptyManualSources.length>0?' alert':''}">${emptyManualSources.length}</span></div>
     `;
 
     // Empty on purpose when there's nothing to flag -- .coverage-alerts:empty
@@ -891,6 +898,18 @@ async function loadSummaryStrip(){
       <div class="coverage-row ${a.status}">
         <span class="coverage-city">${escapeHtml(a.city)}</span>
         <span class="coverage-msg">${escapeHtml(a.message)}</span>
+      </div>
+    `).join('');
+
+    // Same "empty means nothing renders" pattern as coverage alerts above.
+    // Reuses .coverage-row's card styling (via the shared "low" severity
+    // color) rather than inventing a new visual language for what's
+    // conceptually the same kind of thing: a small list of "go look at
+    // this" reminders.
+    manualGapsEl.innerHTML = emptyManualSources.map(s => `
+      <div class="coverage-row low">
+        <span class="coverage-city">${escapeHtml(s.city)}</span>
+        <span class="coverage-msg">${escapeHtml(s.platform)} — no events found (manual source, matched on "${escapeHtml(s.keyword)}"). Worth a re-pull.</span>
       </div>
     `).join('');
   }catch(err){
