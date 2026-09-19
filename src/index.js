@@ -1839,13 +1839,42 @@ async function handlePageView(request, env) {
   const ua = request.headers.get("User-Agent") || "";
   const deviceType = /Mobi|Android/i.test(ua) ? "mobile" : "desktop";
   let source = null;
+  let sawRecommended = 0;
+  let experimentArm = null, experimentSessionId = null;
   try {
     const body = await request.json();
     if (body && body.source) source = String(body.source).slice(0, 50);
+    // Adoption tracking for the "Recommended for you" feature -- fed by
+    // whether renderFeed() actually rendered the section this load (see
+    // sawRecommended in index.html), not a guess. Client-side-only feature
+    // otherwise has zero server-side visibility at all.
+    if (body && body.sawRecommended) sawRecommended = 1;
+    // A/B experiment (2026-09): arm is assigned once client-side (persisted
+    // in localStorage, stable across sessions for a given browser) and
+    // logged here purely as a passthrough -- the SERVER never assigns or
+    // re-randomizes it, just records what the client already decided.
+    // sessionId is per-tab (sessionStorage, not localStorage) -- this is
+    // deliberately a DIFFERENT identifier than visitor_hash (which rotates
+    // monthly for privacy reasons unrelated to this experiment, and would
+    // silently fragment a session's data if reused here).
+    if (body && body.experimentArm && (body.experimentArm === "treatment" || body.experimentArm === "control")) {
+      experimentArm = body.experimentArm;
+      experimentSessionId = body.experimentSessionId ? String(body.experimentSessionId).slice(0, 64) : null;
+    }
   } catch { /* no body / not JSON — fine, organic visit */ }
   await env.DB.prepare(
-    `INSERT INTO page_views (visitor_hash, visitor_hash_month, city, country, region, device_type, source) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).bind(visitorHash, visitorHashMonth, cf.city || null, cf.country || null, cf.regionCode || null, deviceType, source).run();
+    `INSERT INTO page_views (visitor_hash, visitor_hash_month, city, country, region, device_type, source, saw_recommended) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(visitorHash, visitorHashMonth, cf.city || null, cf.country || null, cf.regionCode || null, deviceType, source, sawRecommended).run();
+  if (experimentArm && experimentSessionId) {
+    // ON CONFLICT DO NOTHING -- a pageview only ever ESTABLISHES a
+    // session's initial (unengaged) row; it must never overwrite an
+    // already-engaged=1 row from a click that happened to log first (e.g.
+    // a fast click before this beacon's response returns).
+    await env.DB.prepare(
+      `INSERT INTO experiment_sessions (session_id, arm, engaged) VALUES (?, ?, 0)
+       ON CONFLICT(session_id) DO NOTHING`
+    ).bind(experimentSessionId, experimentArm).run();
+  }
   return json({ ok: true });
 }
 
@@ -2221,6 +2250,116 @@ async function handleManualSourceGaps(env) {
     }
   }
   return json({ emptySources, unmappedSources, checkedCount: sources.length, generatedAt: new Date().toISOString() });
+}
+
+// ── RECOMMENDED SECTION ADOPTION ── the "relevant to me" feature (tier 1,
+// 2026-09) is entirely client-side/localStorage otherwise -- this is the
+// ONLY place any signal about it reaches the server at all, fed by
+// saw_recommended on page_views and from_recommended on link_clicks (both
+// set client-side, see index.html). Deliberately just impressions/clicks/
+// CTR for now, not a full breakdown by category or city -- adoption of a
+// still feature-flagged-off feature doesn't need more than "is this worth
+// finishing and turning on," and that's answerable with three numbers.
+async function handleRecommendedAdoption(env) {
+  const { results: impressionRows } = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM page_views WHERE saw_recommended = 1 AND viewed_at >= datetime('now', '-7 days')`
+  ).all();
+  const { results: clickRows } = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM link_clicks WHERE from_recommended = 1 AND clicked_at >= datetime('now', '-7 days')`
+  ).all();
+  const { results: voteRows } = await env.DB.prepare(
+    `SELECT vote, COUNT(*) AS n FROM recommended_feedback WHERE submitted_at >= datetime('now', '-7 days') GROUP BY vote`
+  ).all();
+  const impressions = impressionRows[0]?.n || 0;
+  const clicks = clickRows[0]?.n || 0;
+  const ctr = impressions > 0 ? Math.round((clicks / impressions) * 1000) / 10 : null; // one decimal place, null (not 0) when there's no traffic to compute a rate from at all
+  const votesUp = voteRows.find((r) => r.vote === "up")?.n || 0;
+  const votesDown = voteRows.find((r) => r.vote === "down")?.n || 0;
+  return json({ impressions, clicks, ctr, votesUp, votesDown, windowDays: 7, generatedAt: new Date().toISOString() });
+}
+
+// Tiny feedback loop on the recommended section itself -- "was this
+// helpful," shown once per person (see index.html) so it's a light-touch
+// signal, not a recurring nag. session_id is optional/best-effort here
+// (not required the way experiment logging is) since this can fire even
+// for someone outside the A/B experiment (e.g. viewing via ?ff_recommended=1
+// directly) -- a vote is worth recording either way.
+async function handleRecommendedFeedback(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "invalid body" }, 400); }
+  if (body.vote !== "up" && body.vote !== "down") return json({ error: "vote must be 'up' or 'down'" }, 400);
+  const sessionId = body.experimentSessionId ? String(body.experimentSessionId).slice(0, 64) : null;
+  await env.DB.prepare(
+    `INSERT INTO recommended_feedback (session_id, vote) VALUES (?, ?)`
+  ).bind(sessionId, body.vote).run();
+  return json({ ok: true });
+}
+
+// ── RECOMMENDED SECTION A/B EXPERIMENT ── control/treatment split at
+// 50/50, assigned client-side once and persisted in localStorage (see
+// index.html). This is deliberately a DIFFERENT question than adoption
+// above: adoption measures "do people click the strip once shown it";
+// this measures "does showing it change whether the session engages with
+// Playroute at all" -- the one that actually justifies turning the
+// feature fully on. Control sessions never see the strip, so there's no
+// control-arm strip-CTR to compare treatment's against; the shared
+// metric that exists in BOTH arms is "did this session click anything."
+//
+// Directional-read philosophy, not a formal pre-registered stopping rule
+// (per instruction, 2026-09): always returns the current best read,
+// including the required-sample-size-for-80%-power calculation based on
+// the effect size observed SO FAR -- which will itself keep moving as
+// more data comes in. That number is a "how far along" indicator, not a
+// target to hit before looking; the p-value/significance read is shown
+// at any sample size, just honestly labeled when it's still small.
+const normalCdf = (z) => {
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const d = 0.3989423 * Math.exp((-z * z) / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return z > 0 ? 1 - p : p;
+};
+function twoProportionZTest(x1, n1, x2, n2) {
+  if (n1 === 0 || n2 === 0) return { p1: n1 ? x1 / n1 : null, p2: n2 ? x2 / n2 : null, diff: null, z: null, pValue: null };
+  const p1 = x1 / n1, p2 = x2 / n2;
+  const pooled = (x1 + x2) / (n1 + n2);
+  const se = Math.sqrt(pooled * (1 - pooled) * (1 / n1 + 1 / n2));
+  if (se === 0) return { p1, p2, diff: p2 - p1, z: 0, pValue: 1 };
+  const z = (p2 - p1) / se;
+  return { p1, p2, diff: p2 - p1, z, pValue: 2 * (1 - normalCdf(Math.abs(z))) };
+}
+function sampleSizeForPower(p1, p2, power = 0.8, alpha = 0.05) {
+  if (p1 === null || p2 === null || p1 === p2) return null;
+  const zAlpha = 1.959964; // two-tailed, alpha=0.05
+  const zBeta = power === 0.8 ? 0.841621 : 1.281552; // 80% or 90% -- only these two supported, matches the UI's own choice
+  const pBar = (p1 + p2) / 2;
+  const num = Math.pow(zAlpha * Math.sqrt(2 * pBar * (1 - pBar)) + zBeta * Math.sqrt(p1 * (1 - p1) + p2 * (1 - p2)), 2);
+  const den = Math.pow(p2 - p1, 2);
+  return Math.ceil(num / den);
+}
+
+async function handleRecommendedExperiment(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT arm, COUNT(*) AS sessions, SUM(engaged) AS engaged FROM experiment_sessions GROUP BY arm`
+  ).all();
+  const control = results.find((r) => r.arm === "control") || { sessions: 0, engaged: 0 };
+  const treatment = results.find((r) => r.arm === "treatment") || { sessions: 0, engaged: 0 };
+
+  const test = twoProportionZTest(control.engaged || 0, control.sessions || 0, treatment.engaged || 0, treatment.sessions || 0);
+  const requiredPerArm = sampleSizeForPower(test.p1, test.p2, 0.8);
+  const smallerArmN = Math.min(control.sessions || 0, treatment.sessions || 0);
+  const powerProgress = requiredPerArm ? Math.min(100, Math.round((smallerArmN / requiredPerArm) * 1000) / 10) : null;
+
+  return json({
+    control: { sessions: control.sessions || 0, engaged: control.engaged || 0, rate: test.p1 },
+    treatment: { sessions: treatment.sessions || 0, engaged: treatment.engaged || 0, rate: test.p2 },
+    diff: test.diff,
+    zScore: test.z,
+    pValue: test.pValue,
+    significant: test.pValue !== null && test.pValue < 0.05,
+    requiredPerArmFor80PctPower: requiredPerArm,
+    powerProgressPct: powerProgress,
+    generatedAt: new Date().toISOString()
+  });
 }
 
 async function handleStats(env) {
@@ -2764,10 +2903,29 @@ async function handleTrackClick(request, env) {
     ? body.action
     : (KNOWN_ACTION_TYPES.has(body.category) ? body.category : "source_click");
   const category = KNOWN_ACTION_TYPES.has(body.category) ? null : (body.category ?? null);
+  // Same adoption-tracking purpose as saw_recommended on page_views above --
+  // fromRecommended set client-side by buildEventCard() when the card being
+  // clicked lives in the recommended strip, not the normal day-grouped feed.
+  const fromRecommended = body.fromRecommended ? 1 : 0;
   await env.DB.prepare(
-    `INSERT INTO link_clicks (event_id, event_title, city, category, source_url, action_type)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(body.event_id ?? null, body.event_title, body.city ?? null, category, body.source_url, action).run();
+    `INSERT INTO link_clicks (event_id, event_title, city, category, source_url, action_type, from_recommended)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(body.event_id ?? null, body.event_title, body.city ?? null, category, body.source_url, action, fromRecommended).run();
+  // Experiment engagement -- ANY click at all (not just clicks inside the
+  // recommended strip) counts as "this session engaged," since the real
+  // question is whether the feature moves overall behavior, not just
+  // whether the strip itself gets clicked (control sessions never see the
+  // strip at all, so strip-only CTR has no control-arm counterpart to
+  // compare against). ON CONFLICT DO UPDATE with MAX() so this can only
+  // ever move engaged 0->1, never accidentally back to 0 on a later,
+  // out-of-order beacon.
+  if (body.experimentArm && body.experimentSessionId && (body.experimentArm === "treatment" || body.experimentArm === "control")) {
+    const sid = String(body.experimentSessionId).slice(0, 64);
+    await env.DB.prepare(
+      `INSERT INTO experiment_sessions (session_id, arm, engaged) VALUES (?, ?, 1)
+       ON CONFLICT(session_id) DO UPDATE SET engaged = MAX(engaged, 1), updated_at = datetime('now')`
+    ).bind(sid, body.experimentArm).run();
+  }
   return json({ ok: true });
 }
 
@@ -3946,6 +4104,8 @@ export default {
       if (url.pathname === "/api/stats") return await handleStats(env);
       if (url.pathname === "/api/coverage-alerts") return await handleCoverageAlerts(env);
       if (url.pathname === "/api/manual-source-gaps") return await handleManualSourceGaps(env);
+      if (url.pathname === "/api/recommended-adoption") return await handleRecommendedAdoption(env);
+      if (url.pathname === "/api/recommended-feedback" && request.method === "POST") return await handleRecommendedFeedback(request, env);
       if (url.pathname === "/api/referrals-trend") {
         return json(await getReferralsTrend(env, Number(url.searchParams.get("weeks")) || 8));
       }
