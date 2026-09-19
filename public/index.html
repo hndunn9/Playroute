@@ -4,6 +4,17 @@
 <!-- Awin Publisher Account Verification -->
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Google Analytics (GA4) -- added directly to source 2026-09 so it
+     survives future full-file rewrites instead of living only in a
+     deployed copy that gets silently overwritten the next time this file
+     is replaced wholesale. -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-V212HC6MVZ"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-V212HC6MVZ');
+</script>
 <script>
   try {
     var t = localStorage.getItem('playroute-theme');
@@ -1090,6 +1101,11 @@ function elevationSpark(count){
 
 const API_BASE = "";
 let events = [], playgrounds = [], hikes = [], dataLoadFailed = false;
+// Set inside renderFeed() itself, right where the recommended section is
+// built -- read by the pageview beacon in loadData() to report whether
+// this visitor actually saw the section this load, not just whether they
+// theoretically could have.
+let lastSawRecommended = false;
 
 // Shared inline-SVG icons (replacing emoji) used across dynamically-rendered
 // cards/drawers. Same stroke weight/style as the static nav icons above.
@@ -1124,6 +1140,13 @@ async function loadData(){
   }
   renderAll();
   handleEventDeepLink();
+  // Pageview beacon moved here (was fired eagerly at bootstrap, before
+  // any data had loaded) so it can report saw_recommended accurately --
+  // that can only be known once renderFeed() has actually run and decided
+  // whether the recommended section had anything to show. lastSawRecommended
+  // is set inside renderFeed() itself, right where the section is built.
+  const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
+  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended})}).catch(()=>{});
 }
 
 let activeCities = new Set(), activeAges = new Set(), activeCats = new Set();
@@ -1427,12 +1450,12 @@ function passesFilters(ev){
 }
 
 /* ── PROGRESSIVE DISCLOSURE ── */
-function toggleCard(card, ev){
+function toggleCard(card, ev, fromRecommended){
   document.querySelectorAll('.event-card.expanded').forEach(c=>{ if(c!==card) c.classList.remove('expanded'); });
   const willExpand = !card.classList.contains('expanded');
   card.classList.toggle('expanded');
   if(willExpand && ev){
-    trackClick(ev.source_url||'', {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'view_details'});
+    trackClick(ev.source_url||'', {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'view_details', fromRecommended:!!fromRecommended});
   }
 }
 
@@ -1592,10 +1615,11 @@ function renderAffiliateCloserCard(){
 // itself or it reads as missing context, not just "no date."
 function buildEventCard(ev, opts){
   const showDate = opts && opts.showDate;
+  const fromRecommended = !!(opts && opts.fromRecommended);
   const card=document.createElement("div");
   card.className="event-card";
   card.dataset.eventId=ev.id;
-  card.onclick=function(){ toggleCard(this, ev); };
+  card.onclick=function(){ toggleCard(this, ev, fromRecommended); };
   card.innerHTML=`
     <div class="card-summary">
       <div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>
@@ -1617,9 +1641,9 @@ function buildEventCard(ev, opts){
       <div class="card-detail-inner">
         <div class="card-detail-note">${ev.note||""}</div>
         <div class="card-detail-actions">
-          <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}',action:'source_click'})">View source ↗</a>
+          <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}',action:'source_click',fromRecommended:${fromRecommended}})">View source ↗</a>
           <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
-          <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}')" title="Share" aria-label="Share">${ICONS.share}</a>
+          <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}',${fromRecommended})" title="Share" aria-label="Share">${ICONS.share}</a>
         </div>
       </div>
     </div>
@@ -1660,6 +1684,7 @@ function renderFeed(){
   // day-heading grouping -- without it the date context that grouping
   // would have provided for free is just gone.
   const recommended = getRecommendedEvents(upcoming);
+  lastSawRecommended = recommended.length > 0;
   if(recommended.length){
     const section = document.createElement("div");
     section.className = "recommended-section";
@@ -1672,7 +1697,7 @@ function renderFeed(){
       <div class="recommended-cards${collapsed?' collapsed':''}" id="recommendedCards"></div>
     `;
     const cardsEl = section.querySelector("#recommendedCards");
-    recommended.forEach(ev=>{ cardsEl.appendChild(buildEventCard(ev, {showDate:true})); });
+    recommended.forEach(ev=>{ cardsEl.appendChild(buildEventCard(ev, {showDate:true, fromRecommended:true})); });
     feed.appendChild(section);
   }
 
@@ -1830,7 +1855,7 @@ function updateActiveCount(){
   const badge=document.getElementById("activeCount");
   if(count>0){ badge.textContent=count; badge.classList.add("show"); } else { badge.classList.remove("show"); }
 }
-function shareEvent(id){
+function shareEvent(id, fromRecommended){
   const ev = events.find(e=>String(e.id)===String(id));
   if(!ev) return;
   const shareUrl = `${location.origin}/?event=${ev.id}`;
@@ -1841,7 +1866,7 @@ function shareEvent(id){
     ev.cost==='free' ? 'Free' : 'Paid'
   ];
   const shareBody = bodyLines.filter(Boolean).join('\n');
-  trackClick(shareUrl, {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'share'});
+  trackClick(shareUrl, {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'share', fromRecommended:!!fromRecommended});
 
   if(navigator.share){
     // IMPORTANT: text must NOT also contain shareUrl. Many Android share
@@ -1947,7 +1972,7 @@ function getRecommendedEvents(pool){
 function trackClick(url,meta){
   recordAffinity(meta);
   try{
-    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action}),keepalive:true}).catch(()=>{});
+    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action,fromRecommended:!!meta?.fromRecommended}),keepalive:true}).catch(()=>{});
   }catch(err){}
 }
 
@@ -2056,8 +2081,6 @@ initThemeCoachmark();
 initTopFeedAffiliate();
 document.getElementById("weekFeed").innerHTML=`<div class="empty-state">Loading this week's events…</div>`;
 loadData();
-const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
-fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc})}).catch(()=>{});
 </script>
 </body>
 </html>
