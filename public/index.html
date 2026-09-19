@@ -462,9 +462,25 @@ main{
   display:flex;align-items:center;justify-content:space-between;gap:8px;
   font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;
   text-transform:uppercase;letter-spacing:0.1em;color:var(--clay);
-  margin:4px 0 8px;cursor:pointer;-webkit-tap-highlight-color:transparent;
+  margin:4px 0 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;
 }
+.recommended-cards{
+  background:var(--cream);border-radius:var(--radius-md);
+  padding:12px 12px 2px;margin-bottom:14px;
+}
+.recommended-cards .event-card{box-shadow:none;} /* the outer cream container already provides visual separation from the rest of the feed -- each card's own shadow on top of that read as doubled-up/heavier than the normal feed, part of what made this feel cramped rather than airy */
 .recommended-cards.collapsed{display:none;}
+.recommended-feedback{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  padding:8px 0 10px;font-size:12px;color:var(--ink-soft);
+}
+.feedback-vote-btn{
+  background:var(--parchment);border:1px solid var(--fog);border-radius:100px;
+  width:30px;height:30px;font-size:14px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  -webkit-tap-highlight-color:transparent;transition:transform .1s ease;
+}
+.feedback-vote-btn:active{transform:scale(0.88);}
 /* Date context restated on each card here, since these are pulled out of
    their normal day-heading grouping (see buildEventCard's showDate param)
    -- without this the date the day-heading would've provided is just gone. */
@@ -534,11 +550,18 @@ main{
   opacity:0;border-top:0px solid var(--fog);
 }
 .event-card.expanded .card-detail{
-  max-height:220px;opacity:1;border-top:1px solid var(--fog);
+  max-height:260px;opacity:1;border-top:1px solid var(--fog);
 }
 .card-detail-inner{padding:10px 14px 13px;}
 .card-detail-note{
   font-size:12.5px;color:var(--ink-soft);line-height:1.55;margin-bottom:10px;
+  /* Bounded + independently scrollable so a long note (Broomfield Days'
+     full festival schedule, for one real example) can never push the
+     action buttons below it out of .card-detail's own max-height and get
+     silently clipped by its overflow:hidden -- confirmed real bug,
+     2026-09, not specific to the recommended section, just surfaced there
+     first since it tends to show more detailed one-off events. */
+  max-height:150px;overflow-y:auto;
 }
 .card-detail-actions{display:flex;gap:8px;align-items:center;}
 .detail-btn-source{
@@ -1698,6 +1721,7 @@ function renderFeed(){
     `;
     const cardsEl = section.querySelector("#recommendedCards");
     recommended.forEach(ev=>{ cardsEl.appendChild(buildEventCard(ev, {showDate:true, fromRecommended:true})); });
+    renderRecommendedFeedback(cardsEl);
     feed.appendChild(section);
   }
 
@@ -1989,6 +2013,36 @@ function toggleRecommendedSection(){
   chevronEl.classList.toggle("open", !nowCollapsed);
   try{ localStorage.setItem(RECOMMENDED_COLLAPSED_KEY, String(nowCollapsed)); }catch(e){}
 }
+
+// Tiny feedback loop, bottom of the recommended cards -- shown once ever
+// per person (not once per session), same "ask lightly, don't nag" spirit
+// as the search/theme coachmarks elsewhere in this file. Once voted, the
+// prompt is gone for good on this device; there's no un-voting or
+// changing your answer, deliberately kept this simple.
+const RECOMMENDED_FEEDBACK_GIVEN_KEY = "playroute-recommended-feedback-given";
+function renderRecommendedFeedback(cardsEl){
+  try{
+    if(localStorage.getItem(RECOMMENDED_FEEDBACK_GIVEN_KEY)) return;
+  }catch(e){ return; }
+  const row = document.createElement("div");
+  row.className = "recommended-feedback";
+  row.id = "recommendedFeedback";
+  row.innerHTML = `
+    <span>Was this helpful?</span>
+    <button type="button" class="feedback-vote-btn" onclick="submitRecommendedFeedback('up')" aria-label="Yes, helpful">👍</button>
+    <button type="button" class="feedback-vote-btn" onclick="submitRecommendedFeedback('down')" aria-label="Not helpful">👎</button>
+  `;
+  cardsEl.appendChild(row);
+}
+function submitRecommendedFeedback(vote){
+  const row = document.getElementById("recommendedFeedback");
+  if(row) row.innerHTML = `<span>Thanks for the feedback! 🙏</span>`;
+  try{ localStorage.setItem(RECOMMENDED_FEEDBACK_GIVEN_KEY, "true"); }catch(e){}
+  try{
+    fetch(`${API_BASE}/api/recommended-feedback`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({vote, experimentSessionId:null}),keepalive:true}).catch(()=>{});
+  }catch(e){}
+}
+
 function showLinkPopover(anchorEl,url){
   const pop=document.createElement('div');
   pop.className='link-popover';pop.id='linkPopover';
