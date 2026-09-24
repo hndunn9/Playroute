@@ -8,8 +8,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap">
+<script>
+  try {
+    var t = localStorage.getItem('playroute-theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
 <style>
 :root {
+  /* Copied verbatim from public/index.html's own :root -- same tokens,
+     same values, same names. Anything added here beyond that (--dayof,
+     --leadup below) is new to this page only, not part of the core system. */
   --soil:      #1B2B26;
   --bark:      #3A4F45;
   --clay:      #5B84A0;
@@ -26,15 +35,63 @@
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
+  --pill-green-bg:   #D4EBC9;
+  --pill-green-text: #3A5C2A;
+  --pill-neutral-bg:   #D7DBD3;
+  --pill-neutral-text: #5B6560;
+  --icon-sparkle: #3C4E7A;
+  --nav-border: rgba(255,255,255,0.06);
   --dayof: var(--ember);
   --leadup: var(--gold);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --cream:     #1D231F;
+    --parchment: #12100F;
+    --fog:       #63726A;
+    --ink:       #EDEFE9;
+    --ink-soft:  #A7B0A4;
+    --pill-green-bg:   #2B3B2B;
+    --pill-green-text: #A8D9A0;
+    --pill-neutral-bg:   #313A34;
+    --pill-neutral-text: #A7B0A4;
+    --icon-sparkle: #8698D6;
+    --nav-border: rgba(255,255,255,0.14);
+  }
+}
+:root[data-theme="dark"] {
+  --cream:     #1D231F;
+  --parchment: #12100F;
+  --fog:       #63726A;
+  --ink:       #EDEFE9;
+  --ink-soft:  #A7B0A4;
+  --pill-green-bg:   #2B3B2B;
+  --pill-green-text: #A8D9A0;
+  --pill-neutral-bg:   #313A34;
+  --pill-neutral-text: #A7B0A4;
+  --icon-sparkle: #8698D6;
+  --nav-border: rgba(255,255,255,0.14);
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 html,body{height:100%;}
 body{background:var(--soil);font-family:'DM Sans', sans-serif;-webkit-font-smoothing:antialiased;color:var(--ink);}
 .page{ max-width:480px;margin:0 auto;background:var(--cream);min-height:100vh; }
-.pheader{ background:var(--soil); padding:28px 20px 24px; }
-.pheader-wordmark{ font-family:'Playfair Display',serif;color:#fff;font-size:26px;font-weight:700;display:flex;align-items:center;gap:10px;margin-bottom:6px; }
+.pheader{ background:var(--soil); padding:28px 20px 24px; border-bottom:1px solid var(--nav-border); }
+.pheader-top{ display:flex;align-items:center;justify-content:space-between;margin-bottom:6px; }
+.pheader-wordmark{ font-family:'Playfair Display',serif;color:#fff;font-size:26px;font-weight:700;display:flex;align-items:center;gap:10px;margin-bottom:0; }
+.theme-toggle{
+  width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  color:var(--fog);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  border-radius:100px;transition:background .15s ease,color .15s ease,transform .25s ease;
+}
+.theme-toggle:active{transform:scale(0.88) rotate(-8deg);}
+.theme-icon-moon{display:none;}
+[data-theme="dark"] .theme-icon-sun{display:none;}
+[data-theme="dark"] .theme-icon-moon{display:block;}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-icon-sun{display:none;}
+  :root:not([data-theme="light"]) .theme-icon-moon{display:block;}
+}
 .pheader-beta{ font-family:'DM Sans',sans-serif;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#F3F1E8;border:1px solid rgba(243,241,232,0.55);border-radius:4px;padding:2px 7px; }
 .pheader-sub{color:var(--fog);font-size:13.5px;line-height:1.5;}
 .pheader-stats{ display:flex;gap:14px;margin-top:16px;flex-wrap:wrap;min-height:34px; }
@@ -45,7 +102,7 @@ body{background:var(--soil);font-family:'DM Sans', sans-serif;-webkit-font-smoot
 .section{padding:22px 16px 4px;}
 .section-label{ font-family:'DM Sans',sans-serif;font-size:10.5px;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);font-weight:700;margin-bottom:4px; }
 .section-sub{font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;line-height:1.4;}
-.tier-card{ background:#fff;border-radius:var(--radius-md);box-shadow:0 2px 8px rgba(20,24,22,0.07);padding:16px;margin-bottom:10px;border-left:4px solid var(--fog);cursor:pointer;transition:transform .12s ease; }
+.tier-card{ background:var(--parchment);border:1px solid var(--fog);border-radius:var(--radius-md);box-shadow:0 2px 8px rgba(20,24,22,0.07);padding:16px;margin-bottom:10px;border-left:4px solid var(--fog);cursor:pointer;transition:transform .12s ease; }
 .tier-card:active{transform:scale(0.985);}
 .tier-card.sel{ box-shadow:0 0 0 2px var(--sel-color,var(--clay)), 0 4px 14px rgba(20,24,22,0.12); }
 .tier-card[data-tier="dayof"]{ border-left-color:var(--dayof); --sel-color:var(--dayof); }
@@ -83,17 +140,17 @@ form{padding:20px 16px 40px;}
 .form-heading{ font-family:'DM Sans',sans-serif;font-size:10.5px;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);font-weight:700;margin-bottom:14px; }
 .field{margin-bottom:16px;}
 .field label{ display:block;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-soft);margin-bottom:6px; }
-.field input,.field select,.field textarea{ width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--fog);background:#fff;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);outline:none;box-sizing:border-box; }
+.field input,.field select,.field textarea{ width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--fog);background:var(--cream);font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);outline:none;box-sizing:border-box; }
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--clay);}
 .field textarea{resize:vertical;min-height:70px;}
 .field-hint{font-size:11.5px;color:var(--ink-soft);margin-top:5px;line-height:1.4;}
 .leadup-only{ display:none;background:var(--parchment);border:1px solid var(--fog);border-radius:var(--radius-sm);padding:11px 13px;margin-bottom:16px;font-size:12.5px;color:var(--ink-soft);line-height:1.5; }
 .leadup-only.show{display:block;}
 .leadup-only b{color:var(--ink);}
-.pick-only{ display:none;background:#FBF8EE;border:1px solid #E8DCB8;border-radius:var(--radius-sm);padding:11px 13px;margin-bottom:18px;font-size:12.5px;color:#6B5A20;line-height:1.5; }
+.pick-only{ display:none;background:color-mix(in srgb, var(--gold) 14%, var(--parchment));border:1px solid color-mix(in srgb, var(--gold) 45%, var(--parchment));border-radius:var(--radius-sm);padding:11px 13px;margin-bottom:18px;font-size:12.5px;color:color-mix(in srgb, var(--gold) 70%, var(--ink));line-height:1.5; }
 .pick-only.show{display:block;}
-.info-note{ background:#FBF8EE;border:1px solid #E8DCB8;border-radius:var(--radius-sm);padding:11px 13px;margin-bottom:16px;font-size:12.5px;color:#6B5A20;line-height:1.5; }
-.pick-only b{color:#4A3E15;}
+.info-note{ background:color-mix(in srgb, var(--gold) 14%, var(--parchment));border:1px solid color-mix(in srgb, var(--gold) 45%, var(--parchment));border-radius:var(--radius-sm);padding:11px 13px;margin-bottom:16px;font-size:12.5px;color:color-mix(in srgb, var(--gold) 70%, var(--ink));line-height:1.5; }
+.pick-only b{color:color-mix(in srgb, var(--gold) 85%, var(--ink));}
 .event-fields, .pick-fields{ display:none; }
 .event-fields.show, .pick-fields.show{ display:block; }
 .color-row{ display:flex;gap:8px;flex-wrap:wrap;margin-top:2px; }
@@ -104,15 +161,21 @@ form{padding:20px 16px 40px;}
 .submit-btn:disabled{ opacity:0.6;cursor:not-allowed; }
 .submit-btn:active{opacity:0.9;}
 .form-footnote{ text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:12px;line-height:1.5; }
-.form-error{ display:none;background:#FBEDEA;border:1px solid #E7B8AE;border-radius:var(--radius-sm);padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:#8A3B2A; }
+.form-error{ display:none;background:color-mix(in srgb, var(--ember) 12%, var(--parchment));border:1px solid color-mix(in srgb, var(--ember) 45%, var(--parchment));border-radius:var(--radius-sm);padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:color-mix(in srgb, var(--ember) 75%, var(--ink)); }
 .form-error.show{display:block;}
-.empty-state{ text-align:center;padding:24px 20px;color:var(--ink-soft);font-size:13px;background:#fff;border-radius:var(--radius-md);margin:0 16px;border:1px dashed var(--fog); }
+.empty-state{ text-align:center;padding:24px 20px;color:var(--ink-soft);font-size:13px;background:var(--parchment);border-radius:var(--radius-md);margin:0 16px;border:1px dashed var(--fog); }
 </style>
 </head>
 <body>
 <div class="page">
   <div class="pheader">
-    <div class="pheader-wordmark">Playroute <span class="pheader-beta">Partners</span></div>
+    <div class="pheader-top">
+      <div class="pheader-wordmark">Playroute <span class="pheader-beta">Partners</span></div>
+      <div class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Toggle dark mode" role="button">
+        <svg class="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4.5"/><line x1="12" y1="19.5" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6" y2="6"/><line x1="18" y1="18" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="4.5" y2="12"/><line x1="19.5" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6" y2="18"/><line x1="18" y1="6" x2="19.8" y2="4.2"/></svg>
+        <svg class="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="17" height="17"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>
+      </div>
+    </div>
     <p class="pheader-sub">Get your events and business in front of families actively planning their week in Boulder County.</p>
     <div class="pheader-stats" id="statsRow">
       <div class="pstat"><b class="loading" id="statVisitors">···</b>unique visitors, all-time</div>
@@ -202,6 +265,20 @@ form{padding:20px 16px 40px;}
 </div>
 
 <script>
+// Same key and logic as toggleTheme() in public/index.html -- kept
+// identical so a returning visitor's theme choice is consistent in spirit
+// even though localStorage itself doesn't carry across to this page until
+// it's actually served from playroute.co (this file has its own origin
+// right now as a standalone preview).
+const THEME_STORAGE_KEY = "playroute-theme";
+function toggleTheme(){
+  const current = document.documentElement.getAttribute("data-theme")
+    || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = current === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try{ localStorage.setItem(THEME_STORAGE_KEY, next); }catch(e){}
+}
+
 let selectedTier = null;
 
 function selectTier(tier){
@@ -306,8 +383,8 @@ document.getElementById('partnerForm').addEventListener('submit', async function
     if(!res.ok) throw new Error('submit failed');
     document.querySelector('.page').innerHTML =
       '<div style="padding:60px 24px;text-align:center;">' +
-      '<h2 style="font-family:\\'Playfair Display\\',serif;margin-bottom:10px;">Thanks!</h2>' +
-      '<p style="color:#5B6560;font-size:14px;line-height:1.6;">We\\'ll review your submission and follow up within 24 hours.</p></div>';
+      '<h2 style="font-family:\'Playfair Display\',serif;margin-bottom:10px;">Thanks!</h2>' +
+      '<p style="color:#5B6560;font-size:14px;line-height:1.6;">We\'ll review your submission and follow up within 24 hours.</p></div>';
   } catch(err){
     errEl.textContent = "Submission isn't connected yet — this endpoint doesn't exist until the backend is built.";
     errEl.classList.add('show');
