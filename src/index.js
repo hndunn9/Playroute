@@ -3378,7 +3378,12 @@ function buildDigestText(byDay, spotlight, eventsDiscovered) {
   return lines.join("\n");
 }
 
-async function sendDigestEmail(env, toEmail, html, text, subject = "This week on Playroute \uD83C\uDF33") {
+// replyTo is optional and additive -- every existing call site (the
+// subscriber digest) omits it and keeps behaving exactly as before,
+// replies still going wherever DIGEST_FROM already goes. Only the new
+// partner approval email passes one, so only that email's replies get
+// redirected to partners@playroute.co.
+async function sendDigestEmail(env, toEmail, html, text, subject = "This week on Playroute \uD83C\uDF33", replyTo = null) {
   if (!env.RESEND_API_KEY || !env.DIGEST_FROM) {
     throw new Error("RESEND_API_KEY / DIGEST_FROM not configured \u2014 see README");
   }
@@ -3393,7 +3398,8 @@ async function sendDigestEmail(env, toEmail, html, text, subject = "This week on
       to: [toEmail],
       subject,
       html,
-      text
+      text,
+      ...(replyTo ? { reply_to: replyTo } : {})
     })
   });
   if (!res.ok) {
@@ -3917,6 +3923,160 @@ async function handleCheckPendingDuplicates(env) {
   });
 }
 
+// ---------------------------------------------------------------------
+// PARTNER PROGRAM INTAKE — playroute.co/partners (see public/partners.html)
+// Writes a pending_review row for you to approve in the admin dashboard.
+// No token/portal access is granted here — that only happens on approval
+// (see handleApprovePartner, next). Deliberately mirrors handleSubscribe's
+// shape above: same json() helper, same inline validation style.
+// ---------------------------------------------------------------------
+const PARTNER_TIERS = new Set(["dayof", "leadup", "picks"]);
+
+// ---------------------------------------------------------------------
+// PARTNER APPROVAL — admin clicks a link from the admin dashboard (same
+// unlisted-URL security model as handleApprovePending; the id itself is
+// the unguessable part, consistent with how this dashboard already works
+// per its own "this page has no password" banner). Generates the token
+// that becomes the partner's only credential for their manage page, and
+// reuses sendDigestEmail as-is -- no new email infrastructure, same
+// RESEND_API_KEY / DIGEST_FROM secrets already configured for the
+// subscriber digest.
+// ---------------------------------------------------------------------
+const PARTNER_TIER_LABELS = { dayof: "Day-Of Spotlight", leadup: "Lead-Up Spotlight", picks: "Playroute's Picks" };
+// Requires Cloudflare Email Routing set up for this address separately
+// (dashboard-only step, not something the API/Worker can provision) --
+// otherwise this is a valid-looking reply-to that silently bounces.
+const PARTNER_REPLY_TO = "partners@playroute.co";
+
+function buildPartnerApprovalHtml(partner, tierLabel, manageUrl) {
+  const eventLine = partner.event_title
+    ? `<p style="margin:0 0 16px;font-size:14px;color:#3A4F45;">Event: <strong>${escapeHtml(partner.event_title)}</strong> on ${escapeHtml(partner.event_date || "")}</p>`
+    : "";
+  return `
+<div style="font-family:Georgia,serif;max-width:480px;margin:0 auto;background:#F4F5F0;padding:0;">
+  <div style="background:#1B2B26;padding:28px 24px;">
+    <h1 style="margin:0;color:#fff;font-size:22px;">Playroute</h1>
+    <p style="margin:6px 0 0;color:#D7DBD3;font-size:13px;">Partners</p>
+  </div>
+  <div style="padding:24px;">
+    <h2 style="font-size:18px;color:#1E2622;margin:0 0 12px;">You're approved! 🎉</h2>
+    <p style="font-size:14px;color:#1E2622;line-height:1.6;margin:0 0 16px;">
+      ${escapeHtml(partner.business_name)} is now live as a <strong>${escapeHtml(tierLabel)}</strong> partner on Playroute.
+    </p>
+    ${eventLine}
+    <p style="font-size:14px;color:#1E2622;line-height:1.6;margin:0 0 20px;">
+      Use your private partner page to upload your logo${partner.tier === "picks" ? ", set your brand color," : ""} and manage your listing any time — no password needed, just keep this link.
+    </p>
+    <a href="${manageUrl}" style="display:inline-block;background:#46707E;color:#fff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:bold;">Manage your listing</a>
+    <p style="font-size:12px;color:#5B6560;line-height:1.6;margin:24px 0 0;">
+      Questions? Just reply to this email.
+    </p>
+  </div>
+</div>`.trim();
+}
+
+async function handleApprovePartner(env, url) {
+  const id = url.searchParams.get("id");
+  if (!id) {
+    return new Response("Missing id", { status: 400, headers: { "Content-Type": "text/plain" } });
+  }
+
+  const partner = await env.DB.prepare(
+    `SELECT * FROM partners WHERE id = ? AND status = 'pending_review'`
+  ).bind(id).first();
+  if (!partner) {
+    return new Response("This partner request was already handled or doesn't exist.", { status: 404, headers: { "Content-Type": "text/plain" } });
+  }
+
+  const accessToken = crypto.randomUUID().replace(/-/g, "");
+  // 30-day default for picks -- payment stays manual for now (see partner
+  // portal plan), so this is a placeholder expiry you extend by hand each
+  // time a monthly payment comes in, not a real billing cycle.
+  const membershipExpiresAt = partner.tier === "picks"
+    ? new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10)
+    : null;
+
+  await env.DB.prepare(
+    `UPDATE partners SET status = 'active', access_token = ?, membership_expires_at = ? WHERE id = ?`
+  ).bind(accessToken, membershipExpiresAt, id).run();
+
+  const manageUrl = `${DIGEST_SITE_URL}/partners/manage/${accessToken}`;
+  const tierLabel = PARTNER_TIER_LABELS[partner.tier] || partner.tier;
+  const html = buildPartnerApprovalHtml(partner, tierLabel, manageUrl);
+  const text = `You're approved for ${tierLabel} on Playroute!\n\nManage your listing here: ${manageUrl}\n\nQuestions? Just reply to this email.`;
+
+  try {
+    await sendDigestEmail(env, partner.contact_email, html, text, "You're approved for Playroute Partners \uD83C\uDF89", PARTNER_REPLY_TO);
+  } catch (err) {
+    // The approval itself already committed -- don't report failure on
+    // the whole operation just because the email step broke separately.
+    return json({ ok: true, warning: `Approved, but email failed to send: ${String(err)}`, manageUrl });
+  }
+
+  return json({ ok: true, manageUrl });
+}
+
+async function handlePartnerSubmit(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const tier = String(body.tier || "");
+  if (!PARTNER_TIERS.has(tier)) {
+    return json({ error: "tier must be one of: dayof, leadup, picks" }, 400);
+  }
+
+  const businessName = (body.business_name || "").trim();
+  const email = (body.contact_email || "").trim().toLowerCase();
+  if (!businessName) return json({ error: "business_name required" }, 400);
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ error: "Valid contact_email required" }, 400);
+  }
+
+  // dayof / leadup: all events on Playroute come from scraping, not partner
+  // submission -- these fields are NOT new event content to publish
+  // verbatim. They're a description Holly uses to manually find and match
+  // the already-scraped listing (via partner_id/promo_type on the real
+  // events row), same as the "which event?" framing on the public form.
+  // picks doesn't need any of this -- it promotes the business itself, not
+  // a single dated event (see the offer sheet's "how it's different" note).
+  let eventTitle = null, eventDate = null, details = null, tagline = null, brandColor = null;
+  if (tier === "dayof" || tier === "leadup") {
+    eventTitle = (body.event_title || "").trim();
+    eventDate = (body.event_date || "").trim();
+    details = (body.details || "").trim() || null;
+    if (!eventTitle) return json({ error: "Tell us which event you'd like promoted" }, 400);
+    if (!eventDate || !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
+      return json({ error: "Approximate event date required, format YYYY-MM-DD -- helps us find the right listing" }, 400);
+    }
+    if (tier === "leadup") {
+      const days = Math.ceil((new Date(eventDate) - new Date()) / 86400000);
+      if (days < 7) {
+        return json({ error: "Lead-Up Spotlight needs at least 7 days notice before the event date" }, 400);
+      }
+    }
+  } else {
+    // picks
+    tagline = (body.tagline || "").trim() || null;
+    brandColor = /^#[0-9A-Fa-f]{6}$/.test(body.brand_color || "") ? body.brand_color : null;
+  }
+
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO partners
+       (id, business_name, contact_email, contact_phone, tier, event_title, event_date, details, tagline, brand_color, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_review')`
+  ).bind(
+    id, businessName, email, (body.contact_phone || "").trim() || null, tier,
+    eventTitle, eventDate, details, tagline, brandColor
+  ).run();
+
+  return json({ ok: true, id });
+}
+
 async function handleSubscribe(request, env) {
   let body;
   try {
@@ -3946,8 +4106,240 @@ async function handleUnsubscribe(request, env, url) {
   });
 }
 
+// ---------------------------------------------------------------------
+// PARTNER MANAGE PAGE — playroute.co/partners/manage/:token
+//
+// DELIBERATE SCOPE LIMIT: every write here touches ONLY the partner's own
+// row in the `partners` table (logo_url, brand_color, tagline). Nothing
+// here ever writes to `events` or `pending_events` -- a partner editing
+// their logo or color can never change what's live on the public site.
+// Getting new content actually published stays a manual, by-hand step for
+// you, same as everything else today. This is intentional, not a
+// half-built shortcut -- see chat for why.
+//
+// Server-rendered (like handleApprovePending's plain-Response style)
+// rather than a static shell + client fetch, so there's no separate
+// public "look up a partner by token" JSON endpoint to worry about.
+// ---------------------------------------------------------------------
+
+function partnerManagePageHtml(partner) {
+  const tierLabel = PARTNER_TIER_LABELS[partner.tier] || partner.tier;
+  const isPicks = partner.tier === "picks";
+  const logoImg = partner.logo_url
+    ? `<img src="${escapeHtml(partner.logo_url)}" alt="Current logo" style="max-width:120px;max-height:120px;border-radius:10px;display:block;margin-bottom:10px;">`
+    : `<p style="font-size:12.5px;color:#5B6560;margin-bottom:10px;">No logo uploaded yet.</p>`;
+
+  const eventBlock = !isPicks ? `
+    <div style="background:#ECEEE8;border:1px solid #D7DBD3;border-radius:10px;padding:14px 16px;margin-bottom:20px;">
+      <p style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:#5B6560;margin:0 0 6px;font-weight:600;">Event you requested</p>
+      <p style="font-size:14px;color:#1E2622;margin:0 0 3px;font-weight:600;">${escapeHtml(partner.event_title || "")}</p>
+      <p style="font-size:13px;color:#5B6560;margin:0;">${escapeHtml(partner.event_date || "")}</p>
+      <p style="font-size:11.5px;color:#5B6560;margin:8px 0 0;line-height:1.5;">
+        We match this to one of our scraped listings by hand — this isn't something you can edit here.
+        Need to change what you asked for? Reply to your approval email or email
+        <a href="mailto:partners@playroute.co">partners@playroute.co</a>.
+      </p>
+    </div>` : "";
+
+  const picksFields = isPicks ? `
+    <div class="field">
+      <label>Brand color</label>
+      <div class="color-row" id="colorRow">
+        ${["#46707E","#A88B3E","#B2555A","#7A8B76","#5B84A0"].map(c =>
+          `<span class="color-swatch${c.toLowerCase() === (partner.brand_color||"").toLowerCase() ? " active" : ""}" style="background:${c}" data-color="${c}" onclick="pickColor(this)"></span>`
+        ).join("")}
+      </div>
+    </div>
+    <div class="field">
+      <label for="tagline">One-line description</label>
+      <input type="text" id="tagline" value="${escapeHtml(partner.tagline || "")}" placeholder="Drop-in art classes for ages 3–12">
+    </div>
+    <button type="button" class="submit-btn" onclick="saveProfile()">Save changes</button>
+    <p class="form-note" id="profileMsg"></p>` : "";
+
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manage your Playroute listing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{--soil:#1B2B26;--bark:#3A4F45;--fog:#D7DBD3;--ink:#1E2622;--ink-soft:#5B6560;--cream:#F4F5F0;--clay:#5B84A0;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--soil);font-family:'DM Sans',sans-serif;color:var(--ink);}
+.page{max-width:480px;margin:0 auto;background:var(--cream);min-height:100vh;}
+.pheader{background:var(--soil);padding:26px 20px;}
+.pheader h1{font-family:'Playfair Display',serif;color:#fff;font-size:22px;margin-bottom:4px;}
+.pheader p{color:var(--fog);font-size:12.5px;}
+.tierpill{display:inline-block;margin-top:10px;background:rgba(255,255,255,0.12);color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:100px;}
+.section{padding:22px 16px;}
+.field{margin-bottom:16px;}
+.field label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-soft);margin-bottom:6px;}
+.field input[type=text]{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--fog);font-size:14px;}
+.color-row{display:flex;gap:8px;}
+.color-swatch{width:30px;height:30px;border-radius:50%;border:2px solid transparent;cursor:pointer;}
+.color-swatch.active{border-color:var(--ink);}
+.submit-btn{width:100%;padding:12px 0;border-radius:8px;border:none;font-weight:700;font-size:14px;color:#fff;background:var(--clay);cursor:pointer;margin-top:4px;}
+.form-note{font-size:12px;color:var(--ink-soft);margin-top:8px;min-height:16px;}
+.form-note.ok{color:#3A5C2A;}
+.form-note.err{color:#8A3B2A;}
+.divider{border:none;border-top:1px solid var(--fog);margin:24px 0;}
+</style></head>
+<body><div class="page">
+  <div class="pheader">
+    <h1>${escapeHtml(partner.business_name)}</h1>
+    <p>Manage your Playroute listing</p>
+    <span class="tierpill">${escapeHtml(tierLabel)}</span>
+  </div>
+  <div class="section">
+    ${eventBlock}
+    <div class="field">
+      <label>Logo</label>
+      ${logoImg}
+      <input type="file" id="logoFile" accept="image/jpeg,image/png,image/webp">
+      <button type="button" class="submit-btn" style="margin-top:8px;" onclick="uploadLogo()">Upload logo</button>
+      <p class="form-note" id="logoMsg"></p>
+    </div>
+    <hr class="divider">
+    ${picksFields}
+  </div>
+</div>
+<script>
+const TOKEN = "${partner.access_token}";
+
+async function uploadLogo(){
+  const fileInput = document.getElementById('logoFile');
+  const msg = document.getElementById('logoMsg');
+  if(!fileInput.files[0]){ msg.textContent = 'Choose a file first.'; msg.className='form-note err'; return; }
+  const fd = new FormData();
+  fd.append('token', TOKEN);
+  fd.append('file', fileInput.files[0]);
+  msg.textContent = 'Uploading…'; msg.className = 'form-note';
+  try{
+    const res = await fetch('/api/partners/manage/logo', { method:'POST', body: fd });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Upload failed');
+    msg.textContent = 'Logo updated.'; msg.className = 'form-note ok';
+  } catch(err){
+    msg.textContent = String(err.message || err); msg.className = 'form-note err';
+  }
+}
+
+let selectedColor = document.querySelector('.color-swatch.active')?.dataset.color || null;
+function pickColor(el){
+  document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+  el.classList.add('active');
+  selectedColor = el.dataset.color;
+}
+
+async function saveProfile(){
+  const msg = document.getElementById('profileMsg');
+  const tagline = document.getElementById('tagline')?.value.trim() || null;
+  msg.textContent = 'Saving…'; msg.className = 'form-note';
+  try{
+    const res = await fetch('/api/partners/manage/update', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ token: TOKEN, tagline, brand_color: selectedColor })
+    });
+    const data = await res.json();
+    if(!res.ok) throw new Error(data.error || 'Save failed');
+    msg.textContent = 'Saved.'; msg.className = 'form-note ok';
+  } catch(err){
+    msg.textContent = String(err.message || err); msg.className = 'form-note err';
+  }
+}
+</script></body></html>`;
+}
+
+async function handlePartnerManagePage(env, token) {
+  const partner = await env.DB.prepare(
+    `SELECT * FROM partners WHERE access_token = ? AND status = 'active'`
+  ).bind(token).first();
+  if (!partner) {
+    return new Response(
+      "This link isn't valid or your partnership has ended. If that seems wrong, email partners@playroute.co.",
+      { status: 404, headers: { "Content-Type": "text/plain" } }
+    );
+  }
+  return new Response(partnerManagePageHtml(partner), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
+}
+
+// Body-carried token (not URL-path) -- consistent with handlePartnerSubmit
+// above, and avoids the token needing to round-trip through a URL param
+// for a same-origin fetch() call from the page it's already embedded in.
+async function handlePartnerManageUpdate(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+
+  const token = String(body.token || "");
+  const partner = await env.DB.prepare(
+    `SELECT * FROM partners WHERE access_token = ? AND status = 'active'`
+  ).bind(token).first();
+  if (!partner) return json({ error: "Invalid or expired token" }, 404);
+
+  // Only picks profile fields are editable here -- dayof/leadup partners
+  // get no fields rendered for these on the page, but reject server-side
+  // too rather than trusting the client not to send them anyway.
+  if (partner.tier !== "picks") {
+    return json({ error: "Only Playroute's Picks partners can edit these fields" }, 403);
+  }
+
+  const tagline = (body.tagline || "").trim() || null;
+  const brandColor = /^#[0-9A-Fa-f]{6}$/.test(body.brand_color || "") ? body.brand_color : partner.brand_color;
+
+  await env.DB.prepare(
+    `UPDATE partners SET tagline = ?, brand_color = ? WHERE id = ?`
+  ).bind(tagline, brandColor, partner.id).run();
+
+  return json({ ok: true });
+}
+
+// Mirrors handlePhotoUpload's validation exactly (same ALLOWED_TYPES,
+// same 8MB cap) -- reuses the existing PHOTOS bucket and the existing
+// /api/photos/:key serving route as-is, just a different key prefix and a
+// token lookup instead of a park_id lookup.
+async function handlePartnerLogoUpload(request, env) {
+  let form;
+  try { form = await request.formData(); } catch { return json({ error: "Expected multipart/form-data body" }, 400); }
+
+  const token = form.get("token");
+  const file = form.get("file");
+  if (!token) return json({ error: "token is required" }, 400);
+  if (!(file instanceof File)) return json({ error: "file is required" }, 400);
+
+  const partner = await env.DB.prepare(
+    `SELECT * FROM partners WHERE access_token = ? AND status = 'active'`
+  ).bind(token).first();
+  if (!partner) return json({ error: "Invalid or expired token" }, 404);
+
+  const ALLOWED_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  const ext = ALLOWED_TYPES[file.type];
+  if (!ext) return json({ error: `Unsupported file type: ${file.type || "unknown"} — use JPEG, PNG, or WebP` }, 400);
+
+  const MAX_BYTES = 8 * 1024 * 1024;
+  if (file.size > MAX_BYTES) {
+    return json({ error: `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB) — 8MB max` }, 400);
+  }
+
+  const key = `partner-logos/${partner.id}.${ext}`;
+  await env.PHOTOS.put(key, file, { httpMetadata: { contentType: file.type } });
+
+  // Same orphan-cleanup logic as handlePhotoUpload: only meaningful if the
+  // extension changed between uploads (same id, different suffix).
+  const oldKey = partner.logo_url ? partner.logo_url.replace(/^\/api\/photos\//, "") : null;
+  if (oldKey && oldKey !== key) {
+    await env.PHOTOS.delete(decodeURIComponent(oldKey)).catch(() => {});
+  }
+
+  const url = `/api/photos/${encodeURIComponent(key)}`;
+  await env.DB.prepare(`UPDATE partners SET logo_url = ? WHERE id = ?`).bind(url, partner.id).run();
+
+  return json({ ok: true, url });
+}
+
 async function handlePhoto(env, key) {
   const obj = await env.PHOTOS.get(key);
+
   if (!obj) return new Response("Not found", { status: 404, headers: CORS_HEADERS });
   const headers = new Headers(CORS_HEADERS);
   obj.writeHttpMetadata(headers);
@@ -4179,6 +4571,22 @@ export default {
       }
       if (url.pathname === "/api/ingest" && request.method === "POST") {
         return await handleIngest(request, env);
+      }
+      if (url.pathname === "/api/partners/approve") {
+        return await handleApprovePartner(env, url);
+      }
+      if (url.pathname === "/api/partners/submit" && request.method === "POST") {
+        return await handlePartnerSubmit(request, env);
+      }
+      if (url.pathname === "/api/partners/manage/update" && request.method === "POST") {
+        return await handlePartnerManageUpdate(request, env);
+      }
+      if (url.pathname === "/api/partners/manage/logo" && request.method === "POST") {
+        return await handlePartnerLogoUpload(request, env);
+      }
+      if (url.pathname.startsWith("/partners/manage/") && request.method === "GET") {
+        const token = decodeURIComponent(url.pathname.slice("/partners/manage/".length).replace(/\/+$/, ""));
+        return await handlePartnerManagePage(env, token);
       }
       if (url.pathname === "/api/subscribe" && request.method === "POST") {
         return await handleSubscribe(request, env);
