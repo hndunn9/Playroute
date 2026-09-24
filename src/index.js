@@ -4020,35 +4020,45 @@ async function handlePhotoUpload(request, env) {
 export default {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
-    if (event.cron === "0 18 * * 7" || event.cron === "0 19 * * 7") {
-      if (isNearNoonMountain(new Date())) {
-        // Sequenced on purpose: runWeeklyDigest reads engagement_digests to
-        // attach trending/popular badges to the newsletter, so the badge
-        // scoring MUST finish writing this week's rows first. These used to
-        // fire as two independent ctx.waitUntil() calls -- which run
-        // concurrently, not in order -- so the newsletter could (and did)
-        // sometimes build against last week's badges, or none at all, if it
-        // happened to finish first. Awaiting the chain forces the order.
-        ctx.waitUntil(
-          runWeeklyEngagementDigest(env).then(() => runWeeklyDigest(env))
-        );
-        // weekly cadence split into three groups (weekly-a/b/c), each its
-        // OWN scheduled trigger and therefore its own Worker invocation
-        // with a fresh subrequest budget -- 2026-09 fix. Previously all
-        // ~9 weekly scrapers ran sequentially in this ONE invocation and
-        // shared one subrequest limit; once enough sources were added,
-        // exceeding that limit kills the invocation outright (not
-        // catchable by try/catch), so anything later in the loop than
-        // whichever source tipped it over silently never ran at all --
-        // confirmed via two sources (anythink_huron_thornton,
-        // anythink_nature_library) that had literally never executed.
-        // This trigger now only runs group A; B and C fire from their own
-        // cron entries below, at different times the same day.
-        ctx.waitUntil(
-          runSources(env, { cadence: "weekly-a" })
-            .then(() => runSourceVerification(env, "weekly-a"))
-        );
-      }
+    if (event.cron === "0 18 * * 7") {
+      // Fixed at noon MDT / 11am MST year-round -- was previously two
+      // separate cron entries (0 18 and 0 19 UTC) with an isNearNoonMountain()
+      // gate deciding which one actually did anything each week, as a way to
+      // keep this firing at true local noon across the DST transition.
+      // Collapsed to one trigger, 2026-09: Cloudflare's plan caps this
+      // account at 5 cron triggers total, and the weekly-a/b/c subrequest
+      // split (below) needed 2 new ones -- this pair was pure redundancy
+      // (only one ever fired) whose only cost was drifting an hour off true
+      // noon for half the year, which doesn't matter for a weekly digest
+      // email. isNearNoonMountain() is left defined but unused rather than
+      // deleted, in case a second trigger slot frees up later and this is
+      // worth restoring.
+      // Sequenced on purpose: runWeeklyDigest reads engagement_digests to
+      // attach trending/popular badges to the newsletter, so the badge
+      // scoring MUST finish writing this week's rows first. These used to
+      // fire as two independent ctx.waitUntil() calls -- which run
+      // concurrently, not in order -- so the newsletter could (and did)
+      // sometimes build against last week's badges, or none at all, if it
+      // happened to finish first. Awaiting the chain forces the order.
+      ctx.waitUntil(
+        runWeeklyEngagementDigest(env).then(() => runWeeklyDigest(env))
+      );
+      // weekly cadence split into three groups (weekly-a/b/c), each its
+      // OWN scheduled trigger and therefore its own Worker invocation
+      // with a fresh subrequest budget -- 2026-09 fix. Previously all
+      // ~9 weekly scrapers ran sequentially in this ONE invocation and
+      // shared one subrequest limit; once enough sources were added,
+      // exceeding that limit kills the invocation outright (not
+      // catchable by try/catch), so anything later in the loop than
+      // whichever source tipped it over silently never ran at all --
+      // confirmed via two sources (anythink_huron_thornton,
+      // anythink_nature_library) that had literally never executed.
+      // This trigger now only runs group A; B and C fire from their own
+      // cron entries below, at different times the same day.
+      ctx.waitUntil(
+        runSources(env, { cadence: "weekly-a" })
+          .then(() => runSourceVerification(env, "weekly-a"))
+      );
       return;
     }
     if (event.cron === "0 20 * * 7") {
