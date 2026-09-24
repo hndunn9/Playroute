@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Partner With Playroute</title>
+<meta name="description" content="Get your events and business in front of families actively planning their week in Boulder County.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --soil:      #1B2B26;
+  --bark:      #3A4F45;
+  --clay:      #5B84A0;
+  --wheat:     #E8DCC3;
+  --sage:      #7A8B76;
+  --cream:     #F4F5F0;
+  --parchment: #ECEEE8;
+  --fog:       #D7DBD3;
+  --ink:       #1E2622;
+  --ink-soft:  #5B6560;
+  --sky:       #46707E;
+  --ember:     #B2555A;
+  --gold:      #A88B3E;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --dayof: var(--ember);
+  --leadup: var(--gold);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{background:var(--soil);font-family:'DM Sans', sans-serif;-webkit-font-smoothing:antialiased;color:var(--ink);}
+.page{ max-width:480px;margin:0 auto;background:var(--cream);min-height:100vh; }
+.pheader{ background:var(--soil); padding:28px 20px 24px; }
+.pheader-wordmark{ font-family:'Playfair Display',serif;color:#fff;font-size:26px;font-weight:700;display:flex;align-items:center;gap:10px;margin-bottom:6px; }
+.pheader-beta{ font-family:'DM Sans',sans-serif;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#F3F1E8;border:1px solid rgba(243,241,232,0.55);border-radius:4px;padding:2px 7px; }
+.pheader-sub{color:var(--fog);font-size:13.5px;line-height:1.5;}
+.pheader-stats{ display:flex;gap:14px;margin-top:16px;flex-wrap:wrap;min-height:34px; }
+.pstat{color:var(--wheat);font-size:11.5px;font-weight:600;}
+.pstat b{font-family:'Playfair Display',serif;font-size:15px;display:block;color:#fff;}
+.pstat b.loading{opacity:0.4;}
+.pheader-asof{ font-size:10px;color:var(--fog);opacity:0.7;margin-top:10px; }
+.section{padding:22px 16px 4px;}
+.section-label{ font-family:'DM Sans',sans-serif;font-size:10.5px;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);font-weight:700;margin-bottom:4px; }
+.section-sub{font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;line-height:1.4;}
+.tier-card{ background:#fff;border-radius:var(--radius-md);box-shadow:0 2px 8px rgba(20,24,22,0.07);padding:16px;margin-bottom:10px;border-left:4px solid var(--fog);cursor:pointer;transition:transform .12s ease; }
+.tier-card:active{transform:scale(0.985);}
+.tier-card.sel{ box-shadow:0 0 0 2px var(--sel-color,var(--clay)), 0 4px 14px rgba(20,24,22,0.12); }
+.tier-card[data-tier="dayof"]{ border-left-color:var(--dayof); --sel-color:var(--dayof); }
+.tier-card[data-tier="leadup"]{ border-left-color:var(--leadup); --sel-color:var(--leadup); }
+.tier-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.tier-name{font-weight:700;font-size:15px;color:var(--ink);}
+.tier-price{font-family:'DM Sans',sans-serif;font-weight:700;font-size:14px;}
+.tier-card[data-tier="dayof"] .tier-price{color:var(--dayof);}
+.tier-card[data-tier="leadup"] .tier-price{color:var(--leadup);}
+.tier-desc{font-size:12.5px;color:var(--ink-soft);line-height:1.5;}
+.tier-badge-preview{ display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:700;color:#fff;padding:2px 8px;border-radius:6px;margin-top:9px;letter-spacing:0.01em; }
+.tier-card[data-tier="dayof"] .tier-badge-preview{background:var(--dayof);}
+.tier-card[data-tier="leadup"] .tier-badge-preview{background:var(--leadup);}
+.or-divider{ display:flex;align-items:center;gap:12px;padding:22px 16px 6px;color:var(--ink-soft); }
+.or-divider::before,.or-divider::after{ content:"";flex:1;height:1px;background:var(--fog); }
+.or-divider span{ font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;white-space:nowrap; }
+.pick-wrap{ padding:14px 16px 4px; }
+.pick-card{ position:relative;background:linear-gradient(160deg, var(--soil) 0%, #24382F 100%);border-radius:var(--radius-lg);padding:22px 20px 20px;color:#fff;cursor:pointer;box-shadow:0 6px 22px rgba(27,43,38,0.35);transition:transform .12s ease; }
+.pick-card:active{transform:scale(0.99);}
+.pick-card.sel{ box-shadow:0 0 0 3px var(--gold), 0 6px 22px rgba(27,43,38,0.35); }
+.pick-ribbon{ display:inline-flex;align-items:center;gap:5px;background:var(--gold);color:var(--soil);font-size:10.5px;font-weight:700;letter-spacing:0.03em;padding:4px 10px;border-radius:100px;margin-bottom:12px; }
+.pick-title{ font-family:'Playfair Display',serif;font-size:22px;font-weight:700;margin-bottom:6px;line-height:1.25; }
+.pick-desc{ font-size:13px;color:var(--fog);line-height:1.55;margin-bottom:14px; }
+.pick-features{ display:flex;flex-direction:column;gap:7px;margin-bottom:16px; }
+.pick-feature{ display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:#EDEBE0;line-height:1.45; }
+.pick-feature .check{ color:var(--gold);font-weight:700;flex-shrink:0; }
+.pick-bottom{ display:flex;align-items:center;justify-content:space-between; }
+.pick-price{ font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:#fff; }
+.pick-price span{ font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;color:var(--fog); }
+.pick-badgepreview{ display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;color:var(--soil);background:var(--wheat);padding:3px 9px;border-radius:6px; }
+.pick-badgepreview .dot{width:5px;height:5px;border-radius:50%;background:var(--soil);opacity:0.7;}
+.pick-note{ margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.12);font-size:11.5px;color:var(--fog);line-height:1.5; }
+.pick-note b{color:var(--wheat);}
+form{padding:20px 16px 40px;}
+.form-heading{ font-family:'DM Sans',sans-serif;font-size:10.5px;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);font-weight:700;margin-bottom:14px; }
+.field{margin-bottom:16px;}
+.field label{ display:block;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-soft);margin-bottom:6px; }
+.field input,.field select,.field textarea{ width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--fog);background:#fff;font-family:'DM Sans',sans-serif;font-size:14px;color:var(--ink);outline:none;box-sizing:border-box; }
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--clay);}
+.field textarea{resize:vertical;min-height:70px;}
+.field-hint{font-size:11.5px;color:var(--ink-soft);margin-top:5px;line-height:1.4;}
+.leadup-only{ display:none;background:var(--parchment);border:1px solid var(--fog);border-radius:var(--radius-sm);padding:11px 13px;margin-bottom:16px;font-size:12.5px;color:var(--ink-soft);line-height:1.5; }
+.leadup-only.show{display:block;}
+.leadup-only b{color:var(--ink);}
+.pick-only{ display:none;background:#FBF8EE;border:1px solid #E8DCB8;border-radius:var(--radius-sm);padding:11px 13px;margin-bottom:18px;font-size:12.5px;color:#6B5A20;line-height:1.5; }
+.pick-only.show{display:block;}
+.info-note{ background:#FBF8EE;border:1px solid #E8DCB8;border-radius:var(--radius-sm);padding:11px 13px;margin-bottom:16px;font-size:12.5px;color:#6B5A20;line-height:1.5; }
+.pick-only b{color:#4A3E15;}
+.event-fields, .pick-fields{ display:none; }
+.event-fields.show, .pick-fields.show{ display:block; }
+.color-row{ display:flex;gap:8px;flex-wrap:wrap;margin-top:2px; }
+.color-swatch{ width:32px;height:32px;border-radius:50%;border:2px solid transparent;cursor:pointer; }
+.color-swatch.active{ border-color:var(--ink); }
+.submit-btn{ display:block;width:100%;padding:13px 0;border-radius:var(--radius-sm);border:none;font-weight:700;font-size:14.5px;color:#fff;background:var(--clay);cursor:pointer;margin-top:6px;font-family:'DM Sans',sans-serif; }
+.submit-btn.pick-style{ background:var(--soil); }
+.submit-btn:disabled{ opacity:0.6;cursor:not-allowed; }
+.submit-btn:active{opacity:0.9;}
+.form-footnote{ text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:12px;line-height:1.5; }
+.form-error{ display:none;background:#FBEDEA;border:1px solid #E7B8AE;border-radius:var(--radius-sm);padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:#8A3B2A; }
+.form-error.show{display:block;}
+.empty-state{ text-align:center;padding:24px 20px;color:var(--ink-soft);font-size:13px;background:#fff;border-radius:var(--radius-md);margin:0 16px;border:1px dashed var(--fog); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="pheader">
+    <div class="pheader-wordmark">Playroute <span class="pheader-beta">Partners</span></div>
+    <p class="pheader-sub">Get your events and business in front of families actively planning their week in Boulder County.</p>
+    <div class="pheader-stats" id="statsRow">
+      <div class="pstat"><b class="loading" id="statVisitors">···</b>unique visitors, all-time</div>
+      <div class="pstat"><b class="loading" id="statViews">···</b>page views, all-time</div>
+      <div class="pstat"><b class="loading" id="statEvents">···</b>events discovered</div>
+    </div>
+    <p class="pheader-asof" id="statAsOf"></p>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Promote a single event</div>
+    <div class="section-sub">One-time boosts tied to a specific date on your calendar.</div>
+    <div class="tier-card" data-tier="dayof" onclick="selectTier('dayof')">
+      <div class="tier-top"><span class="tier-name">Day-Of Spotlight</span><span class="tier-price">$20</span></div>
+      <div class="tier-desc">Badge + sorted to the top of the feed on the day of your event.</div>
+      <span class="tier-badge-preview">⚡ Spotlight</span>
+    </div>
+    <div class="tier-card" data-tier="leadup" onclick="selectTier('leadup')">
+      <div class="tier-top"><span class="tier-name">Lead-Up Spotlight</span><span class="tier-price">$35</span></div>
+      <div class="tier-desc">Everything in Day-Of, plus featured in "Coming Up" for the 7 days before your event.</div>
+      <span class="tier-badge-preview">📣 Lead-Up</span>
+    </div>
+  </div>
+
+  <div class="or-divider"><span>Or, promote your business</span></div>
+
+  <div class="pick-wrap">
+    <div class="pick-card" data-tier="picks" onclick="selectTier('picks')">
+      <span class="pick-ribbon">★ Playroute's Picks</span>
+      <div class="pick-title">Get featured as one of our Picks</div>
+      <p class="pick-desc">This isn't a single-event ad — it's an ongoing spot for your business. Every event you post gets your brand badge, all month, and parents start recognizing your name across the feed.</p>
+      <div class="pick-features">
+        <div class="pick-feature"><span class="check">✓</span> Every event you post is badged in your brand color, all month</div>
+        <div class="pick-feature"><span class="check">✓</span> Your own portal — update logo, color, and events anytime</div>
+        <div class="pick-feature"><span class="check">✓</span> No date required — this promotes your business, not one event</div>
+      </div>
+      <div class="pick-bottom">
+        <div class="pick-price">$75<span>&nbsp;/ month</span></div>
+        <span class="pick-badgepreview"><span class="dot"></span>Busy Kids Art Studio</span>
+      </div>
+      <div class="pick-note"><b>How it's different:</b> Day-Of and Lead-Up promote one event on your calendar. Playroute's Picks promotes <b>your business</b> across everything you post.</div>
+    </div>
+  </div>
+
+  <form id="partnerForm">
+    <div style="padding:0 16px;">
+      <div class="form-error" id="formError"></div>
+    </div>
+    <div id="emptyPrompt" class="empty-state">Pick an option above to continue ↑</div>
+
+    <div id="sharedFields" style="display:none;">
+      <div class="form-heading" id="formHeadingLabel">Your info</div>
+      <div class="field"><label for="biz">Business name</label><input type="text" id="biz" placeholder="Busy Kids Art Studio"></div>
+      <div class="field"><label for="email">Contact email</label><input type="email" id="email" placeholder="you@yourbusiness.com"></div>
+      <div class="field"><label for="phone">Phone (optional)</label><input type="tel" id="phone" placeholder="(303) 555-0100"></div>
+
+      <div class="event-fields" id="eventFields">
+        <div class="info-note"><b>We scrape events from all over Boulder County</b> — you don't need to create a new listing. Just tell us which event you'd like promoted and we'll match it to the right one.</div>
+        <div class="field"><label for="evtitle">Which event?</label><input type="text" id="evtitle" placeholder="e.g. Fall Camp Registration Night at Busy Kids Art Studio"></div>
+        <div class="field"><label for="evdate">Approximate date</label><input type="date" id="evdate" onchange="checkLeadupHint()"></div>
+        <div class="leadup-only" id="leaduphint"><b>Lead-Up Spotlight needs 7+ days notice.</b> The event should be at least a week out.</div>
+        <div class="field"><label for="details">Anything that helps us find it</label><textarea id="details" placeholder="Location, time, source you saw it on — whatever helps us match it to the right listing"></textarea></div>
+      </div>
+
+      <div class="pick-fields" id="pickFields">
+        <div class="pick-only show"><b>No event date needed here.</b> You'll add and manage individual events anytime in your partner portal after approval.</div>
+        <div class="field"><label for="tagline">One-line description of your business</label><input type="text" id="tagline" placeholder="Drop-in art classes for ages 3–12"></div>
+        <div class="field">
+          <label>Brand color for your badge</label>
+          <div class="color-row" id="colorRow">
+            <span class="color-swatch active" style="background:#46707E" data-color="#46707E" onclick="pickColor(this)"></span>
+            <span class="color-swatch" style="background:#A88B3E" data-color="#A88B3E" onclick="pickColor(this)"></span>
+            <span class="color-swatch" style="background:#B2555A" data-color="#B2555A" onclick="pickColor(this)"></span>
+            <span class="color-swatch" style="background:#7A8B76" data-color="#7A8B76" onclick="pickColor(this)"></span>
+            <span class="color-swatch" style="background:#5B84A0" data-color="#5B84A0" onclick="pickColor(this)"></span>
+          </div>
+          <p class="field-hint">You can change this anytime in your portal.</p>
+        </div>
+      </div>
+
+      <div class="field"><label for="logo">Logo (optional at this step — you can add it later in your partner portal)</label><input type="file" id="logo" accept="image/*"></div>
+
+      <button type="submit" class="submit-btn" id="submitBtn">Submit for review</button>
+      <p class="form-footnote">We review every submission — usually within 24 hours. You'll get an email with a link to your own partner page once approved.</p>
+    </div>
+  </form>
+</div>
+
+<script>
+let selectedTier = null;
+
+function selectTier(tier){
+  selectedTier = tier;
+  document.querySelectorAll('.tier-card, .pick-card').forEach(c => c.classList.remove('sel'));
+  document.querySelector('[data-tier="'+tier+'"]').classList.add('sel');
+  document.getElementById('emptyPrompt').style.display = 'none';
+  document.getElementById('sharedFields').style.display = 'block';
+  const isPick = tier === 'picks';
+  document.getElementById('eventFields').classList.toggle('show', !isPick);
+  document.getElementById('pickFields').classList.toggle('show', isPick);
+  document.getElementById('formHeadingLabel').textContent = isPick ? 'Tell us about your business' : 'Your info';
+  document.getElementById('submitBtn').classList.toggle('pick-style', isPick);
+  document.getElementById('submitBtn').textContent = isPick ? 'Apply to become a Pick' : 'Submit for review';
+  checkLeadupHint();
+}
+
+function pickColor(el){
+  document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function checkLeadupHint(){
+  const hint = document.getElementById('leaduphint');
+  const dateInput = document.getElementById('evdate');
+  if(selectedTier === 'leadup' && dateInput.value){
+    const days = Math.ceil((new Date(dateInput.value) - new Date()) / 86400000);
+    hint.classList.toggle('show', days < 7);
+  } else {
+    hint.classList.remove('show');
+  }
+}
+
+function formatNum(n){ return n.toLocaleString('en-US'); }
+
+async function loadStats(){
+  const elVisitors = document.getElementById('statVisitors');
+  const elViews = document.getElementById('statViews');
+  const elEvents = document.getElementById('statEvents');
+  const elAsOf = document.getElementById('statAsOf');
+  try{
+    // Same-origin once deployed to playroute.co -- no CORS concerns.
+    const res = await fetch('/api/stats');
+    if(!res.ok) throw new Error('stats request failed: ' + res.status);
+    const data = await res.json();
+    elVisitors.textContent = formatNum(data.all_time.unique_visitors);
+    elViews.textContent = formatNum(data.all_time.page_views);
+    elEvents.textContent = formatNum(data.events_discovered_all_time);
+    [elVisitors, elViews, elEvents].forEach(el => el.classList.remove('loading'));
+    const since = new Date(data.all_time.tracking_since.replace(' ', 'T') + 'Z');
+    elAsOf.textContent = 'Live figures, tracked since ' + since.toLocaleDateString('en-US', {month:'long', year:'numeric'});
+  } catch(err){
+    console.warn('Live stats fetch failed:', err);
+    elAsOf.textContent = '';
+  }
+}
+loadStats();
+
+// NOT YET WIRED UP — posts to an endpoint that doesn't exist until the
+// partners table + /api/partners/submit route are built (see chat for the
+// full checklist). Left in place, disabled gracefully, so this file is a
+// one-line swap away from live once that backend exists.
+document.getElementById('partnerForm').addEventListener('submit', async function(e){
+  e.preventDefault();
+  const errEl = document.getElementById('formError');
+  errEl.classList.remove('show');
+
+  if(!selectedTier){ return; }
+  const biz = document.getElementById('biz').value.trim();
+  const email = document.getElementById('email').value.trim();
+  if(!biz || !email){
+    errEl.textContent = 'Business name and email are required.';
+    errEl.classList.add('show');
+    return;
+  }
+
+  const payload = {
+    tier: selectedTier,
+    business_name: biz,
+    contact_email: email,
+    contact_phone: document.getElementById('phone').value.trim() || null,
+  };
+  if(selectedTier === 'picks'){
+    payload.tagline = document.getElementById('tagline').value.trim();
+    payload.brand_color = document.querySelector('.color-swatch.active')?.dataset.color || '#46707E';
+  } else {
+    payload.event_title = document.getElementById('evtitle').value.trim();
+    payload.event_date = document.getElementById('evdate').value;
+    payload.details = document.getElementById('details').value.trim();
+  }
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+
+  try{
+    const res = await fetch('/api/partners/submit', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if(!res.ok) throw new Error('submit failed');
+    document.querySelector('.page').innerHTML =
+      '<div style="padding:60px 24px;text-align:center;">' +
+      '<h2 style="font-family:\\'Playfair Display\\',serif;margin-bottom:10px;">Thanks!</h2>' +
+      '<p style="color:#5B6560;font-size:14px;line-height:1.6;">We\\'ll review your submission and follow up within 24 hours.</p></div>';
+  } catch(err){
+    errEl.textContent = "Submission isn't connected yet — this endpoint doesn't exist until the backend is built.";
+    errEl.classList.add('show');
+    btn.disabled = false;
+    btn.textContent = selectedTier === 'picks' ? 'Apply to become a Pick' : 'Submit for review';
+  }
+});
+</script>
+</body>
+</html>
