@@ -4149,6 +4149,27 @@ async function handlePartnerSubmit(request, env) {
     eventTitle, eventDate, details, tagline, brandColor
   ).run();
 
+  // Emails on submit: a heads-up to the admin (so a new request doesn't sit
+  // unseen) and a "we got it" receipt to the partner. The row is already
+  // saved, so an email failure is logged but never fails the submission.
+  const tierLabel = PARTNER_TIER_LABELS[tier] || tier;
+  const sends = [];
+  if (env.ADMIN_EMAIL) {
+    const adminHtml = `<p>New <strong>${escapeHtml(tierLabel)}</strong> partner request from <strong>${escapeHtml(businessName)}</strong> (${escapeHtml(email)}).</p>`
+      + `<p>Event: ${escapeHtml(eventTitle || "—")} ${escapeHtml(eventDate || "")}</p>`
+      + `<p>${escapeHtml(details || "")}</p>`
+      + `<p>Review it in the admin dashboard: <a href="${DIGEST_SITE_URL}/admin">${DIGEST_SITE_URL}/admin</a></p>`;
+    sends.push(sendDigestEmail(env, env.ADMIN_EMAIL, adminHtml, null, `New partner request: ${businessName}`, email));
+  }
+  const receiptText = `Thanks for applying to Playroute Partners, ${businessName}!\n\nWe review every request, usually within 24 hours. Once approved you'll get a second email with a link to your own partner page.\n\nQuestions? Just reply to this email.`;
+  const receiptHtml = `<div style="font-family:Georgia,serif;max-width:480px;margin:0 auto;padding:24px;color:#1E2622;">`
+    + `<h2 style="font-size:18px;margin:0 0 12px;">Thanks, ${escapeHtml(businessName)}!</h2>`
+    + `<p style="font-size:14px;line-height:1.6;">We got your <strong>${escapeHtml(tierLabel)}</strong> request. We review every request, usually within 24 hours. Once approved you'll get a second email with a link to your own partner page.</p>`
+    + `<p style="font-size:12px;color:#5B6560;">Questions? Just reply to this email.</p></div>`;
+  sends.push(sendDigestEmail(env, email, receiptHtml, receiptText, "We got your Playroute Partners request", PARTNER_REPLY_TO));
+  const results = await Promise.allSettled(sends);
+  for (const r of results) if (r.status === "rejected") console.error("Partner submit email failed:", r.reason);
+
   return json({ ok: true, id });
 }
 
