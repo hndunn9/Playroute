@@ -4421,22 +4421,34 @@ async function handlePhotoUpload(request, env) {
 // OWN invocation via a service binding to this same Worker (env.SELF, see
 // wrangler.jsonc) -- each call costs the caller one subrequest, and the
 // callee gets a fresh 50-fetch budget for its scrape + verification.
-async function runSourcesFannedOut(env, cadence) {
-  const { results: rows } = await env.DB.prepare(
-    `SELECT source_key FROM scrape_sources WHERE mode = 'auto' AND enabled = 1 AND cadence = ?`
-  ).bind(cadence).all();
+// cadence = null runs every enabled auto source (admin "Run all" button);
+// sourceKeys = [...] runs just those (admin per-source "Run" buttons).
+async function runSourcesFannedOut(env, cadence, { sourceKeys = null, verify = true } = {}) {
+  let rows;
+  if (sourceKeys) {
+    rows = sourceKeys.map((k) => ({ source_key: k }));
+  } else {
+    ({ results: rows } = await env.DB.prepare(
+      cadence
+        ? `SELECT source_key FROM scrape_sources WHERE mode = 'auto' AND enabled = 1 AND cadence = ?`
+        : `SELECT source_key FROM scrape_sources WHERE mode = 'auto' AND enabled = 1`
+    ).bind(...(cadence ? [cadence] : [])).all());
+  }
   if (!env.SELF || !env.INGEST_SECRET) {
     // Binding/secret missing -- fall back to the old in-process behaviour
     // rather than silently doing nothing.
-    const results = await runSources(env, { cadence });
-    await runSourceVerification(env, cadence);
+    const results = [];
+    for (const { source_key } of rows) {
+      results.push(...(await runSources(env, { sourceKey: source_key })));
+      if (verify) await runSourceVerification(env, null, source_key).catch(() => {});
+    }
     return results;
   }
   const results = [];
   for (const { source_key } of rows) {
     try {
       const res = await env.SELF.fetch(
-        `https://internal/internal/run-source?key=${encodeURIComponent(source_key)}&verify=1`,
+        `https://internal/internal/run-source?key=${encodeURIComponent(source_key)}${verify ? "&verify=1" : ""}`,
         { method: "POST", headers: { Authorization: `Bearer ${env.INGEST_SECRET}` } }
       );
       const body = await res.json().catch(() => ({}));
@@ -4448,7 +4460,7 @@ async function runSourcesFannedOut(env, cadence) {
   await env.DB.prepare(
     `INSERT INTO job_runs (job_name, status, details) VALUES (?, ?, ?)`
   ).bind(
-    `sources_${cadence}`,
+    sourceKeys ? `sources_manual_${sourceKeys.join(",")}`.slice(0, 120) : `sources_${cadence || "all"}`,
     results.some((r) => r.status === "error") ? "partial" : "success",
     JSON.stringify(results).slice(0, 4000)
   ).run();
@@ -4601,10 +4613,16 @@ export default {
         return await handleInternalRunSource(request, env, url);
       }
       if (url.pathname === "/api/run-sources" && request.method === "POST") {
+        // Fans out like the crons do: every source runs in its OWN Worker
+        // invocation (fresh subrequest budget), so "Run all" from the admin
+        // panel no longer dies partway through with "Too many subrequests".
+        // ?source=<source_key> runs just one (per-source Run buttons);
+        // ?email=0 skips the pending-review email (used by those buttons).
         const cadence = url.searchParams.get("cadence");
-        const results = await runSources(env, cadence ? { cadence } : {});
-        const emailResult = await emailPendingReviewIfAny(env);
-        return json({ ranAt: new Date().toISOString(), cadence: cadence || "all", results, emailResult });
+        const source = url.searchParams.get("source");
+        const results = await runSourcesFannedOut(env, cadence, source ? { sourceKeys: [source] } : {});
+        const emailResult = url.searchParams.get("email") === "0" ? null : await emailPendingReviewIfAny(env);
+        return json({ ranAt: new Date().toISOString(), cadence: source ? null : (cadence || "all"), source, results, emailResult });
       }
       // Triggers EventDiscoveryWorkflow (see discovery-workflow.js) --
       // unlike /api/run-sources above, this returns almost immediately with
