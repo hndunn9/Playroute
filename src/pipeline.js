@@ -254,11 +254,16 @@ const SOURCE_RUNNERS = {};
 // does). Every result funnels through ingestCandidate; nothing here ever
 // writes to `events` directly. Stamps last_run_at/last_status/last_error/
 // last_found on scrape_sources for each source it touches.
-async function runSources(env, { cadence = null } = {}) {
-  const where = cadence
-    ? `WHERE mode = 'auto' AND enabled = 1 AND cadence = ?`
-    : `WHERE mode = 'auto' AND enabled = 1`;
-  const binds = cadence ? [cadence] : [];
+async function runSources(env, { cadence = null, sourceKey = null } = {}) {
+  // sourceKey: run exactly one source -- used by the per-source fan-out
+  // (runSourcesFannedOut in index.js), where each source gets its own
+  // Worker invocation and therefore its own subrequest budget.
+  const where = sourceKey
+    ? `WHERE mode = 'auto' AND enabled = 1 AND source_key = ?`
+    : cadence
+      ? `WHERE mode = 'auto' AND enabled = 1 AND cadence = ?`
+      : `WHERE mode = 'auto' AND enabled = 1`;
+  const binds = sourceKey ? [sourceKey] : cadence ? [cadence] : [];
   const { results: sources } = await env.DB.prepare(
     `SELECT * FROM scrape_sources ${where}`
   ).bind(...binds).all();
