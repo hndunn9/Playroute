@@ -3446,7 +3446,7 @@ async function queueChangeCandidate(env, ev) {
   ).run();
 }
 
-async function runSourceVerification(env, cadence = null) {
+async function runSourceVerification(env, cadence = null, sourceKey = null) {
   // cadence filter added alongside the weekly-a/b/c split above: without
   // this, verification would re-run the full fetch pattern for EVERY
   // linked source regardless of which group's invocation called it,
@@ -3455,10 +3455,12 @@ async function runSourceVerification(env, cadence = null) {
   // out to be a bigger contributor to the original overload than the
   // initial scrape was. Each group now only verifies its own sources.
   const { results: sources } = await env.DB.prepare(
-    cadence
-      ? `SELECT * FROM scrape_sources WHERE mode = 'auto' AND enabled = 1 AND cadence = ?`
-      : `SELECT * FROM scrape_sources WHERE mode = 'auto' AND enabled = 1`
-  ).bind(...(cadence ? [cadence] : [])).all();
+    sourceKey
+      ? `SELECT * FROM scrape_sources WHERE mode = 'auto' AND enabled = 1 AND source_key = ?`
+      : cadence
+        ? `SELECT * FROM scrape_sources WHERE mode = 'auto' AND enabled = 1 AND cadence = ?`
+        : `SELECT * FROM scrape_sources WHERE mode = 'auto' AND enabled = 1`
+  ).bind(...(sourceKey ? [sourceKey] : cadence ? [cadence] : [])).all();
 
   let totalFlagged = 0;
   const errors = [];
@@ -4409,6 +4411,64 @@ async function handlePhotoUpload(request, env) {
   });
 }
 
+
+// Per-source fan-out -- 2026-09 fix, round two. Splitting weekly into
+// a/b/c groups wasn't enough: this account is on the Workers Free plan,
+// which caps EXTERNAL fetches at 50 per invocation, and group A shares
+// its invocation with the Sunday digest (one Resend fetch per subscriber,
+// ~41 today). On 2026-09-19 Longmont ran, then every later group-A source
+// died instantly with "Too many subrequests". Now each source runs in its
+// OWN invocation via a service binding to this same Worker (env.SELF, see
+// wrangler.jsonc) -- each call costs the caller one subrequest, and the
+// callee gets a fresh 50-fetch budget for its scrape + verification.
+async function runSourcesFannedOut(env, cadence) {
+  const { results: rows } = await env.DB.prepare(
+    `SELECT source_key FROM scrape_sources WHERE mode = 'auto' AND enabled = 1 AND cadence = ?`
+  ).bind(cadence).all();
+  if (!env.SELF || !env.INGEST_SECRET) {
+    // Binding/secret missing -- fall back to the old in-process behaviour
+    // rather than silently doing nothing.
+    const results = await runSources(env, { cadence });
+    await runSourceVerification(env, cadence);
+    return results;
+  }
+  const results = [];
+  for (const { source_key } of rows) {
+    try {
+      const res = await env.SELF.fetch(
+        `https://internal/internal/run-source?key=${encodeURIComponent(source_key)}&verify=1`,
+        { method: "POST", headers: { Authorization: `Bearer ${env.INGEST_SECRET}` } }
+      );
+      const body = await res.json().catch(() => ({}));
+      results.push(...(body.results || [{ source: source_key, status: res.ok ? "ok" : "error", httpStatus: res.status }]));
+    } catch (e) {
+      results.push({ source: source_key, status: "error", error: String(e) });
+    }
+  }
+  await env.DB.prepare(
+    `INSERT INTO job_runs (job_name, status, details) VALUES (?, ?, ?)`
+  ).bind(
+    `sources_${cadence}`,
+    results.some((r) => r.status === "error") ? "partial" : "success",
+    JSON.stringify(results).slice(0, 4000)
+  ).run();
+  return results;
+}
+
+async function handleInternalRunSource(request, env, url) {
+  if (!env.INGEST_SECRET || request.headers.get("Authorization") !== `Bearer ${env.INGEST_SECRET}`) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  const key = url.searchParams.get("key");
+  if (!key) return json({ error: "missing key" }, 400);
+  const results = await runSources(env, { sourceKey: key });
+  let verification = null;
+  if (url.searchParams.get("verify") === "1") {
+    verification = await runSourceVerification(env, null, key).catch((e) => ({ error: String(e) }));
+  }
+  return json({ source: key, results, verification });
+}
+
 export default {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
@@ -4448,14 +4508,13 @@ export default {
       // This trigger now only runs group A; B and C fire from their own
       // cron entries below, at different times the same day.
       ctx.waitUntil(
-        runSources(env, { cadence: "weekly-a" })
-          .then(() => runSourceVerification(env, "weekly-a"))
+        runSourcesFannedOut(env, "weekly-a")
       );
       return;
     }
     if (event.cron === "0 20 * * 7") {
       // Group B -- 2 hours after group A, its own fresh invocation.
-      ctx.waitUntil(runSources(env, { cadence: "weekly-b" }).then(() => runSourceVerification(env, "weekly-b")));
+      ctx.waitUntil(runSourcesFannedOut(env, "weekly-b"));
       return;
     }
     if (event.cron === "0 22 * * 7") {
@@ -4464,8 +4523,7 @@ export default {
       // covering all three groups' results, not three separate ones --
       // timed late enough that A and B have had time to finish first.
       ctx.waitUntil(
-        runSources(env, { cadence: "weekly-c" })
-          .then(() => runSourceVerification(env, "weekly-c"))
+        runSourcesFannedOut(env, "weekly-c")
           .then(() => emailPendingReviewIfAny(env))
       );
       return;
@@ -4539,6 +4597,9 @@ export default {
       // now, so there's nothing left to meaningfully split between. Optional
       // ?cadence=daily|weekly|monthly filters; omit it to run everything
       // (that's what the admin panel's one button does).
+      if (url.pathname === "/internal/run-source" && request.method === "POST") {
+        return await handleInternalRunSource(request, env, url);
+      }
       if (url.pathname === "/api/run-sources" && request.method === "POST") {
         const cadence = url.searchParams.get("cadence");
         const results = await runSources(env, cadence ? { cadence } : {});

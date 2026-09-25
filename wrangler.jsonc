@@ -30,6 +30,13 @@
     }
   ],
 
+  // Self-binding: lets the weekly crons run each scraper in its own
+  // Worker invocation (fresh 50-subrequest budget on the Free plan).
+  // "service" must match "name" above.
+  "services": [
+    { "binding": "SELF", "service": "test" }
+  ],
+
   "triggers": {
     "crons": ["0 9 * * *", "0 18 * * 7", "0 20 * * 7", "0 22 * * 7", "0 9 1 * *"]
   }
