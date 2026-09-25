@@ -24,7 +24,7 @@
 // deploy checklist in the PR/commit message.
 
 import { WorkflowEntrypoint } from "cloudflare:workers";
-import { ingestCandidate, validateCandidate } from "./pipeline.js";
+import { ingestCandidate, validateCandidate, loadReviewContext, REJECT_REASONS } from "./pipeline.js";
 import { CATEGORIES, DISCOVERY_SYSTEM_PROMPT, passesQueueBar } from "./discovery-rules.js";
 
 const DISCOVERY_MODEL = "claude-opus-5"; // upgraded from Sonnet 5 (2026-09) -- low call volume (weekly, one city/run) makes the cost delta negligible, and stronger judgment directly targets this pipeline's real failure mode (fabricated/unconfirmed candidates)
@@ -98,7 +98,7 @@ async function fetchExistingSources(env, city) {
 // becoming its own token-cost problem months from now.
 async function fetchRejectedCandidates(env, city) {
   const { results } = await env.DB.prepare(
-    `SELECT DISTINCT p.title, p.source
+    `SELECT DISTINCT p.title, p.source, p.reject_reason
      FROM pending_events p
      JOIN scrape_sources s ON s.id = p.source_id
      WHERE p.city = ? AND p.status = 'rejected' AND s.source_key LIKE 'llm_discovery_%'
@@ -116,7 +116,7 @@ async function fetchRejectedCandidates(env, city) {
 // check the pending_events results by hand before trusting the cadence.
 async function discoverEvents(env, city, existingSources, rejectedCandidates) {
   const rejectedSection = rejectedCandidates && rejectedCandidates.length
-    ? `\n\nItems a human has already reviewed and REJECTED for this city -- do NOT suggest these again, even if your search finds them independently. This is a firm no, not a duplicate to merge:\n${rejectedCandidates.map((r) => `- "${r.title}"${r.source ? ` (${r.source})` : ""}`).join("\n")}`
+    ? `\n\nItems a human has already reviewed and REJECTED for this city -- do NOT suggest these again, even if your search finds them independently. This is a firm no, not a duplicate to merge:\n${rejectedCandidates.map((r) => `- "${r.title}"${r.source ? ` (${r.source})` : ""}${r.reject_reason && REJECT_REASONS[r.reject_reason] ? ` -- rejected because: ${REJECT_REASONS[r.reject_reason].label.toLowerCase()}` : ""}`).join("\n")}\n\nWhere a reason is given, treat it as guidance about what this reviewer does NOT want in general -- avoid other items with the same problem, not just these exact titles.`
     : "";
 
   const userMessage = `City: ${city}, Colorado
@@ -215,6 +215,7 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
       };
       let queued = 0, skippedDuplicate = 0, droppedLowBar = 0, droppedNeedsInfo = 0, errors = [];
       const dropped = [];
+      const reviewCtx = await loadReviewContext(this.env, sourceRow);
       for (const raw of candidates) {
         try {
           const ev = { ...raw };
@@ -246,7 +247,7 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
             continue;
           }
 
-          const res = await ingestCandidate(this.env, sourceRow, ev);
+          const res = await ingestCandidate(this.env, sourceRow, ev, reviewCtx);
           if (res.reason === "duplicate-in-events") { skippedDuplicate++; continue; }
           if (res.queued) queued++;
         } catch (e) {
