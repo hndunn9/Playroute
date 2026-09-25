@@ -204,6 +204,13 @@
   </div>
 
   <div class="card">
+    <h2>🧭 Review feedback</h2>
+    <p>What your approve/reject decisions say about each scraper. High "scraper problems" (wrong details, broken links, duplicates) means that scraper's code needs fixing. Programs you've told it to skip, or rejected twice as not for kids / not relevant, stop being queued automatically.</p>
+    <button class="secondary" onclick="loadReviewFeedback()">Load review feedback</button>
+    <div id="reviewFeedbackOutput" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
     <h2>🔄 Run all sources → review queue</h2>
     <p>Runs every automated source (daily, weekly, and monthly), each in its own separate run so one busy source can't starve the rest. Everything flows into the review queue below — nothing publishes automatically. Takes a minute or two.</p>
     <button class="secondary" onclick="runAllSourcesAndRefresh()">Run all sources now</button>
@@ -341,7 +348,7 @@ async function runOneSource(key, btn){
     const r = (data.results || [])[0] || {};
     const ok = res.ok && r.status === 'ok';
     const msg = ok
-      ? `✅ Found ${r.found ?? 0} · queued ${r.queued ?? 0} new · ${r.skippedDuplicate ?? 0} already live · ${r.blockedInvalid ?? 0} blocked`
+      ? `✅ Found ${r.found ?? 0} · queued ${r.queued ?? 0} new · ${r.skippedDuplicate ?? 0} already live · ${r.skippedByReview ?? 0} skipped from your past rejections · ${r.blockedInvalid ?? 0} blocked`
       : `❌ ${r.error || data.error || ('HTTP ' + res.status)}`;
     alert(`${key}\n\n${msg}`);
   }catch(err){
@@ -349,6 +356,44 @@ async function runOneSource(key, btn){
   }
   loadSources();
   loadPendingEvents();
+}
+
+async function loadReviewFeedback(){
+  const out = document.getElementById('reviewFeedbackOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/review-stats');
+    const data = await res.json();
+    const label = (k) => data.reasons[k] || (k === 'unspecified' ? 'no reason given' : k);
+    const SCRAPER_PROBLEMS = ['duplicate','wrong_details','bad_link'];
+    const rows = (data.sources || []).map(s => {
+      const decided = (s.approved||0) + (s.rejected||0);
+      const rate = decided ? Math.round(100 * s.approved / decided) : null;
+      const rr = s.reject_reasons || {};
+      const problems = SCRAPER_PROBLEMS.reduce((n,k) => n + (rr[k]||0), 0);
+      const top = Object.entries(rr).sort((a,b) => b[1]-a[1]).slice(0,3).map(([k,n]) => `${escapeHtml(label(k))} ×${n}`).join(', ');
+      const color = rate === null ? '#7A6650' : rate >= 80 ? '#3a5a2a' : rate >= 50 ? '#9b7a1f' : '#7a2a2a';
+      return `<div class="breakdown-row" style="align-items:flex-start;">
+        <span style="flex:1;">${escapeHtml(s.city||'')} — ${escapeHtml(s.source_key||s.platform||'')}
+          ${top ? `<div style="font-size:10.5px;color:#7A6650;">Rejected for: ${top}</div>` : ''}
+          ${problems ? `<div style="font-size:10.5px;color:#7a2a2a;">🔧 ${problems} scraper problem${problems===1?'':'s'} flagged</div>` : ''}</span>
+        <span style="font-size:11px;color:${color};white-space:nowrap;">${rate===null?'no decisions yet':rate+'% approved'} · ${s.approved||0}✓ ${s.rejected||0}✗</span>
+      </div>`;
+    }).join('') || '<div class="breakdown-row">No decisions yet</div>';
+    const rules = (data.rules || []).map(r => `<div class="breakdown-row">
+        <span style="flex:1;">"${escapeHtml(r.title_example||'')}" <span style="color:#7A6650;">from ${escapeHtml(r.source_key||'any source')}${r.reason?' · '+escapeHtml(label(r.reason)):''} · skipped ${r.hits||0}×</span></span>
+        <button class="secondary" style="margin:0;padding:2px 10px;font-size:11px;" onclick="deleteReviewRule(${r.id})">Stop skipping</button>
+      </div>`).join('') || '<div class="breakdown-row">None yet — tick "Never suggest…" when rejecting to add one.</div>';
+    out.innerHTML = `<div class="breakdown"><strong>📊 By source</strong>${rows}</div>
+      <div class="breakdown" style="margin-top:14px;"><strong>🚫 Always-skip programs</strong>${rules}</div>`;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+async function deleteReviewRule(id){
+  if(!confirm('Start suggesting this program again?')) return;
+  await fetch(`/api/review-rules?id=${id}`, {method:'DELETE'});
+  loadReviewFeedback();
 }
 
 async function runAction(path, resultId, method='POST'){
@@ -652,7 +697,7 @@ function validationReasons(item){
     const issues = JSON.parse(item.validation_notes);
     if(!issues.length) return '';
     return '<div class="pending-note" style="margin-top:6px;">' +
-      issues.map(i => `${i.level === 'error' ? '⛔' : '⚠️'} ${escapeHtml(i.reason)}`).join('<br>') +
+      issues.map(i => `${i.level === 'error' ? '⛔' : i.level === 'info' ? 'ℹ️' : '⚠️'} ${escapeHtml(i.reason)}`).join('<br>') +
       '</div>';
   }catch(e){ return ''; }
 }
@@ -677,12 +722,57 @@ async function loadPendingEvents(){
         ${item.source_url?`<div class="pending-meta"><a href="${item.source_url}" target="_blank" rel="noopener noreferrer">View source ↗</a></div>`:''}
         <div class="pending-actions">
           <button onclick="decidePending('${item.approval_token}', 'approve', ${item.id})" ${item.severity==='error'?'disabled title="Blocked — missing required info, see above"':''}>${item.change_type==='cancelled'?'Confirm & remove':item.change_type==='time_changed'?'Confirm & update':'Approve'}</button>
-          <button class="reject" onclick="decidePending('${item.approval_token}', 'reject', ${item.id})">${item.change_type?'False alarm, keep as-is':'Reject'}</button>
+          ${item.change_type
+            ? `<button class="reject" onclick="decidePending('${item.approval_token}', 'reject', ${item.id})">False alarm, keep as-is</button>`
+            : `<button class="reject" onclick="toggleRejectPanel(${item.id})">Reject…</button>`}
         </div>
+        ${item.change_type ? '' : rejectPanel(item)}
       </div>
     `).join('');
   }catch(err){
     out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
+// Reject reasons feed the scrapers' feedback loop (see pipeline.js):
+// "not for kids" / "not relevant" teach the system to stop queuing that
+// program; the others count against the source's quality score so broken
+// scrapers show up in "Review feedback" below.
+const REJECT_REASON_OPTIONS = [
+  ['not_for_kids', 'Not for kids / wrong ages', true],
+  ['not_relevant', 'Not relevant / not a real event', true],
+  ['duplicate', 'Duplicate of something live', false],
+  ['wrong_details', 'Wrong date, time, or place', false],
+  ['bad_link', 'Broken or wrong link', false],
+  ['other', 'Other', false]
+];
+function rejectPanel(item){
+  return `<div id="rejectPanel-${item.id}" style="display:none;margin-top:8px;padding:10px;background:#f6efe2;border-radius:6px;font-size:12px;">
+    <div style="margin-bottom:6px;font-weight:600;">Why reject?</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;">
+      ${REJECT_REASON_OPTIONS.map(([k,label,skip]) => `<button class="secondary" style="margin:0;padding:4px 10px;font-size:11.5px;" onclick="rejectWithReason('${item.approval_token}', ${item.id}, '${k}')">${label}</button>`).join('')}
+    </div>
+    <label style="display:block;margin-top:8px;"><input type="checkbox" id="skipFuture-${item.id}"> Never suggest "${escapeHtml(item.title)}" from this source again</label>
+  </div>`;
+}
+function toggleRejectPanel(id){
+  const p = document.getElementById('rejectPanel-'+id);
+  if(!p) return;
+  const open = p.style.display === 'none';
+  p.style.display = open ? 'block' : 'none';
+}
+async function rejectWithReason(token, id, reason){
+  const cb = document.getElementById('skipFuture-'+id);
+  const skip = cb && cb.checked ? '1' : '0';
+  const el = document.getElementById('pending-'+id);
+  if(el) el.style.opacity = '0.5';
+  try{
+    const res = await fetch(`/api/reject-pending?token=${encodeURIComponent(token)}&reason=${encodeURIComponent(reason)}&skip_future=${skip}`);
+    if(!res.ok) throw new Error((await res.text()) || 'Request failed');
+    if(el) el.remove();
+  }catch(err){
+    if(el) el.style.opacity = '1';
+    alert(err.message);
   }
 }
 

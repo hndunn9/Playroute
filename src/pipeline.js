@@ -210,11 +210,125 @@ async function checkDuplicateRisk(env, ev) {
   return { isDuplicate: false };
 }
 
+
+// ---------------------------------------------------------------------------
+// REVIEW FEEDBACK LOOP (2026-09-25)
+//
+// Every approve/reject in the review queue is a label on "what good looks
+// like". Before this, a rejection only stopped that one exact item (its
+// dedup_key) from coming back -- next week's date of the same unwanted
+// program was queued again, and nothing recorded WHY it was rejected.
+//
+// Now:
+//  1. Rejections carry a reason (REJECT_REASONS). Item-level reasons
+//     ("not for kids", "not relevant") describe the PROGRAM; scraper-level
+//     reasons ("wrong details", "broken link") describe a SCRAPER BUG and
+//     roll up into per-source quality stats instead of hiding the item.
+//  2. Explicit rules: rejecting with "skip this program in future" writes a
+//     review_rules row; matching candidates from that source are dropped.
+//  3. Learned rules: a program from a source rejected >= 2 times for an
+//     item-level reason with zero approvals is dropped automatically.
+//  4. Everything else that has history gets an info note ("you approved
+//     6 of 6 past ...") so the queue shows what you've decided before.
+// Nothing here ever auto-PUBLISHES -- learning only removes noise or adds
+// context. Approval stays a human decision.
+// ---------------------------------------------------------------------------
+const REJECT_REASONS = {
+  not_for_kids: { label: "Not for kids / wrong ages", itemLevel: true },
+  not_relevant: { label: "Not relevant / not a real event", itemLevel: true },
+  duplicate: { label: "Duplicate of something already live", itemLevel: false },
+  wrong_details: { label: "Wrong date, time, or place", itemLevel: false },
+  bad_link: { label: "Broken or wrong link", itemLevel: false },
+  other: { label: "Other", itemLevel: false }
+};
+const ITEM_LEVEL_REASONS = Object.keys(REJECT_REASONS).filter((k) => REJECT_REASONS[k].itemLevel);
+const LEARNED_SKIP_MIN_REJECTIONS = 2;
+
+// Normalized program identity, stable across dates/rooms: lowercase,
+// punctuation stripped, whitespace collapsed.
+function titleKey(title) {
+  return String(title || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+// Loads everything applyReviewHistory needs for ONE source in two queries,
+// so a 271-event run doesn't add 500+ database calls (the Free plan caps
+// Cloudflare-service subrequests at 1,000 per invocation).
+async function loadReviewContext(env, sourceRow) {
+  if (!sourceRow || !sourceRow.id) return null;
+  const [{ results: rules }, { results: hist }] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, title_key FROM review_rules WHERE action = 'skip' AND (source_id = ? OR source_id IS NULL)`
+    ).bind(sourceRow.id).all(),
+    env.DB.prepare(
+      `SELECT title, status, reject_reason FROM pending_events
+        WHERE source_id = ? AND change_type IS NULL AND status IN ('approved','rejected')`
+    ).bind(sourceRow.id).all()
+  ]);
+  const rulesByKey = new Map((rules || []).map((r) => [r.title_key, r.id]));
+  const histByKey = new Map();
+  for (const r of hist || []) {
+    const k = titleKey(r.title);
+    if (!histByKey.has(k)) histByKey.set(k, []);
+    histByKey.get(k).push(r);
+  }
+  return { rulesByKey, histByKey, ruleHits: new Map() };
+}
+
+// Records rule hits gathered during a run (one query per rule that fired).
+async function flushRuleHits(env, ctx) {
+  if (!ctx) return;
+  for (const [id, n] of ctx.ruleHits) {
+    await env.DB.prepare(
+      `UPDATE review_rules SET hits = hits + ?, last_hit_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).bind(n, id).run();
+  }
+}
+
+// Returns { skip: true, why } or { skip: false, note } for one candidate.
+function applyReviewHistory(ctx, ev) {
+  if (!ctx || !ev.title) return { skip: false };
+  const key = titleKey(ev.title);
+
+  const ruleId = ctx.rulesByKey.get(key);
+  if (ruleId) {
+    ctx.ruleHits.set(ruleId, (ctx.ruleHits.get(ruleId) || 0) + 1);
+    return { skip: true, why: "rule" };
+  }
+
+  const hist = ctx.histByKey.get(key) || [];
+  if (!hist.length) return { skip: false };
+
+  const approved = hist.filter((r) => r.status === "approved").length;
+  const rejected = hist.filter((r) => r.status === "rejected");
+  const itemLevelRejects = rejected.filter((r) => ITEM_LEVEL_REASONS.includes(r.reject_reason)).length;
+  if (approved === 0 && itemLevelRejects >= LEARNED_SKIP_MIN_REJECTIONS) {
+    return { skip: true, why: "learned" };
+  }
+
+  const reasonCounts = {};
+  for (const r of rejected) {
+    const k = r.reject_reason || "no reason given";
+    reasonCounts[k] = (reasonCounts[k] || 0) + 1;
+  }
+  const reasonText = Object.entries(reasonCounts)
+    .map(([k, n]) => `${REJECT_REASONS[k] ? REJECT_REASONS[k].label.toLowerCase() : k} \u00d7${n}`)
+    .join(", ");
+  const note = rejected.length
+    ? `History: you approved ${approved} and rejected ${rejected.length} past "${ev.title}" from this source${reasonText ? ` (${reasonText})` : ""}.`
+    : `History: you approved all ${approved} past "${ev.title}" from this source.`;
+  return { skip: false, note };
+}
+
 // normalize -> validate -> dedupe -> insert into pending_events.
 // sourceRow is the scrape_sources row this candidate came from (or null for
 // ad-hoc/external ingest via /api/ingest).
-async function ingestCandidate(env, sourceRow, ev) {
+async function ingestCandidate(env, sourceRow, ev, reviewCtx = null) {
   const sourceKey = (sourceRow && sourceRow.source_key) || "unknown";
+
+  const history = applyReviewHistory(reviewCtx, ev);
+  if (history.skip) {
+    return { queued: false, reason: history.why === "rule" ? "skipped-by-rule" : "skipped-learned" };
+  }
 
   const dupCheck = await checkDuplicateRisk(env, ev);
   if (dupCheck.isDuplicate) {
@@ -228,7 +342,9 @@ async function ingestCandidate(env, sourceRow, ev) {
       reason: `Same title/city/date already exists in events at a different time (${dupCheck.possibleTimeConflict}) -- could be a legitimate schedule change, or a leftover from a since-corrected scrape. Worth checking before approving.`
     });
   }
-  const finalSeverity = issues.some((i) => i.level === "error") ? "error" : issues.length ? "warn" : "clean";
+  if (history.note) issues.push({ level: "info", reason: history.note });
+  // "info" notes are context, not problems -- they don't change severity.
+  const finalSeverity = issues.some((i) => i.level === "error") ? "error" : issues.some((i) => i.level === "warn") ? "warn" : "clean";
 
   // Error-severity candidates are never actually queued -- 2026-09 fix.
   // "error" here always means something a human CAN'T just accept or
@@ -300,20 +416,23 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
     }
     try {
       const candidates = await runner(env, source);
-      let queued = 0, skippedDuplicate = 0, blockedInvalid = 0, warnings = 0;
+      const reviewCtx = await loadReviewContext(env, source);
+      let queued = 0, skippedDuplicate = 0, blockedInvalid = 0, warnings = 0, skippedByReview = 0;
       for (const ev of candidates) {
-        const result = await ingestCandidate(env, source, ev);
+        const result = await ingestCandidate(env, source, ev, reviewCtx);
         if (result.reason === "duplicate-in-events") { skippedDuplicate++; continue; }
         if (result.reason === "blocked-by-validation") { blockedInvalid++; continue; }
+        if (result.reason === "skipped-by-rule" || result.reason === "skipped-learned") { skippedByReview++; continue; }
         if (result.queued) {
           queued++;
           if (result.severity === "warn") warnings++;
         }
       }
+      await flushRuleHits(env, reviewCtx);
       await env.DB.prepare(
         `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = 'ok', last_error = NULL, last_found = ? WHERE id = ?`
       ).bind(candidates.length, source.id).run();
-      summary.push({ source: source.source_key, status: "ok", found: candidates.length, queued, skippedDuplicate, blockedInvalid, warnings });
+      summary.push({ source: source.source_key, status: "ok", found: candidates.length, queued, skippedDuplicate, blockedInvalid, skippedByReview, warnings });
     } catch (e) {
       await env.DB.prepare(
         `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = 'error', last_error = ? WHERE id = ?`
@@ -324,4 +443,4 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
   return summary;
 }
 
-export { validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };
+export { REJECT_REASONS, titleKey, loadReviewContext, applyReviewHistory, validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };

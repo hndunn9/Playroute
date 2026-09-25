@@ -1,4 +1,4 @@
-import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SOURCE_RUNNERS } from "./pipeline.js";
+import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SOURCE_RUNNERS, REJECT_REASONS, titleKey } from "./pipeline.js";
 // Re-exported (not just defined in its own file) because wrangler.jsonc's
 // workflows binding points at class_name "EventDiscoveryWorkflow", and
 // Cloudflare resolves that against whatever this file (the `main` entry
@@ -3886,9 +3886,67 @@ async function handleRejectPending(env, url) {
       { status: 400, headers: { "Content-Type": "text/plain" } }
     );
   }
-  const res = await env.DB.prepare(`UPDATE pending_events SET status = 'rejected', decided_at = CURRENT_TIMESTAMP WHERE approval_token = ? AND status = 'pending'`).bind(token).run();
+  // Optional feedback (admin panel): ?reason=<REJECT_REASONS key> and
+  // ?skip_future=1 to stop this program from this source ever being queued
+  // again. Email one-tap rejects send neither and behave exactly as before.
+  const reasonParam = url.searchParams.get("reason");
+  const reason = reasonParam && REJECT_REASONS[reasonParam] ? reasonParam : null;
+  const skipFuture = url.searchParams.get("skip_future") === "1";
+  const row = await env.DB.prepare(
+    `SELECT id, title, source_id FROM pending_events WHERE approval_token = ? AND status = 'pending'`
+  ).bind(token).first();
+  const res = await env.DB.prepare(`UPDATE pending_events SET status = 'rejected', reject_reason = ?, decided_at = CURRENT_TIMESTAMP WHERE approval_token = ? AND status = 'pending'`).bind(reason, token).run();
   if (res.meta.changes === 0) return new Response("This item was already handled or doesn't exist.", { status: 404, headers: { "Content-Type": "text/plain" } });
+  if (skipFuture && row && row.source_id) {
+    await env.DB.prepare(
+      `INSERT INTO review_rules (source_id, title_key, title_example, action, reason, created_from_pending_id)
+       VALUES (?, ?, ?, 'skip', ?, ?) ON CONFLICT(source_id, title_key) DO NOTHING`
+    ).bind(row.source_id, titleKey(row.title), row.title, reason, row.id).run();
+    return new Response(`Got it — rejected, and "${row.title}" from this source will be skipped from now on.`, { headers: { "Content-Type": "text/plain" } });
+  }
   return new Response("Got it — dismissed and won't be suggested again.", { headers: { "Content-Type": "text/plain" } });
+}
+
+
+// Per-source review quality -- what the approve/reject history says about
+// each scraper. Scraper-level reject reasons (wrong details, broken link,
+// duplicate) point at code that needs fixing; item-level ones are handled
+// automatically by review_rules / learned skips in pipeline.js.
+async function handleReviewStats(env) {
+  const [{ results: bySource }, { results: reasons }, { results: rules }] = await Promise.all([
+    env.DB.prepare(
+      `SELECT s.id source_id, s.source_key, s.city, s.platform,
+              SUM(p.status = 'approved') approved, SUM(p.status = 'rejected') rejected,
+              SUM(p.status = 'pending') pending
+         FROM pending_events p JOIN scrape_sources s ON s.id = p.source_id
+        WHERE p.change_type IS NULL
+        GROUP BY s.id ORDER BY rejected DESC`
+    ).all(),
+    env.DB.prepare(
+      `SELECT source_id, COALESCE(reject_reason, 'unspecified') reason, COUNT(*) n
+         FROM pending_events WHERE status = 'rejected' AND change_type IS NULL
+        GROUP BY source_id, reason`
+    ).all(),
+    env.DB.prepare(
+      `SELECT r.id, r.source_id, s.source_key, s.city, r.title_example, r.reason, r.hits, r.created_at, r.last_hit_at
+         FROM review_rules r LEFT JOIN scrape_sources s ON s.id = r.source_id
+        ORDER BY r.created_at DESC`
+    ).all()
+  ]);
+  const reasonsBySource = {};
+  for (const r of reasons) (reasonsBySource[r.source_id] ||= {})[r.reason] = r.n;
+  return json({
+    reasons: Object.fromEntries(Object.entries(REJECT_REASONS).map(([k, v]) => [k, v.label])),
+    sources: bySource.map((s) => ({ ...s, reject_reasons: reasonsBySource[s.source_id] || {} })),
+    rules
+  });
+}
+
+async function handleDeleteReviewRule(env, url) {
+  const id = Number(url.searchParams.get("id"));
+  if (!id) return json({ error: "missing id" }, 400);
+  const res = await env.DB.prepare(`DELETE FROM review_rules WHERE id = ?`).bind(id).run();
+  return json({ deleted: res.meta.changes });
 }
 
 // JSON list for admin.html's "Pending events" card -- same underlying data
@@ -4702,6 +4760,12 @@ export default {
       }
       if (url.pathname === "/api/reject-pending") {
         return await handleRejectPending(env, url);
+      }
+      if (url.pathname === "/api/review-stats" && request.method === "GET") {
+        return await handleReviewStats(env);
+      }
+      if (url.pathname === "/api/review-rules" && request.method === "DELETE") {
+        return await handleDeleteReviewRule(env, url);
       }
       if (url.pathname === "/api/pending-events" && request.method === "GET") {
         return await handlePendingEventsList(env);
