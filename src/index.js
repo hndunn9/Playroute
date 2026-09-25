@@ -351,6 +351,21 @@ function ageFromText(description) {
   return { age_min: 0, age_max: 5 };
 }
 
+// LibCal iCal feeds put a series "friendly URL" in the URL field (e.g.
+// /calendar/main/BookBabiesAug-Nov2026) that 404s once the library retires
+// it -- found 2026-09-25 on 45 Lafayette rows. The UID ("LibCal-<cal>-<id>")
+// carries the real event id, and /event/<id> on the same host is LibCal's
+// canonical per-occurrence page, so build the link from that instead.
+function libcalEventUrl(ev) {
+  const m = /^LibCal-\d+-(\d+)$/.exec(ev.uid || "");
+  if (!m) return null;
+  try {
+    const host = new URL(ev.url || "").host;
+    if (!/\.libcal\.com$|calendar\.boulderlibrary\.org$/.test(host)) return null;
+    return `https://${host}/event/${m[1]}`;
+  } catch { return null; }
+}
+
 function normalizeICalEvent(ev, city) {
   if (!ev.summary || !ev.dtstart) return null;
   const { age_min, age_max } = ageFromText(ev.description);
@@ -373,7 +388,7 @@ function normalizeICalEvent(ev, city) {
     recurrence: "dated",
     event_date: mtDateStr,
     note: truncateAtBoundary((ev.description || "").replace(/<[^>]+>/g, ""), 300) || `Pulled from ${city} library's public iCal feed.`,
-    source_url: ev.url || "",
+    source_url: libcalEventUrl(ev) || ev.url || "",
     verified: 1,
     libcal_event_id: ev.uid
   };

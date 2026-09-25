@@ -167,6 +167,29 @@ async function checkDuplicateRisk(env, ev) {
   ).bind(...binds).first();
   if (row) return { isDuplicate: true };
 
+  // Third gap found 2026-09-25: a DATED candidate that falls on a slot a
+  // live WEEKLY row already covers (same title, city, weekday, start time)
+  // is a duplicate -- e.g. Lafayette's iCal feed lists every Tuesday's
+  // "Baby Storytime" as its own dated occurrence, while the site already
+  // shows it as one weekly event. The exact match above never compared
+  // dated vs. weekly, and the location string also differed slightly
+  // ("Meeting Room" vs "Meeting Room, Lafayette Library"), so every week
+  // got queued again. Location is deliberately NOT compared here: title +
+  // city + weekday + time is already specific enough, and room names drift.
+  // Respects season_start/season_end (MM-DD) on the weekly row if set.
+  if (isDated && ev.day_of_week) {
+    const mmdd = String(ev.event_date).slice(5);
+    const weekly = await env.DB.prepare(
+      `SELECT 1 FROM events
+        WHERE recurrence = 'weekly' AND title = ? AND city = ? AND day_of_week = ? AND start_time = ?
+          AND (season_start IS NULL OR season_end IS NULL
+               OR (season_start <= season_end AND ? BETWEEN season_start AND season_end)
+               OR (season_start > season_end AND (? >= season_start OR ? <= season_end)))
+        LIMIT 1`
+    ).bind(ev.title, ev.city, ev.day_of_week, ev.start_time, mmdd, mmdd, mmdd).first();
+    if (weekly) return { isDuplicate: true };
+  }
+
   // Second gap found 2026-07-17: the exact-time match above is correct for
   // telling genuinely different sessions apart, but it has a side effect --
   // if a source's reported time for the SAME real date changes (schedule
