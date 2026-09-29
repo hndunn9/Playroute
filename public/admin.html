@@ -145,6 +145,11 @@
   .pending-meta{font-size:12px;}
   .pending-actions button{padding:10px 8px;}
   .card-collapse-toggle h2{flex:1;padding-right:8px;}
+  .ab-table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px;}
+  .ab-table th,.ab-table td{padding:6px 4px;border-bottom:1px solid #EDE2CA;text-align:right;}
+  .ab-table th:first-child,.ab-table td:first-child{text-align:left;}
+  .ab-table th{font-size:10.5px;text-transform:uppercase;letter-spacing:0.04em;color:#7A6650;font-weight:600;}
+  .ab-sig{font-size:10.5px;font-weight:600;}
   .card-collapse-toggle .chev{transition:transform .2s ease;color:#7A6650;font-size:13px;}
   .card.open .card-collapse-toggle .chev{transform:rotate(180deg);}
 </style>
@@ -199,6 +204,13 @@
     <p>A real trend over time, not just this-week-vs-last-week — so you can actually tell if you're growing or shrinking.</p>
     <button class="secondary" onclick="loadWauTrend()">Load trend (last 12 weeks)</button>
     <div id="wauTrendOutput" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>🧪 Recommended for you — A/B test</h2>
+    <p>Half of browsers get the ✨ Recommended strip (treatment), half never see it (control). A visitor keeps their group on later visits; each visit counts as one session. Treatment visitors only actually see the strip once they've clicked 3+ events, so "saw strip" shows how many were really exposed.</p>
+    <button class="secondary" onclick="loadRecExperiment()">Load A/B results</button>
+    <div id="recExpOutput" style="margin-top:12px;"></div>
   </div>
 
   <div class="section-label">Newsletter</div>
@@ -850,6 +862,48 @@ async function uploadPhoto(){
   }catch(err){
     el.className = 'result show err';
     el.textContent = 'Error: ' + err.message;
+  }
+}
+
+async function loadRecExperiment(){
+  const out = document.getElementById('recExpOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/recommended-experiment');
+    const d = await res.json();
+    const c = d.control, t = d.treatment, m = d.metrics;
+    if(!c.sessions && !t.sessions){
+      out.innerHTML = '<div class="pending-empty">No sessions logged yet — results appear once the site update is live and people visit.</div>';
+      return;
+    }
+    const pct = (x) => x === null || x === undefined ? '—' : (Math.round(x * 1000) / 10) + '%';
+    const lift = (mm) => {
+      if(mm.liftPct === null) return '<span class="ab-sig" style="color:#7A6650;">—</span>';
+      const color = !mm.significant ? '#7A6650' : mm.liftPct > 0 ? '#3a5a2a' : '#7a2a2a';
+      const label = mm.significant ? 'significant' : 'not yet significant';
+      return `<span class="ab-sig" style="color:${color};">${mm.liftPct > 0 ? '+' : ''}${mm.liftPct}% · ${label}</span>`;
+    };
+    const row = (name, key) => `<tr><td>${name}<div>${lift(m[key])}</div></td><td>${pct(m[key].control)}</td><td>${pct(m[key].treatment)}</td></tr>`;
+    const need = m.clickedThrough.sessionsNeededPerArm;
+    const smaller = Math.min(c.sessions, t.sessions);
+    out.innerHTML = `
+      <table class="ab-table">
+        <tr><th></th><th>Control</th><th>Treatment</th></tr>
+        <tr><td>Sessions</td><td>${c.sessions}</td><td>${t.sessions}</td></tr>
+        ${row('Clicked through to a source', 'clickedThrough')}
+        ${row('Expanded an event', 'expanded')}
+        ${row('Engaged (any click)', 'engaged')}
+        <tr><td>Expands per session</td><td>${c.expandsPerSession ?? '—'}</td><td>${t.expandsPerSession ?? '—'}</td></tr>
+        <tr><td>Saw the strip</td><td>—</td><td>${t.exposed} (${t.sessions ? Math.round(100 * t.exposed / t.sessions) : 0}%)</td></tr>
+        <tr><td>Clicks from the strip</td><td>—</td><td>${t.recClicks}</td></tr>
+      </table>
+      <p style="font-size:11px;color:#7A6650;margin:8px 0 0;">
+        ${need ? `At the click-through gap so far, a reliable read needs ~${need.toLocaleString()} sessions per group (smaller group has ${smaller.toLocaleString()}, ${Math.min(100, Math.round(100 * smaller / need))}%).` : 'Not enough difference yet to estimate how many sessions are needed.'}
+        ${d.startedAt ? ` Running since ${new Date(d.startedAt.replace(' ', 'T') + 'Z').toLocaleDateString()}.` : ''}
+        "Significant" = p &lt; 0.05; early reads swing a lot.
+      </p>`;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
   }
 }
 
