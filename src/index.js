@@ -1811,6 +1811,140 @@ async function fetchAndScanLouisvilleLibrary() {
 }
 SOURCE_RUNNERS.louisville_library = async () => fetchAndScanLouisvilleLibrary();
 
+// --- Athletic Adventures (Erie) -- iClassPro open API, drop-ins only ---
+// Their portal (portal.iclasspro.com/athleticadventures) is backed by a
+// public JSON API. Camps are grouped by "type"; only these types are true
+// drop-ins (one date, pay per visit). Deliberately NOT included: classes,
+// summer/day camps, school-day-off camps (multi-day or childcare), team.
+// Confirmed 2026-09-29 against the live API. To add a type later, find its
+// typeId in a portal link (camp-details/...?typeId=NN) and add it here.
+const ATHLETIC_ADVENTURES_API = "https://app.iclasspro.com/api/open/v1/athleticadventures";
+const ATHLETIC_ADVENTURES_LOCATION_ID = 4; // "Athletic Adventures Sports Center" (6 = aquatic center)
+const ATHLETIC_ADVENTURES_DROPIN_TYPES = [
+  { typeId: 61, name: "Drop-In Clinic" },
+  { typeId: 79, name: "ASBC Open Gym" }
+];
+const ATHLETIC_ADVENTURES_SKIP_RE = /try[\s-]?out|team|camp\b|registration/i;
+function cleanIClassProTitle(name) {
+  // "10/10: Ages 6+: All Levels Tumbling Clinic" -> "All Levels Tumbling Clinic"
+  return String(name || "").replace(/^\s*\d{1,2}\/\d{1,2}(?:\s*[-–]\s*\d{1,2}\/\d{1,2})?:\s*/, "").replace(/^\s*Ages?\s*[\d+–-]+\s*:\s*/i, "").trim();
+}
+async function fetchAndScanAthleticAdventures() {
+  const out = [];
+  const today = toMountainDateStr(new Date());
+  for (const t of ATHLETIC_ADVENTURES_DROPIN_TYPES) {
+    const res = await fetch(`${ATHLETIC_ADVENTURES_API}/camps?locationId=${ATHLETIC_ADVENTURES_LOCATION_ID}&typeId=${t.typeId}`, {
+      headers: { Accept: "application/json", "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
+    });
+    if (!res.ok) throw new Error(`Athletic Adventures API ${res.status} for type ${t.typeId}`);
+    const data = await res.json();
+    for (const c of data.data || []) {
+      if (!c.startDate || c.startDate !== c.endDate) continue; // single-day drop-ins only
+      if (c.startDate < today) continue;
+      if (ATHLETIC_ADVENTURES_SKIP_RE.test(c.name || "")) continue;
+      const sched = (c.schedule || [])[0];
+      const startTime = sched ? to24HourFromLabel(sched.startTime.replace(/\s+/g, "")) : null;
+      const title = cleanIClassProTitle(c.name);
+      if (!title) continue;
+      out.push({
+        title,
+        source: "Athletic Adventures",
+        city: "Erie",
+        category: "rec",
+        cost: "paid",
+        age_min: typeof c.minAge === "number" ? c.minAge : 0,
+        age_max: typeof c.maxAge === "number" ? c.maxAge : 12,
+        day_of_week: DAY_NAMES[(/* @__PURE__ */ new Date(`${c.startDate}T12:00:00Z`)).getUTCDay()],
+        start_time: startTime,
+        display_time: sched ? `${sched.startTime} – ${sched.endTime}` : "Check listing for time",
+        recurrence: "dated",
+        event_date: c.startDate,
+        note: `${t.name} at Athletic Adventures. Register ahead on their portal${c.openingsDisplay ? ` (${c.openingsDisplay.toLowerCase()})` : ""}.`,
+        source_url: `https://portal.iclasspro.com/athleticadventures/camp-details/${c.id}?typeId=${t.typeId}`
+      });
+    }
+  }
+  return out;
+}
+SOURCE_RUNNERS.athletic_adventures = async () => fetchAndScanAthleticAdventures();
+
+// --- Warrior Playground (Longmont) -- monthly drop-in nights ---
+// Their Pike13 schedule has no public feed (API returns 401), so this reads
+// the plain-text events page and turns "2nd Friday of each month"-style
+// wording into the next two dated occurrences for review. Only the paid-
+// per-night events are included -- not memberships, classes or teams.
+// If the wording for a program can't be found, a single "check this"
+// item is queued instead of guessing.
+const WARRIOR_EVENTS_URL = "https://www.warriorplayground.com/events";
+const WARRIOR_DROPINS = [
+  { title: "Parents Night Out", nameRe: /parents?['’]?\s*night\s*out/i, ages: [5, 13], defaultTime: "18:00", url: "https://warriorplayground.pike13.com/group_classes/305466" },
+  { title: "Community Night", nameRe: /community\s*(course\s*)?night|compunity/i, ages: [5, 18], defaultTime: "18:00", url: WARRIOR_EVENTS_URL }
+];
+const ORDINAL_WORDS = { "1st": "first", first: "first", "2nd": "second", second: "second", "3rd": "third", third: "third", "4th": "fourth", fourth: "fourth", last: "last" };
+function parseTimeLabel(txt) {
+  const m = String(txt || "").match(/(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m/i);
+  if (!m) return null;
+  let h = +m[1];
+  const ap = m[3].toLowerCase();
+  if (ap === "p" && h !== 12) h += 12;
+  if (ap === "a" && h === 12) h = 0;
+  return `${String(h).padStart(2, "0")}:${m[2] || "00"}`;
+}
+async function fetchAndScanWarriorPlayground() {
+  const res = await fetch(WARRIOR_EVENTS_URL, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+  if (!res.ok) throw new Error(`Warrior Playground events page: ${res.status}`);
+  const text = stripHtmlToText(await res.text());
+  const out = [];
+  const now = new Date();
+  for (const p of WARRIOR_DROPINS) {
+    const at = text.search(p.nameRe);
+    const chunk = at >= 0 ? text.slice(at, at + 400) : "";
+    const m = chunk.match(/\b(1st|2nd|3rd|4th|first|second|third|fourth|last)\s+(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\b/i);
+    if (!m) {
+      out.push({
+        title: `Warrior Playground: couldn't read the ${p.title} schedule`,
+        source: "Warrior Playground", city: "Longmont", category: "rec", cost: "paid",
+        age_min: p.ages[0], age_max: p.ages[1], day_of_week: "Friday",
+        start_time: p.defaultTime, display_time: "See note", recurrence: "weekly",
+        note: `The events page no longer says which week ${p.title} runs. Check ${WARRIOR_EVENTS_URL} and add it by hand.`,
+        source_url: WARRIOR_EVENTS_URL, raw_excerpt: chunk.slice(0, 300) || text.slice(0, 300)
+      });
+      continue;
+    }
+    const ordinal = ORDINAL_WORDS[m[1].toLowerCase()];
+    const dayName = m[2][0].toUpperCase() + m[2].slice(1).toLowerCase();
+    const parsedTime = parseTimeLabel(chunk.slice(m.index));
+    const startTime = parsedTime || p.defaultTime;
+    const priceM = chunk.match(/\$\d+/);
+    let cursor = now;
+    for (let i = 0; i < 2; i++) {
+      const occ = getNextMonthlyOrdinalWeekday(ordinal, DAY_INDEX[dayName], startTime, cursor, 3 * 36e5);
+      if (!occ) break;
+      const dateStr = toMountainDateStr(occ);
+      out.push({
+        title: p.title,
+        source: "Warrior Playground",
+        city: "Longmont",
+        category: "rec",
+        cost: "paid",
+        age_min: p.ages[0],
+        age_max: p.ages[1],
+        day_of_week: dayName,
+        start_time: startTime,
+        display_time: (/* @__PURE__ */ new Date(`2000-01-01T${startTime}:00`)).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
+        recurrence: "dated",
+        event_date: dateStr,
+        note: `${m[1]} ${dayName} of every month at Warrior Playground${priceM ? `, ${priceM[0]} for non-members` : ""}. Free for members.`,
+        source_url: p.url,
+        _assumedTime: !parsedTime
+      });
+      cursor = new Date(occ.getTime() + 864e5);
+    }
+  }
+  return out;
+}
+SOURCE_RUNNERS.warrior_playground = async () => fetchAndScanWarriorPlayground();
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
