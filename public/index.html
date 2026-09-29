@@ -1169,7 +1169,7 @@ async function loadData(){
   // whether the recommended section had anything to show. lastSawRecommended
   // is set inside renderFeed() itself, right where the section is built.
   const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
-  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended})}).catch(()=>{});
+  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, ...expPayload()})}).catch(()=>{});
 }
 
 let activeCities = new Set(), activeAges = new Set(), activeCats = new Set();
@@ -1421,7 +1421,7 @@ function clearSearch(){
   activeSearch = "";
   document.getElementById("searchClear").classList.remove("show");
   document.getElementById("searchBtn").classList.remove("active");
-  renderFeed();
+  renderFeed(); renderPlaygrounds(); renderHikes();
 }
 
 let lastShownCount = 0;
@@ -1432,7 +1432,7 @@ function handleSearchInput(){
   activeSearch = val.trim().toLowerCase();
   document.getElementById("searchClear").classList.toggle("show", activeSearch.length>0);
   document.getElementById("searchBtn").classList.toggle("active", activeSearch.length>0);
-  renderFeed();
+  renderFeed(); renderPlaygrounds(); renderHikes();
 
   // Debounced -- logs the query 800ms after typing stops, not every
   // keystroke ("po", "pot", "pott", "pottery" would otherwise be 4 noisy
@@ -1444,7 +1444,7 @@ function handleSearchInput(){
     fetch(`${API_BASE}/api/track-search`,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({query:activeSearch, resultsCount:lastShownCount}),
+      body:JSON.stringify({query:activeSearch, resultsCount:lastShownCount + lastParkMatches + lastHikeMatches}),
       keepalive:true
     }).catch(()=>{});
   }, 800);
@@ -1456,11 +1456,34 @@ function handleSearchInput(){
 // tolerant of partial words ("pott" matches "pottery"), without the
 // unpredictability of character-level subsequence matching on short
 // queries against long strings.
+// Each word must appear in the text, or in the text with spaces removed
+// ("storytime" matches "Story Time"). Category/day are included so
+// "library" or "saturday" work, and a few plain-English synonyms map to
+// how things are actually labeled.
+const SEARCH_SYNONYMS = {hike:"hike hiking trail walk", hikes:"hike", park:"park playground", playground:"playground park", museum:"museum", farmers:"farmers_market farmers market", market:"farmers_market market", outdoor:"outdoor outside"};
+function matchesSearchText(text){
+  if(!activeSearch) return true;
+  const hay = String(text||"").toLowerCase();
+  const squashed = hay.replace(/[\s_-]+/g,"");
+  const words = activeSearch.split(/\s+/).filter(Boolean);
+  return words.every(w=>hay.includes(w) || squashed.includes(w.replace(/[\s_-]+/g,"")));
+}
 function matchesSearch(ev){
   if(!activeSearch) return true;
-  const haystack = `${ev.title||""} ${ev.source||""} ${ev.note||""} ${ev.city||""}`.toLowerCase();
-  const words = activeSearch.split(/\s+/).filter(Boolean);
-  return words.every(w=>haystack.includes(w));
+  return matchesSearchText(`${ev.title||""} ${ev.source||""} ${ev.note||""} ${ev.city||""} ${ev.category||""} ${SEARCH_SYNONYMS[ev.category]||""} ${ev.day_of_week||""} ${ev.cost||""}`);
+}
+function matchesPlaygroundSearch(pg){
+  return matchesSearchText(`${pg.name||""} ${pg.city||""} ${pg.detail||""} ${pg.tags||""} playground park outdoor`);
+}
+function matchesHikeSearch(h){
+  return matchesSearchText(`${h.name||""} ${h.city||""} ${h.detail||""} ${h.stroller_note||""} ${h.distance_stats||""} hike hiking trail walk outdoor`);
+}
+let lastParkMatches = 0, lastHikeMatches = 0;
+function clearFiltersForSearch(){
+  activeCities.clear(); activeAges.clear(); activeCats.clear();
+  activeCost = 'all';
+  saveFilterPrefs();
+  renderAll();
 }
 
 function passesFilters(ev){
@@ -1685,7 +1708,7 @@ function renderFeed(){
   const upcoming = events
     .filter(passesFilters)
     .filter(ev=>ev.occurrence)
-    .filter(ev=>inDateRange(ev.occurrence,activeWhen))
+    .filter(ev=>activeSearch || inDateRange(ev.occurrence,activeWhen)) // searching looks across all upcoming dates
     .slice()
     .sort((a,b)=>new Date(a.occurrence)-new Date(b.occurrence));
     // Pure chronological, on purpose. An earlier version sorted free events
@@ -1708,6 +1731,7 @@ function renderFeed(){
   // would have provided for free is just gone.
   const recommended = getRecommendedEvents(upcoming);
   lastSawRecommended = recommended.length > 0;
+  if(recommended.length) sendExpExposureOnce(); // strip can first appear mid-visit, after the pageview beacon
   if(recommended.length){
     const section = document.createElement("div");
     section.className = "recommended-section";
@@ -1751,12 +1775,24 @@ function renderFeed(){
     feed.appendChild(card);
     wireInlineCalendar(ev, card);
   });
-  document.getElementById("resultCount").textContent=`${shown} upcoming`;
+  document.getElementById("resultCount").textContent = activeSearch ? `${shown} upcoming · all dates` : `${shown} upcoming`;
   lastShownCount = shown;
   if(shown===0){
-    feed.innerHTML = activeSearch
-      ? emptyStateHTML("No matches", `Nothing found for "${escapeHtml(activeSearchDisplay())}" — try a different word, or clear the search.`)
-      : emptyStateHTML("No trail markers this way","Nothing matches those filters — try widening the date range, age, or category.");
+    if(activeSearch){
+      // Say why it's empty and offer the way out, instead of a dead end:
+      // matches hidden by filters, and matching parks/hikes further down.
+      const hiddenByFilters = events.filter(ev=>ev.occurrence && matchesSearch(ev)).length;
+      const pgN = playgrounds.filter(matchesPlaygroundSearch).length;
+      const hkN = hikes.filter(matchesHikeSearch).length;
+      const parts = [];
+      if(pgN) parts.push(`<a href="#" onclick="event.preventDefault();scrollToSection('section-playgrounds')">${pgN} playground${pgN===1?'':'s'}</a>`);
+      if(hkN) parts.push(`<a href="#" onclick="event.preventDefault();scrollToSection('section-hikes')">${hkN} hike${hkN===1?'':'s'}</a>`);
+      const also = parts.length ? ` Found ${parts.join(' and ')} below.` : '';
+      const clearBtn = hiddenByFilters ? ` <a href="#" onclick="event.preventDefault();clearFiltersForSearch()">Show ${hiddenByFilters} event${hiddenByFilters===1?'':'s'} hidden by your filters</a>.` : '';
+      feed.innerHTML = emptyStateHTML("No events match", `Nothing upcoming for "${escapeHtml(activeSearchDisplay())}" with your current filters.${clearBtn}${also}${!clearBtn && !also ? ' Try a different word, or clear the search.' : ''}`);
+    } else {
+      feed.innerHTML = emptyStateHTML("No trail markers this way","Nothing matches those filters — try widening the date range, age, or category.");
+    }
   }
 }
 
@@ -1780,7 +1816,9 @@ function renderPlaygrounds(){
   const navWrap=document.getElementById("pgCityNavWrap");
   grid.innerHTML="";
   if(dataLoadFailed){ grid.innerHTML=`<div class="empty-state" style="grid-column:1/-1;">Couldn't load playgrounds — check your connection.</div>`; navWrap.innerHTML=""; return; }
-  const filtered=playgrounds.filter(pg=>activeCities.size===0||activeCities.has(pg.city)).slice().sort((a,b)=>a.city.localeCompare(b.city));
+  const filtered=playgrounds.filter(pg=>(activeCities.size===0||activeCities.has(pg.city)) && matchesPlaygroundSearch(pg)).slice().sort((a,b)=>a.city.localeCompare(b.city));
+  lastParkMatches = activeSearch ? filtered.length : 0;
+  if(filtered.length===0 && activeSearch){ grid.innerHTML=`<div style="grid-column:1/-1;">${emptyStateHTML("No playgrounds match","Nothing here matches your search.")}</div>`; navWrap.innerHTML=""; return; }
   if(filtered.length===0){ grid.innerHTML=`<div style="grid-column:1/-1;">${emptyStateHTML("No trail markers this way","No playgrounds curated for this city yet.")}</div>`; navWrap.innerHTML=""; return; }
   const distinctCities=[...new Set(filtered.map(pg=>pg.city))];
   if(distinctCities.length>1&&filtered.length>4){
@@ -1819,7 +1857,9 @@ function renderHikes(){
   const list=document.getElementById("hikeList");
   list.innerHTML="";
   if(dataLoadFailed){ list.innerHTML=`<div class="empty-state">Couldn't load hikes — check your connection.</div>`; return; }
-  const filtered=hikes.filter(h=>activeCities.size===0||activeCities.has(h.city));
+  const filtered=hikes.filter(h=>(activeCities.size===0||activeCities.has(h.city)) && matchesHikeSearch(h));
+  lastHikeMatches = activeSearch ? filtered.length : 0;
+  if(filtered.length===0 && activeSearch){ list.innerHTML=emptyStateHTML("No hikes match","Nothing here matches your search."); return; }
   if(filtered.length===0){ list.innerHTML=emptyStateHTML("No trail markers this way","No hikes curated for this city yet."); return; }
   filtered.forEach(h=>{
     const card=document.createElement("div");
@@ -1965,11 +2005,53 @@ function recordAffinity(meta){
 // live on the real site without editing code each time, and without any
 // regular visitor seeing it while it's still being evaluated.
 const FEATURE_RECOMMENDED_ENABLED = false;
+
+// ── A/B EXPERIMENT (2026-09) ── each browser is assigned once, 50/50, to
+// "treatment" (Recommended for you is on) or "control" (never shown), and
+// keeps that arm on later visits. A session = one visit (per tab). Arm +
+// session ride along on the pageview and every click beacon; results are
+// on the admin page ("Recommended for you A/B test"). Set
+// FEATURE_RECOMMENDED_ENABLED = true to end the test and show it to all.
+// ?ff_recommended=1 / =0 force it on/off for previewing (still logged
+// under your real arm, so keep previews to a minimum).
+const EXP_ARM_KEY = "playroute-exp-recommended";
+let _expArm = null, _expSessionId = null, _expExposureSent = false;
+function getExpArm(){
+  if(_expArm) return _expArm;
+  try{ _expArm = localStorage.getItem(EXP_ARM_KEY); }catch(e){}
+  if(_expArm!=="treatment" && _expArm!=="control"){
+    _expArm = Math.random() < 0.5 ? "treatment" : "control";
+    try{ localStorage.setItem(EXP_ARM_KEY, _expArm); }catch(e){}
+  }
+  return _expArm;
+}
+function getExpSessionId(){
+  if(_expSessionId) return _expSessionId;
+  const fresh = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
+  try{
+    _expSessionId = sessionStorage.getItem("playroute-exp-session");
+    if(!_expSessionId){ _expSessionId = fresh(); sessionStorage.setItem("playroute-exp-session", _expSessionId); }
+  }catch(e){ _expSessionId = fresh(); }
+  return _expSessionId;
+}
+function expPayload(){
+  if(FEATURE_RECOMMENDED_ENABLED) return {}; // test over, stop logging
+  return { experimentArm: getExpArm(), experimentSessionId: getExpSessionId() };
+}
+function sendExpExposureOnce(){
+  if(_expExposureSent || FEATURE_RECOMMENDED_ENABLED) return;
+  _expExposureSent = true;
+  try{
+    fetch(`${API_BASE}/api/experiment-exposure`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify(expPayload())}).catch(()=>{});
+  }catch(e){}
+}
 function isRecommendedFeatureOn(){
   try{
-    if(new URLSearchParams(location.search).get('ff_recommended')==='1') return true;
+    const ff = new URLSearchParams(location.search).get('ff_recommended');
+    if(ff==='1') return true;
+    if(ff==='0') return false;
   }catch(e){}
-  return FEATURE_RECOMMENDED_ENABLED;
+  return FEATURE_RECOMMENDED_ENABLED || getExpArm()==="treatment";
 }
 
 // Don't show anything until there's real signal -- an empty or
@@ -1996,7 +2078,7 @@ function getRecommendedEvents(pool){
 function trackClick(url,meta){
   recordAffinity(meta);
   try{
-    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action,fromRecommended:!!meta?.fromRecommended}),keepalive:true}).catch(()=>{});
+    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action,fromRecommended:!!meta?.fromRecommended,...expPayload()}),keepalive:true}).catch(()=>{});
   }catch(err){}
 }
 

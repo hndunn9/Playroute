@@ -1977,9 +1977,9 @@ async function handlePageView(request, env) {
     // already-engaged=1 row from a click that happened to log first (e.g.
     // a fast click before this beacon's response returns).
     await env.DB.prepare(
-      `INSERT INTO experiment_sessions (session_id, arm, engaged) VALUES (?, ?, 0)
-       ON CONFLICT(session_id) DO NOTHING`
-    ).bind(experimentSessionId, experimentArm).run();
+      `INSERT INTO experiment_sessions (session_id, arm, engaged, exposed) VALUES (?, ?, 0, ?)
+       ON CONFLICT(session_id) DO UPDATE SET exposed = MAX(exposed, excluded.exposed)`
+    ).bind(experimentSessionId, experimentArm, sawRecommended).run();
   }
   return json({ ok: true });
 }
@@ -2443,30 +2443,49 @@ function sampleSizeForPower(p1, p2, power = 0.8, alpha = 0.05) {
   return Math.ceil(num / den);
 }
 
+async function handleExperimentExposure(request, env) {
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const arm = body.experimentArm;
+  const sid = body.experimentSessionId ? String(body.experimentSessionId).slice(0, 64) : null;
+  if (!sid || (arm !== "treatment" && arm !== "control")) return json({ error: "arm + session required" }, 400);
+  await env.DB.prepare(
+    `INSERT INTO experiment_sessions (session_id, arm, engaged, exposed) VALUES (?, ?, 0, 1)
+     ON CONFLICT(session_id) DO UPDATE SET exposed = 1`
+  ).bind(sid, arm).run();
+  return json({ ok: true });
+}
+
+// Per-arm metrics for the admin card. "Engaged" = any click; "clicked
+// through" = at least one "View source" click (the real referral CTR);
+// "expanded" = at least one event card opened. Rates are per session.
 async function handleRecommendedExperiment(env) {
   const { results } = await env.DB.prepare(
-    `SELECT arm, COUNT(*) AS sessions, SUM(engaged) AS engaged FROM experiment_sessions GROUP BY arm`
+    `SELECT arm, COUNT(*) AS sessions, SUM(engaged) AS engaged,
+       SUM(detail_views > 0) AS expanded_sessions, SUM(source_clicks > 0) AS clickthrough_sessions,
+       SUM(detail_views) AS detail_views, SUM(source_clicks) AS source_clicks,
+       SUM(exposed) AS exposed, SUM(rec_clicks) AS rec_clicks, MIN(created_at) AS started_at
+     FROM experiment_sessions GROUP BY arm`
   ).all();
-  const control = results.find((r) => r.arm === "control") || { sessions: 0, engaged: 0 };
-  const treatment = results.find((r) => r.arm === "treatment") || { sessions: 0, engaged: 0 };
-
-  const test = twoProportionZTest(control.engaged || 0, control.sessions || 0, treatment.engaged || 0, treatment.sessions || 0);
-  const requiredPerArm = sampleSizeForPower(test.p1, test.p2, 0.8);
-  const smallerArmN = Math.min(control.sessions || 0, treatment.sessions || 0);
-  const powerProgress = requiredPerArm ? Math.min(100, Math.round((smallerArmN / requiredPerArm) * 1000) / 10) : null;
-
+  const pick = (arm) => results.find((r) => r.arm === arm) || { sessions: 0, engaged: 0, expanded_sessions: 0, clickthrough_sessions: 0, detail_views: 0, source_clicks: 0, exposed: 0, rec_clicks: 0 };
+  const c = pick("control"), t = pick("treatment");
+  const metric = (key) => {
+    const r = twoProportionZTest(c[key] || 0, c.sessions || 0, t[key] || 0, t.sessions || 0);
+    const need = sampleSizeForPower(r.p1, r.p2, 0.8);
+    return { control: r.p1, treatment: r.p2, liftPct: r.p1 ? Math.round(((r.p2 - r.p1) / r.p1) * 1000) / 10 : null, pValue: r.pValue, significant: r.pValue !== null && r.pValue < 0.05, sessionsNeededPerArm: need };
+  };
+  const perSession = (x) => (x.sessions ? Math.round(((x.detail_views || 0) / x.sessions) * 100) / 100 : null);
+  const armOut = (x) => ({ sessions: x.sessions || 0, engaged: x.engaged || 0, expanded: x.expanded_sessions || 0, clickedThrough: x.clickthrough_sessions || 0, detailViews: x.detail_views || 0, sourceClicks: x.source_clicks || 0, exposed: x.exposed || 0, recClicks: x.rec_clicks || 0, expandsPerSession: perSession(x) });
+  const started = [c.started_at, t.started_at].filter(Boolean).sort()[0] || null;
   return json({
-    control: { sessions: control.sessions || 0, engaged: control.engaged || 0, rate: test.p1 },
-    treatment: { sessions: treatment.sessions || 0, engaged: treatment.engaged || 0, rate: test.p2 },
-    diff: test.diff,
-    zScore: test.z,
-    pValue: test.pValue,
-    significant: test.pValue !== null && test.pValue < 0.05,
-    requiredPerArmFor80PctPower: requiredPerArm,
-    powerProgressPct: powerProgress,
+    startedAt: started,
+    control: armOut(c),
+    treatment: armOut(t),
+    metrics: { engaged: metric("engaged"), expanded: metric("expanded_sessions"), clickedThrough: metric("clickthrough_sessions") },
     generatedAt: new Date().toISOString()
   });
 }
+
 
 async function handleStats(env) {
 
@@ -3035,9 +3054,14 @@ async function handleTrackClick(request, env) {
   if (body.experimentArm && body.experimentSessionId && (body.experimentArm === "treatment" || body.experimentArm === "control")) {
     const sid = String(body.experimentSessionId).slice(0, 64);
     await env.DB.prepare(
-      `INSERT INTO experiment_sessions (session_id, arm, engaged) VALUES (?, ?, 1)
-       ON CONFLICT(session_id) DO UPDATE SET engaged = MAX(engaged, 1), updated_at = datetime('now')`
-    ).bind(sid, body.experimentArm).run();
+      `INSERT INTO experiment_sessions (session_id, arm, engaged, detail_views, source_clicks, rec_clicks)
+       VALUES (?, ?, 1, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET engaged = MAX(engaged, 1),
+         detail_views = detail_views + excluded.detail_views,
+         source_clicks = source_clicks + excluded.source_clicks,
+         rec_clicks = rec_clicks + excluded.rec_clicks,
+         updated_at = datetime('now')`
+    ).bind(sid, body.experimentArm, action === "view_details" ? 1 : 0, action === "source_click" ? 1 : 0, fromRecommended).run();
   }
   return json({ ok: true });
 }
@@ -4769,6 +4793,8 @@ export default {
       if (url.pathname === "/api/coverage-alerts") return await handleCoverageAlerts(env);
       if (url.pathname === "/api/manual-source-gaps") return await handleManualSourceGaps(env);
       if (url.pathname === "/api/recommended-adoption") return await handleRecommendedAdoption(env);
+      if (url.pathname === "/api/recommended-experiment") return await handleRecommendedExperiment(env);
+      if (url.pathname === "/api/experiment-exposure" && request.method === "POST") return await handleExperimentExposure(request, env);
       if (url.pathname === "/api/recommended-feedback" && request.method === "POST") return await handleRecommendedFeedback(request, env);
       if (url.pathname === "/api/referrals-trend") {
         return json(await getReferralsTrend(env, Number(url.searchParams.get("weeks")) || 8));
