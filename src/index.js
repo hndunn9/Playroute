@@ -376,7 +376,7 @@ function normalizeICalEvent(ev, city) {
   const mtDayOfWeek = DAY_NAMES[new Date(`${mtDateStr}T12:00:00Z`).getUTCDay()];
   return {
     title: ev.summary,
-    source: `${city} Public Library${ev.location ? " \u2014 " + ev.location : ""}`,
+    source: ev.location && ev.location.startsWith(`${city} Public Library`) ? ev.location : `${city} Public Library${ev.location ? " \u2014 " + ev.location : ""}`,
     city,
     category: "library",
     cost: "free",
@@ -394,7 +394,7 @@ function normalizeICalEvent(ev, city) {
   };
 }
 
-async function fetchAndNormalizeICalFeed(icalUrl, city, { daysAhead = 60, trustSourceFilter = false } = {}) {
+async function fetchAndNormalizeICalFeed(icalUrl, city, { daysAhead = 60, trustSourceFilter = false, locationRe = null } = {}) {
   const res = await fetch(icalUrl);
   if (!res.ok) throw new Error(`iCal fetch failed for ${city}: ${res.status}`);
   const icsText = await res.text();
@@ -402,6 +402,7 @@ async function fetchAndNormalizeICalFeed(icalUrl, city, { daysAhead = 60, trustS
   const now = new Date();
   const cutoff = new Date(now.getTime() + daysAhead * 864e5);
   return rawEvents
+    .filter((ev) => !locationRe || locationRe.test(ev.location || ""))
     .filter((ev) => trustSourceFilter || isKidRelevant(ev))
     .filter((ev) => !/^CANCEL/i.test(ev.summary || ""))
     .filter((ev) => ev.dtstart && ev.dtstart >= now && ev.dtstart <= cutoff)
@@ -705,7 +706,7 @@ async function fetchAndNormalizeWowCalendar() {
 SOURCE_RUNNERS.wow_museum = async () => fetchAndNormalizeWowCalendar();
 
 // --- Town of Mead scraper ---
-// Source feed: https://www.townofmead.org/calendar/json
+// Source feed: https://www.meadco.gov/calendar/json
 // Unlike the library/rec-center feeds, this JSON has no structured date
 // field (meeting_date is always empty) — the actual date/time lives buried
 // in freeform HTML prose inside `body`, in wildly inconsistent formats.
@@ -811,7 +812,7 @@ function meadDisplayTime(displayHour) {
 }
 
 async function fetchAndNormalizeMeadCalendar() {
-  const res = await fetch("https://www.townofmead.org/calendar/json");
+  const res = await fetch("https://www.meadco.gov/calendar/json");
   if (!res.ok) throw new Error(`Mead calendar fetch failed: ${res.status}`);
   const items = await res.json();
 
@@ -840,7 +841,7 @@ async function fetchAndNormalizeMeadCalendar() {
         source: "Town of Mead Parks & Recreation",
         city: "Mead",
         note: truncateAtBoundary(plainBody, 300),
-        source_url: `https://www.townofmead.org${item.link}`,
+        source_url: `https://www.meadco.gov${item.link}`,
         dedup_key: `mead-review:${item.id}`
       });
       continue;
@@ -873,7 +874,7 @@ async function fetchAndNormalizeMeadCalendar() {
       recurrence: "dated",
       event_date: eventDateStr,
       note: truncateAtBoundary(plainBody, 300),
-      source_url: `https://www.townofmead.org${item.link}`,
+      source_url: `https://www.meadco.gov${item.link}`,
       verified: 0, // auto-parsed from prose — flagged unverified, unlike hand-curated entries
       libcal_event_id: `mead:${item.id}`,
       _assumedTime: !parsed.startTime // true when no real time was found and we fell back to 9am
@@ -1727,6 +1728,88 @@ async function fetchAndScanMyNatureLab() {
 }
 
 SOURCE_RUNNERS.my_nature_lab = async () => fetchAndScanMyNatureLab();
+
+// --- Louisville Public Library (+ its Superior outreach storytime) ---
+// Events live on events.louisvilleco.gov/cultural. Every event links to
+// /cultural/detail/YYYY-MM-DD-HHMM-Slug, so date + start time come from
+// the URL itself rather than fragile page text. Two pages are read and
+// merged: the kids & families results page (broadest, but it blocks some
+// bots -- if it 403s or renders nothing we just skip it) and the library's
+// storytime page on louisvilleco.gov, which embeds the next ~2 weeks of
+// storytimes server-side (confirmed 2026-09). Events mentioning Superior
+// (e.g. "Family Storytime Superior Civic Space") are filed under Superior.
+const LOUISVILLE_EVENT_PAGES = [
+  "https://events.louisvilleco.gov/cultural/Results?&StartDate=&EndDate=undefined&Keywords=&EventFilter=&Age=Kids%20and%20Families&Age=Kids%20and%20Families",
+  "https://www.louisvilleco.gov/library/kids-teens-adults/kids/storytime/"
+];
+const LOUISVILLE_DETAIL_RE = /href="((?:https?:\/\/events\.louisvilleco\.gov)?\/cultural\/detail\/(\d{4}-\d{2}-\d{2})-(\d{2})(\d{2})-([^"?#]+))"[^>]*>([\s\S]*?)<\/a>/gi;
+function ageFromLouisvilleTitle(title) {
+  const t = title.toLowerCase();
+  if (/\bbaby\b/.test(t)) return { age_min: 0, age_max: 1.5 };
+  if (/\btoddler\b/.test(t)) return { age_min: 1.5, age_max: 3 };
+  if (/storytime|story time|preschool/.test(t)) return { age_min: 0, age_max: 5 };
+  if (/\bteen/.test(t)) return { age_min: 12, age_max: 18 };
+  return { age_min: 0, age_max: 12 };
+}
+function parseLouisvilleEventsHtml(html) {
+  const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+  const hits = [];
+  let m;
+  LOUISVILLE_DETAIL_RE.lastIndex = 0;
+  while ((m = LOUISVILLE_DETAIL_RE.exec(noScript)) !== null) {
+    hits.push({ index: m.index, end: LOUISVILLE_DETAIL_RE.lastIndex, href: m[1], date: m[2], hh: m[3], mm: m[4], slug: m[5], inner: m[6] });
+  }
+  const out = [];
+  for (let i = 0; i < hits.length; i++) {
+    const h = hits[i];
+    const title = decodeHtmlEntities(stripTags(h.inner)).trim() || decodeURIComponent(h.slug).replace(/-/g, " ");
+    if (!title) continue;
+    const tail = decodeHtmlEntities(stripTags(noScript.slice(h.end, i + 1 < hits.length ? hits[i + 1].index : h.end + 1500).replace(/<[^>]*$/, "")));
+    const range = tail.match(/(\d{1,2}:\d{2}\s*[AP]M)\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*[AP]M)/i);
+    const startTime = `${h.hh}:${h.mm}`;
+    const startLabel = (/* @__PURE__ */ new Date(`2000-01-01T${startTime}:00`)).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    let desc = range ? tail.slice(tail.indexOf(range[0]) + range[0].length).trim() : "";
+    const isSuperior = /superior/i.test(`${title} ${h.slug} ${desc.slice(0, 200)}`);
+    const { age_min, age_max } = ageFromLouisvilleTitle(title);
+    const url = h.href.startsWith("http") ? h.href : `https://events.louisvilleco.gov${h.href}`;
+    out.push({
+      title,
+      source: isSuperior ? "Louisville Public Library \u2014 Superior Civic Space" : "Louisville Public Library",
+      city: isSuperior ? "Superior" : "Louisville",
+      category: "library",
+      cost: "free",
+      age_min,
+      age_max,
+      day_of_week: DAY_NAMES[(/* @__PURE__ */ new Date(`${h.date}T12:00:00Z`)).getUTCDay()],
+      start_time: startTime,
+      display_time: range ? `${range[1]} \u2013 ${range[2]}` : startLabel,
+      recurrence: "dated",
+      event_date: h.date,
+      note: desc ? truncateAtBoundary(desc, 300) : null,
+      source_url: url
+    });
+  }
+  return out;
+}
+async function fetchAndScanLouisvilleLibrary() {
+  const byUrl = new Map();
+  const errors = [];
+  for (const pageUrl of LOUISVILLE_EVENT_PAGES) {
+    try {
+      const res = await fetch(pageUrl, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+      if (!res.ok) { errors.push(`${res.status} from ${new URL(pageUrl).host}`); continue; }
+      for (const ev of parseLouisvilleEventsHtml(await res.text())) byUrl.set(ev.source_url, ev);
+    } catch (e) {
+      errors.push(String(e));
+    }
+  }
+  if (byUrl.size === 0 && errors.length === LOUISVILLE_EVENT_PAGES.length) {
+    throw new Error(`Louisville event pages unreachable: ${errors.join("; ")}`);
+  }
+  const today = toMountainDateStr(new Date());
+  return [...byUrl.values()].filter((ev) => ev.event_date >= today);
+}
+SOURCE_RUNNERS.louisville_library = async () => fetchAndScanLouisvilleLibrary();
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -2676,6 +2759,13 @@ SOURCE_RUNNERS.erie_ical = async () => {
   const lib = ICAL_LIBRARIES.find((l) => l.city === "Erie");
   return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
 };
+// Mead Public Library (High Plains Library District, opens 2026-10-03).
+// No Mead-specific campus id could be confirmed for the LibCal export, so
+// this pulls the district-wide HPLD feed (one request) and keeps only
+// events whose LOCATION is the Mead branch. Same kid filter as Erie.
+const MEAD_LIBRARY_ICAL_URL = "https://highplains.libcal.com/ical_subscribe.php?src=p&cid=8181";
+SOURCE_RUNNERS.mead_library = async () =>
+  fetchAndNormalizeICalFeed(MEAD_LIBRARY_ICAL_URL, "Mead", { locationRe: /Mead Public Library/i });
 SOURCE_RUNNERS.lafayette_ical = async () => {
   const lib = ICAL_LIBRARIES.find((l) => l.city === "Lafayette");
   return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
