@@ -1474,6 +1474,10 @@ SOURCE_RUNNERS.longmont_library = async () => fetchAndScanLongmontLibrary();
 // fields are what a human would see first anyway. Flagged with
 // confidence='review' like every other scraper, so this is caught by a
 // human either way, not silently trusted.
+// Anythink branches physically in Thornton (incl. the Studio spaces and the
+// City of Thornton's Nature Library). Everything else in the feed is
+// another city or virtual.
+const ANYTHINK_THORNTON_BRANCH_RE = /thornton community center|huron street|wright farms|nature library/i;
 const ANYTHINK_THORNTON_URL = "https://api.communico.co/v2/anythinklibraries/events/export.xml?locations=Anythink+Thornton+Community+Center";
 // Ages tags that mean "not for kids" on their own -- an event tagged
 // ONLY with these (no kid/family tag alongside) gets skipped. Matches the
@@ -1563,6 +1567,10 @@ async function fetchAndScanAnythinkThornton() {
     const startLabel = field("StartTime");
     const endLabel = field("EndTime");
     const location = field("Location");
+    // The export's ?locations= filter is ignored server-side (confirmed
+    // 2026-09: feed returned Bennett, Brighton, Commerce City, Perl Mack,
+    // the virtual "Anythink World", etc.), so filter here instead.
+    if (!ANYTHINK_THORNTON_BRANCH_RE.test(location)) continue;
     const shortDesc = field("ShortDescription");
     const startTime = to24HourAnythink(startLabel);
     if (!startTime || !monthDay || !weekday) continue; // can't build a usable event without these
