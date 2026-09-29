@@ -4120,6 +4120,8 @@ const PARTNER_TIER_LABELS = { dayof: "Day-Of Spotlight", leadup: "Lead-Up Spotli
 // (dashboard-only step, not something the API/Worker can provision) --
 // otherwise this is a valid-looking reply-to that silently bounces.
 const PARTNER_REPLY_TO = "partners@playroute.co";
+// Interim: where new partner requests are emailed (see handlePartnerSubmit).
+const PARTNER_NOTIFY_EMAIL = "hndunn9@gmail.com";
 
 function buildPartnerApprovalHtml(partner, tierLabel, manageUrl) {
   const eventLine = partner.event_title
@@ -4247,26 +4249,67 @@ async function handlePartnerSubmit(request, env) {
     eventTitle, eventDate, details, tagline, brandColor
   ).run();
 
-  // Emails on submit: a heads-up to the admin (so a new request doesn't sit
-  // unseen) and a "we got it" receipt to the partner. The row is already
-  // saved, so an email failure is logged but never fails the submission.
+  // Emails on submit. INTERIM (2026-09-29): Resend sends haven't been
+  // arriving and the Cloudflare/Resend setup hasn't been debugged yet, so
+  // the admin heads-up always goes to PARTNER_NOTIFY_EMAIL, and if Resend
+  // fails it falls back to FormSubmit (formsubmit.co, no account needed;
+  // the very first send triggers a one-time "activate" email to that inbox).
+  // Every attempt is logged to job_runs (job_name 'partner_email') with the
+  // exact error, which is the starting point for fixing Resend properly.
+  // The row is already saved, so none of this can fail the submission.
   const tierLabel = PARTNER_TIER_LABELS[tier] || tier;
-  const sends = [];
-  if (env.ADMIN_EMAIL) {
-    const adminHtml = `<p>New <strong>${escapeHtml(tierLabel)}</strong> partner request from <strong>${escapeHtml(businessName)}</strong> (${escapeHtml(email)}).</p>`
-      + `<p>Event: ${escapeHtml(eventTitle || "—")} ${escapeHtml(eventDate || "")}</p>`
-      + `<p>${escapeHtml(details || "")}</p>`
-      + `<p>Review it in the admin dashboard: <a href="${DIGEST_SITE_URL}/admin">${DIGEST_SITE_URL}/admin</a></p>`;
-    sends.push(sendDigestEmail(env, env.ADMIN_EMAIL, adminHtml, null, `New partner request: ${businessName}`, email));
+  const lines = [
+    `Tier: ${tierLabel}`,
+    `Business: ${businessName}`,
+    `Email: ${email}`,
+    `Phone: ${(body.contact_phone || "").trim() || "—"}`,
+    eventTitle ? `Event: ${eventTitle} ${eventDate || ""}` : null,
+    details ? `Details: ${details}` : null,
+    tagline ? `Tagline: ${tagline}` : null,
+    `Review: ${DIGEST_SITE_URL}/admin`
+  ].filter(Boolean);
+  const subject = `New partner request: ${businessName} (${tierLabel})`;
+  const logEmail = async (status, detail) => {
+    try {
+      await env.DB.prepare(`INSERT INTO job_runs (job_name, status, details) VALUES ('partner_email', ?, ?)`)
+        .bind(status, JSON.stringify({ partner_id: id, ...detail }).slice(0, 1000)).run();
+    } catch {}
+  };
+  let adminSent = false;
+  try {
+    const adminHtml = lines.map((l) => `<p style="margin:0 0 6px;">${escapeHtml(l)}</p>`).join("");
+    await sendDigestEmail(env, PARTNER_NOTIFY_EMAIL, adminHtml, lines.join("\n"), subject, email);
+    adminSent = true;
+    await logEmail("success", { via: "resend", to: "admin" });
+  } catch (err) {
+    await logEmail("error", { via: "resend", to: "admin", error: String(err) });
   }
-  const receiptText = `Thanks for applying to Playroute Partners, ${businessName}!\n\nWe review every request, usually within 24 hours. Once approved you'll get a second email with a link to your own partner page.\n\nQuestions? Just reply to this email.`;
-  const receiptHtml = `<div style="font-family:Georgia,serif;max-width:480px;margin:0 auto;padding:24px;color:#1E2622;">`
-    + `<h2 style="font-size:18px;margin:0 0 12px;">Thanks, ${escapeHtml(businessName)}!</h2>`
-    + `<p style="font-size:14px;line-height:1.6;">We got your <strong>${escapeHtml(tierLabel)}</strong> request. We review every request, usually within 24 hours. Once approved you'll get a second email with a link to your own partner page.</p>`
-    + `<p style="font-size:12px;color:#5B6560;">Questions? Just reply to this email.</p></div>`;
-  sends.push(sendDigestEmail(env, email, receiptHtml, receiptText, "We got your Playroute Partners request", PARTNER_REPLY_TO));
-  const results = await Promise.allSettled(sends);
-  for (const r of results) if (r.status === "rejected") console.error("Partner submit email failed:", r.reason);
+  if (!adminSent) {
+    try {
+      const res = await fetch(`https://formsubmit.co/ajax/${PARTNER_NOTIFY_EMAIL}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json", Origin: DIGEST_SITE_URL, Referer: `${DIGEST_SITE_URL}/partners` },
+        body: JSON.stringify({ _subject: subject, _template: "table", _captcha: "false", _replyto: email, tier: tierLabel, business: businessName, email, phone: (body.contact_phone || "").trim() || "—", event: eventTitle ? `${eventTitle} ${eventDate || ""}` : "—", details: details || tagline || "—", review: `${DIGEST_SITE_URL}/admin` })
+      });
+      const text = await res.text();
+      await logEmail(res.ok ? "success" : "error", { via: "formsubmit", to: "admin", status: res.status, response: text.slice(0, 300) });
+    } catch (err) {
+      await logEmail("error", { via: "formsubmit", to: "admin", error: String(err) });
+    }
+  }
+  // Partner receipt: Resend only (no fallback -- a relay can't send to
+  // arbitrary addresses). Logged so the Resend fix can be confirmed.
+  try {
+    const receiptText = `Thanks for applying to Playroute Partners, ${businessName}!\n\nWe review every request, usually within a day. Once approved you'll get a second email with a link to your own partner page.\n\nQuestions? Just reply to this email.`;
+    const receiptHtml = `<div style="font-family:Georgia,serif;max-width:480px;margin:0 auto;padding:24px;color:#1E2622;">`
+      + `<h2 style="font-size:18px;margin:0 0 12px;">Thanks, ${escapeHtml(businessName)}!</h2>`
+      + `<p style="font-size:14px;line-height:1.6;">We got your <strong>${escapeHtml(tierLabel)}</strong> request. We review every request, usually within a day. Once approved you'll get a second email with a link to your own partner page.</p>`
+      + `<p style="font-size:12px;color:#5B6560;">Questions? Just reply to this email.</p></div>`;
+    await sendDigestEmail(env, email, receiptHtml, receiptText, "We got your Playroute Partners request", PARTNER_REPLY_TO);
+    await logEmail("success", { via: "resend", to: "partner" });
+  } catch (err) {
+    await logEmail("error", { via: "resend", to: "partner", error: String(err) });
+  }
 
   return json({ ok: true, id });
 }
