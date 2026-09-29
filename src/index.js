@@ -4263,14 +4263,15 @@ async function handlePartnerSubmit(request, env) {
     brandColor = /^#[0-9A-Fa-f]{6}$/.test(body.brand_color || "") ? body.brand_color : null;
   }
 
+  const leadSource = String(body.lead_source || "").trim().slice(0, 120) || null;
   const id = crypto.randomUUID();
   await env.DB.prepare(
     `INSERT INTO partners
-       (id, business_name, contact_email, contact_phone, tier, event_title, event_date, details, tagline, brand_color, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_review')`
+       (id, business_name, contact_email, contact_phone, tier, event_title, event_date, details, tagline, brand_color, lead_source, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_review')`
   ).bind(
     id, businessName, email, (body.contact_phone || "").trim() || null, tier,
-    eventTitle, eventDate, details, tagline, brandColor
+    eventTitle, eventDate, details, tagline, brandColor, leadSource
   ).run();
 
   // Emails on submit. INTERIM (2026-09-29): Resend sends haven't been
@@ -4289,7 +4290,8 @@ async function handlePartnerSubmit(request, env) {
     `Phone: ${(body.contact_phone || "").trim() || "—"}`,
     eventTitle ? `Event: ${eventTitle} ${eventDate || ""}` : null,
     details ? `Details: ${details}` : null,
-    tagline ? `Tagline: ${tagline}` : null,
+    tagline ? `Promoting: ${tagline}` : null,
+    `Found us via: ${leadSource || "—"}`,
     `Review: ${DIGEST_SITE_URL}/admin`
   ].filter(Boolean);
   const subject = `New partner request: ${businessName} (${tierLabel})`;
@@ -4313,7 +4315,7 @@ async function handlePartnerSubmit(request, env) {
       const res = await fetch(`https://formsubmit.co/ajax/${PARTNER_NOTIFY_EMAIL}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json", Origin: DIGEST_SITE_URL, Referer: `${DIGEST_SITE_URL}/partners` },
-        body: JSON.stringify({ _subject: subject, _template: "table", _captcha: "false", _replyto: email, tier: tierLabel, business: businessName, email, phone: (body.contact_phone || "").trim() || "—", event: eventTitle ? `${eventTitle} ${eventDate || ""}` : "—", details: details || tagline || "—", review: `${DIGEST_SITE_URL}/admin` })
+        body: JSON.stringify({ _subject: subject, _template: "table", _captcha: "false", _replyto: email, tier: tierLabel, business: businessName, email, phone: (body.contact_phone || "").trim() || "—", event: eventTitle ? `${eventTitle} ${eventDate || ""}` : "—", details: details || tagline || "—", found_us_via: leadSource || "—", review: `${DIGEST_SITE_URL}/admin` })
       });
       const text = await res.text();
       await logEmail(res.ok ? "success" : "error", { via: "formsubmit", to: "admin", status: res.status, response: text.slice(0, 300) });

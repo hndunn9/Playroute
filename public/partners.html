@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Partner With Playroute</title>
-<meta name="description" content="Get your events and business in front of families actively planning their week in Boulder County.">
+<title>Promote on Playroute</title>
+<meta name="description" content="Promote your family events and business to Boulder County parents planning their week on Playroute.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap">
@@ -108,9 +108,9 @@ form{margin-top:8px;}
 .field{margin-bottom:16px;}
 .field label{display:block;font-size:14px;font-weight:600;margin-bottom:6px;}
 .field label span{font-weight:400;color:var(--ink-soft);}
-.field input,.field textarea{width:100%;padding:11px 12px;border-radius:6px;border:1px solid var(--fog);background:var(--parchment);font:inherit;font-size:15px;color:var(--ink);outline:none;}
+.field input,.field textarea,.field select{width:100%;padding:11px 12px;border-radius:6px;border:1px solid var(--fog);background:var(--parchment);font:inherit;font-size:15px;color:var(--ink);outline:none;}
 .field input[type=file]{padding:8px;font-size:14px;}
-.field input:focus,.field textarea:focus{border-color:var(--sky);}
+.field input:focus,.field textarea:focus,.field select:focus{border-color:var(--sky);}
 .field textarea{resize:vertical;min-height:76px;}
 .field-hint{font-size:13px;color:var(--ink-soft);margin-top:5px;}
 .leadup-only{display:none;font-size:14px;color:var(--ember);margin:-8px 0 16px;}
@@ -127,6 +127,28 @@ form{margin-top:8px;}
 .form-error.show{display:block;}
 .empty-state{font-size:14px;color:var(--ink-soft);padding:6px 0 0;}
 .thanks{padding:40px 0;}
+/* ── Previews: a small slice of the real feed, so partners can see what
+   each option actually looks like. Styles mirror public/index.html's
+   .event-card / .tag / .day-heading. */
+.preview{display:none;margin:12px 0 2px;padding:12px;border-radius:10px;background:var(--parchment);border:1px solid var(--fog);cursor:default;}
+.option.sel .preview{display:block;}
+.preview-label{font-size:12px;color:var(--ink-soft);margin-bottom:8px;}
+.m-day{display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);margin:2px 0 8px;}
+.m-day::after{content:"";flex:1;height:1px;background:var(--fog);}
+.m-card{background:var(--cream);border:1px solid var(--fog);border-radius:12px;padding:11px 12px;margin-bottom:8px;box-shadow:0 2px 8px rgba(20,24,22,0.07);}
+.m-card.dim{opacity:0.5;box-shadow:none;}
+.m-card.hl{border-color:var(--m-color,var(--ember));box-shadow:0 0 0 1px var(--m-color,var(--ember)),0 2px 8px rgba(20,24,22,0.07);}
+.m-title{font-weight:600;font-size:14px;line-height:1.3;color:var(--ink);}
+.m-meta{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+.m-tags{display:flex;flex-wrap:wrap;gap:4px 5px;margin-top:7px;}
+.m-tag{display:inline-block;font-size:11px;font-weight:500;padding:2px 8px;border-radius:6px;background:var(--pill-green-bg);color:var(--pill-green-text);}
+.m-tag.city{background:var(--clay);color:#fff;font-weight:600;}
+.m-tag.brand{background:var(--m-color,#46707E);color:#fff;font-weight:700;}
+.m-tag.spot{background:var(--ember);color:#fff;font-weight:700;}
+.m-tag.soon{background:var(--gold);color:#fff;font-weight:700;}
+.m-section{font-family:'Playfair Display',serif;font-weight:600;font-size:16px;margin:2px 0 8px;color:var(--ink);}
+.color-preview{margin-top:10px;}
+
 .thanks h2{margin-top:0;}
 </style>
 </head>
@@ -140,7 +162,7 @@ form{margin-top:8px;}
     </div>
   </div>
 
-  <h1>Advertise on Playroute</h1>
+  <h1>Promote on Playroute</h1>
   <p class="lede">Playroute is a free guide to what's on for kids around Boulder County, run by a local parent. Families use it to plan the week: storytimes, open gyms, farmers markets, camps.</p>
   <p class="lede">If you run something for families, you can put it in front of them. You don't need to post or manage a listing. We already pull events from local calendars, so just tell us which one is yours.</p>
   <p class="stats" id="statsRow">Since <span id="statSince">July 2026</span>: <b id="statVisitors">…</b> visitors, <b id="statViews">…</b> page views, <b id="statEvents">…</b> events listed.</p>
@@ -154,6 +176,12 @@ form{margin-top:8px;}
       <div class="option-main">
         <div class="option-head"><span class="option-name">Day-of spotlight</span><span class="option-price">$20</span></div>
         <p class="option-desc">Your event is pinned near the top of the feed on the day it happens, with a Spotlight tag.</p>
+        <div class="preview">
+          <p class="preview-label">How it looks in the feed on the day:</p>
+          <div class="m-day">Today · Sat Oct 4</div>
+          <div class="m-card hl"><div class="m-title" data-mock="event">Fall camp open house</div><div class="m-meta">10:00 AM · <span data-mock="biz">Busy Kids Art Studio</span></div><div class="m-tags"><span class="m-tag spot">Spotlight</span><span class="m-tag city">Lafayette</span><span class="m-tag">Ages 3–12</span></div></div>
+          <div class="m-card dim"><div class="m-title">Toddler storytime</div><div class="m-meta">10:30 AM · Lafayette Public Library</div><div class="m-tags"><span class="m-tag city">Lafayette</span><span class="m-tag">Free</span></div></div>
+        </div>
       </div>
     </label>
     <label class="option" data-tier="leadup">
@@ -161,6 +189,12 @@ form{margin-top:8px;}
       <div class="option-main">
         <div class="option-head"><span class="option-name">Lead-up spotlight</span><span class="option-price">$35</span></div>
         <p class="option-desc">The day-of spotlight, plus a spot in "Coming up" for the week before. Needs about a week's notice.</p>
+        <div class="preview">
+          <p class="preview-label">The week before, in "Coming up":</p>
+          <div class="m-section">Coming up</div>
+          <div class="m-card hl" style="--m-color:var(--gold);"><div class="m-title" data-mock="event">Fall camp open house</div><div class="m-meta">Sat, Oct 11 · 10:00 AM · <span data-mock="biz">Busy Kids Art Studio</span></div><div class="m-tags"><span class="m-tag soon">Coming up</span><span class="m-tag city">Lafayette</span><span class="m-tag">Ages 3–12</span></div></div>
+          <p class="preview-label" style="margin:10px 0 0;">Then on the day it is pinned with the Spotlight tag, same as the day-of option.</p>
+        </div>
       </div>
     </label>
     <label class="option" data-tier="picks">
@@ -168,6 +202,13 @@ form{margin-top:8px;}
       <div class="option-main">
         <div class="option-head"><span class="option-name">Playroute's Picks</span><span class="option-price">$75 <small>/ month</small></span></div>
         <p class="option-desc">For businesses with regular programming. Everything you run is tagged with your name and color for the month, and you get a page to update your logo and details.</p>
+        <div class="preview">
+          <p class="preview-label">All month, everything you run carries your tag:</p>
+          <div class="m-day">Tuesday · Oct 7</div>
+          <div class="m-card hl mock-brand"><div class="m-title">After-school clay club</div><div class="m-meta">3:30 PM · <span data-mock="biz">Busy Kids Art Studio</span></div><div class="m-tags"><span class="m-tag brand" data-mock="biz">Busy Kids Art Studio</span><span class="m-tag city">Lafayette</span><span class="m-tag">Ages 5–10</span></div></div>
+          <div class="m-day">Saturday · Oct 11</div>
+          <div class="m-card hl mock-brand"><div class="m-title">Family paint morning</div><div class="m-meta">9:00 AM · <span data-mock="biz">Busy Kids Art Studio</span></div><div class="m-tags"><span class="m-tag brand" data-mock="biz">Busy Kids Art Studio</span><span class="m-tag city">Lafayette</span><span class="m-tag">All ages</span></div></div>
+        </div>
       </div>
     </label>
   </div>
@@ -191,7 +232,7 @@ form{margin-top:8px;}
       </div>
 
       <div class="pick-fields" id="pickFields">
-        <div class="field"><label for="tagline">What do you do, in a sentence?</label><input type="text" id="tagline" placeholder="Drop-in art classes for ages 3 to 12"></div>
+        <div class="field"><label for="tagline">What do you want to promote?</label><input type="text" id="tagline" placeholder="Drop-in art classes for ages 3 to 12"></div>
         <div class="field">
           <label>Tag color</label>
           <div class="color-row" id="colorRow">
@@ -201,10 +242,28 @@ form{margin-top:8px;}
             <span class="color-swatch" style="background:#7A8B76" data-color="#7A8B76" onclick="pickColor(this)" aria-label="Sage"></span>
             <span class="color-swatch" style="background:#5B84A0" data-color="#5B84A0" onclick="pickColor(this)" aria-label="Blue"></span>
           </div>
+          <div class="color-preview">
+            <p class="field-hint" style="margin:0 0 6px;">Preview:</p>
+            <div class="m-card hl mock-brand" style="margin:0;"><div class="m-title" data-mock="tagline">Drop-in art classes for ages 3 to 12</div><div class="m-meta">Tuesday · 3:30 PM · <span data-mock="biz">Busy Kids Art Studio</span></div><div class="m-tags"><span class="m-tag brand" data-mock="biz">Busy Kids Art Studio</span><span class="m-tag city">Lafayette</span></div></div>
+          </div>
           <p class="field-hint">You can change it later.</p>
         </div>
       </div>
 
+      <div class="field">
+        <label for="leadSource">How did you find us? <span>(optional)</span></label>
+        <select id="leadSource" onchange="document.getElementById('leadOther').style.display = this.value === 'Other' ? 'block' : 'none'">
+          <option value="">Choose one</option>
+          <option>I use Playroute as a parent</option>
+          <option>Instagram</option>
+          <option>Facebook group</option>
+          <option>Google search</option>
+          <option>A friend or another business</option>
+          <option>Playroute reached out to me</option>
+          <option>Other</option>
+        </select>
+        <input type="text" id="leadOther" placeholder="Where?" style="display:none;margin-top:8px;">
+      </div>
       <div class="field"><label for="logo">Logo <span>(optional, you can add it later)</span></label><input type="file" id="logo" accept="image/*"></div>
 
       <button type="submit" class="submit-btn" id="submitBtn">Send request</button>
@@ -245,7 +304,16 @@ function selectTier(tier){
 function pickColor(el){
   document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
   el.classList.add('active');
+  document.querySelectorAll('.mock-brand').forEach(c => c.style.setProperty('--m-color', el.dataset.color));
 }
+// Previews use what the partner has typed so far, falling back to examples.
+function syncMocks(){
+  const val = (id, fallback) => (document.getElementById(id).value || '').trim() || fallback;
+  const map = { biz: val('biz', 'Busy Kids Art Studio'), event: val('evtitle', 'Fall camp open house'), tagline: val('tagline', 'Drop-in art classes for ages 3 to 12') };
+  document.querySelectorAll('[data-mock]').forEach(el => { el.textContent = map[el.dataset.mock]; });
+}
+['biz','evtitle','tagline'].forEach(id => document.getElementById(id).addEventListener('input', syncMocks));
+pickColor(document.querySelector('.color-swatch.active'));
 
 function checkLeadupHint(){
   const hint = document.getElementById('leaduphint');
@@ -302,6 +370,11 @@ document.getElementById('partnerForm').addEventListener('submit', async function
     business_name: biz,
     contact_email: email,
     contact_phone: document.getElementById('phone').value.trim() || null,
+    lead_source: (() => {
+      const v = document.getElementById('leadSource').value;
+      const other = document.getElementById('leadOther').value.trim();
+      return v === 'Other' ? (other ? 'Other: ' + other : 'Other') : (v || null);
+    })(),
   };
   if(selectedTier === 'picks'){
     payload.tagline = document.getElementById('tagline').value.trim();
