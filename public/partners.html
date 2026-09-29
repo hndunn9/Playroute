@@ -148,6 +148,10 @@ form{margin-top:8px;}
 .m-tag.soon{background:var(--gold);color:#fff;font-weight:700;}
 .m-section{font-family:'Playfair Display',serif;font-weight:600;font-size:16px;margin:2px 0 8px;color:var(--ink);}
 .color-preview{margin-top:10px;}
+.m-news{background:#fff;border:1px solid var(--fog);border-radius:8px;padding:12px;font-family:Georgia,serif;color:#1E2622;}
+.m-news-head{font-size:15px;font-weight:700;margin-bottom:8px;}
+.m-news-pick{font-size:13px;line-height:1.5;border-left:3px solid;padding-left:9px;}
+.m-news-label{display:block;font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#5B6560;}
 
 .thanks h2{margin-top:0;}
 </style>
@@ -201,13 +205,18 @@ form{margin-top:8px;}
       <input type="radio" name="tier" value="picks" onchange="selectTier('picks')">
       <div class="option-main">
         <div class="option-head"><span class="option-name">Playroute's Picks</span><span class="option-price">$75 <small>/ month</small></span></div>
-        <p class="option-desc">For businesses with regular programming. Everything you run is tagged with your name and color for the month, and you get a page to update your logo and details.</p>
+        <p class="option-desc">For promoting a membership, class pass, or other ongoing offer rather than one event. Your offer is featured in the app and in the Sunday newsletter for the month, and everything you run is tagged with your name and color. You also get a page to update your logo and details.</p>
         <div class="preview">
-          <p class="preview-label">All month, everything you run carries your tag:</p>
-          <div class="m-day">Tuesday · Oct 7</div>
-          <div class="m-card hl mock-brand"><div class="m-title">After-school clay club</div><div class="m-meta">3:30 PM · <span data-mock="biz">Busy Kids Art Studio</span></div><div class="m-tags"><span class="m-tag brand" data-mock="biz">Busy Kids Art Studio</span><span class="m-tag city">Lafayette</span><span class="m-tag">Ages 5–10</span></div></div>
-          <div class="m-day">Saturday · Oct 11</div>
-          <div class="m-card hl mock-brand"><div class="m-title">Family paint morning</div><div class="m-meta">9:00 AM · <span data-mock="biz">Busy Kids Art Studio</span></div><div class="m-tags"><span class="m-tag brand" data-mock="biz">Busy Kids Art Studio</span><span class="m-tag city">Lafayette</span><span class="m-tag">All ages</span></div></div>
+          <p class="preview-label">Your offer, featured in the app all month:</p>
+          <div class="m-section">Playroute's Picks</div>
+          <div class="m-card hl mock-brand"><div class="m-title" data-mock="tagline">Family membership: unlimited open studio</div><div class="m-meta"><span data-mock="biz">Busy Kids Art Studio</span> · Lafayette</div><div class="m-tags"><span class="m-tag brand" data-mock="biz">Busy Kids Art Studio</span><span class="m-tag">Ages 3–12</span></div></div>
+          <p class="preview-label" style="margin:12px 0 8px;">In the Sunday newsletter:</p>
+          <div class="m-news">
+            <div class="m-news-head">This week on Playroute</div>
+            <div class="m-news-pick" style="border-left-color:var(--m-color,#46707E);" ><span class="m-news-label">Playroute's Pick</span><b data-mock="biz">Busy Kids Art Studio</b> · <span data-mock="tagline">Family membership: unlimited open studio</span></div>
+          </div>
+          <p class="preview-label" style="margin:12px 0 8px;">And your regular events carry your tag:</p>
+          <div class="m-card hl mock-brand" style="margin-bottom:0;"><div class="m-title">After-school clay club</div><div class="m-meta">Tue · 3:30 PM · <span data-mock="biz">Busy Kids Art Studio</span></div><div class="m-tags"><span class="m-tag brand" data-mock="biz">Busy Kids Art Studio</span><span class="m-tag city">Lafayette</span></div></div>
         </div>
       </div>
     </label>
@@ -232,7 +241,7 @@ form{margin-top:8px;}
       </div>
 
       <div class="pick-fields" id="pickFields">
-        <div class="field"><label for="tagline">What do you want to promote?</label><input type="text" id="tagline" placeholder="Drop-in art classes for ages 3 to 12"></div>
+        <div class="field"><label for="tagline">What do you want to promote?</label><input type="text" id="tagline" placeholder="Family membership: unlimited open studio"></div>
         <div class="field">
           <label>Tag color</label>
           <div class="color-row" id="colorRow">
@@ -244,7 +253,7 @@ form{margin-top:8px;}
           </div>
           <div class="color-preview">
             <p class="field-hint" style="margin:0 0 6px;">Preview:</p>
-            <div class="m-card hl mock-brand" style="margin:0;"><div class="m-title" data-mock="tagline">Drop-in art classes for ages 3 to 12</div><div class="m-meta">Tuesday · 3:30 PM · <span data-mock="biz">Busy Kids Art Studio</span></div><div class="m-tags"><span class="m-tag brand" data-mock="biz">Busy Kids Art Studio</span><span class="m-tag city">Lafayette</span></div></div>
+            <div class="m-card hl mock-brand" style="margin:0;"><div class="m-title" data-mock="tagline">Family membership: unlimited open studio</div><div class="m-meta"><span data-mock="biz">Busy Kids Art Studio</span> · Lafayette</div><div class="m-tags"><span class="m-tag brand" data-mock="biz">Busy Kids Art Studio</span><span class="m-tag city">Lafayette</span></div></div>
           </div>
           <p class="field-hint">You can change it later.</p>
         </div>
@@ -304,12 +313,12 @@ function selectTier(tier){
 function pickColor(el){
   document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
   el.classList.add('active');
-  document.querySelectorAll('.mock-brand').forEach(c => c.style.setProperty('--m-color', el.dataset.color));
+  document.querySelectorAll('.mock-brand, .m-news-pick').forEach(c => c.style.setProperty('--m-color', el.dataset.color));
 }
 // Previews use what the partner has typed so far, falling back to examples.
 function syncMocks(){
   const val = (id, fallback) => (document.getElementById(id).value || '').trim() || fallback;
-  const map = { biz: val('biz', 'Busy Kids Art Studio'), event: val('evtitle', 'Fall camp open house'), tagline: val('tagline', 'Drop-in art classes for ages 3 to 12') };
+  const map = { biz: val('biz', 'Busy Kids Art Studio'), event: val('evtitle', 'Fall camp open house'), tagline: val('tagline', 'Family membership: unlimited open studio') };
   document.querySelectorAll('[data-mock]').forEach(el => { el.textContent = map[el.dataset.mock]; });
 }
 ['biz','evtitle','tagline'].forEach(id => document.getElementById(id).addEventListener('input', syncMocks));
