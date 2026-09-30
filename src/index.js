@@ -2454,8 +2454,94 @@ const MANUAL_SOURCE_KEYWORDS = {
   27: "Boulder County Parks",
   28: "Downtown Longmont",
   29: "Relish Food Hall",
-  33: "Nature Program"
+  33: "Nature Program",
+  51: "Radiant Roots",
+  52: "Longmont Museum",
+  53: "Raising Parents",
+  54: "Anderson Farms",
+  55: "Play Street Museum",
+  56: "Raising Strong",
+  57: "FIT4MOM",
+  58: "Westminster Sports Center",
+  59: "Little Monkey Bizness",
+  60: "Butterfly Pavilion",
+  61: "Arbor Gymnastics",
+  62: "ABC Kids Climbing",
+  63: "CATS Gym",
+  64: "Mountain Kids",
+  65: "Yoga Pearl",
+  66: "Superhuman Academy",
+  67: "Scribble Art",
+  68: "Get Air",
+  69: "A Montessori Nest",
+  70: "Buckaroo",
+  71: "Purple Piano",
+  72: "Shredder",
+  73: "Heart of Longmont",
+  74: "Rush Bowls",
+  75: "Farmers Market",
+  76: "Louisville Community Yoga",
+  77: "Mindful Yoga"
 };
+
+// ── SOURCE + CITY FRESHNESS ── full (not problems-only) view for the admin
+// page. handleCoverageAlerts only emits rows for cities in trouble, so a
+// healthy city like Longmont never appears there; this lists EVERY enabled
+// source and EVERY city so nothing is invisible. Auto sources are judged by
+// last run; manual sources by how recently an event was added and whether
+// any upcoming events remain. Note: older auto-scraped rows have no
+// source_id, so auto-source event counts can understate -- last_run is the
+// real signal for those.
+async function handleSourceFreshness(env) {
+  const { results: src } = await env.DB.prepare(
+    `SELECT s.id, s.city, s.platform, s.mode, s.last_run_at, s.last_run_status,
+            COUNT(e.id) AS total,
+            SUM(CASE WHEN e.id IS NOT NULL AND (e.event_date IS NULL OR e.event_date >= date('now')) THEN 1 ELSE 0 END) AS upcoming,
+            MAX(e.created_at) AS last_added,
+            MAX(CASE WHEN e.event_date >= date('now') THEN e.event_date END) AS furthest
+     FROM scrape_sources s LEFT JOIN events e ON e.source_id = s.id
+     WHERE s.enabled = 1 AND (s.source_key IS NULL OR s.source_key NOT LIKE 'llm_discovery_%')
+     GROUP BY s.id`
+  ).all();
+  const now = Date.now();
+  const ageDays = (t) => {
+    if (!t) return null;
+    const ms = Date.parse(String(t).includes("T") ? t : String(t).replace(" ", "T") + "Z");
+    return Number.isFinite(ms) ? Math.floor((now - ms) / 86400000) : null;
+  };
+  const sources = src.map((r) => {
+    let status, detail;
+    if (r.mode === "auto") {
+      const d = ageDays(r.last_run_at);
+      if (r.last_run_status === "error" || r.last_run_status === "partial_error") { status = "error"; detail = `last run failed${d !== null ? ` ${d}d ago` : ""}`; }
+      else if (d === null) { status = "stale"; detail = "never run"; }
+      else if (d > 10) { status = "stale"; detail = `last ran ${d}d ago`; }
+      else { status = "fresh"; detail = d === 0 ? "ran today" : `ran ${d}d ago`; }
+    } else {
+      const d = ageDays(r.last_added);
+      if (!r.upcoming) { status = "empty"; detail = "no upcoming events"; }
+      else if (d === null) { status = "aging"; detail = "no add date on record"; }
+      else if (d > 30) { status = "stale"; detail = `last added ${d}d ago`; }
+      else if (d > 14) { status = "aging"; detail = `last added ${d}d ago`; }
+      else { status = "fresh"; detail = d === 0 ? "added today" : `last added ${d}d ago`; }
+    }
+    return { id: r.id, city: r.city, platform: r.platform, mode: r.mode, status, detail, upcoming: r.upcoming || 0, furthest: r.furthest };
+  });
+
+  const { results: dated } = await env.DB.prepare(
+    `SELECT city, COUNT(*) AS n FROM events WHERE event_date IS NOT NULL AND event_date >= date('now')
+       AND event_date <= date('now', '+${COVERAGE_LOOKAHEAD_DAYS} days') AND city IS NOT NULL AND city != '' GROUP BY city`
+  ).all();
+  const { results: rec } = await env.DB.prepare(
+    `SELECT city, day_of_week, recurrence FROM events WHERE event_date IS NULL AND city IS NOT NULL AND city != ''`
+  ).all();
+  const cityMap = new Map();
+  const bump = (c, k, n) => { const o = cityMap.get(c) || { city: c, dated: 0, recurring: 0 }; o[k] += n; cityMap.set(c, o); };
+  for (const d of dated) bump(d.city, "dated", d.n);
+  for (const r of rec) bump(r.city, "recurring", estimateOccurrencesInWindow(r.day_of_week, r.recurrence, COVERAGE_LOOKAHEAD_DAYS));
+  const cities = [...cityMap.values()].map((c) => ({ ...c, total: c.dated + c.recurring })).sort((a, b) => b.total - a.total);
+  return json({ sources, cities, lookaheadDays: COVERAGE_LOOKAHEAD_DAYS, generatedAt: new Date().toISOString() });
+}
 
 async function handleManualSourceGaps(env) {
   const { results: sources } = await env.DB.prepare(
@@ -4971,6 +5057,7 @@ export default {
       if (url.pathname === "/api/stats") return await handleStats(env);
       if (url.pathname === "/api/coverage-alerts") return await handleCoverageAlerts(env);
       if (url.pathname === "/api/manual-source-gaps") return await handleManualSourceGaps(env);
+      if (url.pathname === "/api/source-freshness") return await handleSourceFreshness(env);
       if (url.pathname === "/api/recommended-adoption") return await handleRecommendedAdoption(env);
       if (url.pathname === "/api/recommended-experiment") return await handleRecommendedExperiment(env);
       if (url.pathname === "/api/experiment-exposure" && request.method === "POST") return await handleExperimentExposure(request, env);
