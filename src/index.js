@@ -2653,9 +2653,12 @@ function twoProportionZTest(x1, n1, x2, n2) {
   const z = (p2 - p1) / se;
   return { p1, p2, diff: p2 - p1, z, pValue: 2 * (1 - normalCdf(Math.abs(z))) };
 }
-function sampleSizeForPower(p1, p2, power = 0.8, alpha = 0.05) {
+// Significance threshold for the recommended A/B test: 80% confidence
+// (two-tailed alpha = 0.20), chosen by the owner for directional reads.
+const EXPERIMENT_ALPHA = 0.2;
+function sampleSizeForPower(p1, p2, power = 0.8) {
   if (p1 === null || p2 === null || p1 === p2) return null;
-  const zAlpha = 1.959964; // two-tailed, alpha=0.05
+  const zAlpha = 1.281552; // two-tailed, alpha=0.20 (80% confidence)
   const zBeta = power === 0.8 ? 0.841621 : 1.281552; // 80% or 90% -- only these two supported, matches the UI's own choice
   const pBar = (p1 + p2) / 2;
   const num = Math.pow(zAlpha * Math.sqrt(2 * pBar * (1 - pBar)) + zBeta * Math.sqrt(p1 * (1 - p1) + p2 * (1 - p2)), 2);
@@ -2692,7 +2695,7 @@ async function handleRecommendedExperiment(env) {
   const metric = (key) => {
     const r = twoProportionZTest(c[key] || 0, c.sessions || 0, t[key] || 0, t.sessions || 0);
     const need = sampleSizeForPower(r.p1, r.p2, 0.8);
-    return { control: r.p1, treatment: r.p2, liftPct: r.p1 ? Math.round(((r.p2 - r.p1) / r.p1) * 1000) / 10 : null, pValue: r.pValue, significant: r.pValue !== null && r.pValue < 0.05, sessionsNeededPerArm: need };
+    return { control: r.p1, treatment: r.p2, liftPct: r.p1 ? Math.round(((r.p2 - r.p1) / r.p1) * 1000) / 10 : null, pValue: r.pValue, significant: r.pValue !== null && r.pValue < EXPERIMENT_ALPHA, sessionsNeededPerArm: need };
   };
   const perSession = (x) => (x.sessions ? Math.round(((x.detail_views || 0) / x.sessions) * 100) / 100 : null);
   const armOut = (x) => ({ sessions: x.sessions || 0, engaged: x.engaged || 0, expanded: x.expanded_sessions || 0, clickedThrough: x.clickthrough_sessions || 0, detailViews: x.detail_views || 0, sourceClicks: x.source_clicks || 0, exposed: x.exposed || 0, recClicks: x.rec_clicks || 0, expandsPerSession: perSession(x) });
