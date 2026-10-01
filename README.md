@@ -16,7 +16,7 @@ Boulder, Erie, Longmont, Lafayette, Lyons, Broomfield, Louisville, Superior, Mea
 - **Resend** — weekly digest emails and admin notifications
 - **Static assets** — served directly by the Worker from `public/`, no separate Pages deployment
 
-No build step, no framework, no CLI required. Deployed by editing files directly (via github.dev or the GitHub web UI) and uploading through the Cloudflare dashboard.
+No build step, no framework, no CLI required. Merging to `main` deploys automatically: the Worker is connected to this repo. See `CLAUDE.md` for working rules.
 
 ## Project structure
 
