@@ -2481,7 +2481,8 @@ const MANUAL_SOURCE_KEYWORDS = {
   74: "Rush Bowls",
   75: "Farmers Market",
   76: "Louisville Community Yoga",
-  77: "Mindful Yoga"
+  77: "Mindful Yoga",
+  78: "Open Space & Mountain Parks"
 };
 
 // ── SOURCE + CITY FRESHNESS ── full (not problems-only) view for the admin
