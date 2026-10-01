@@ -1968,6 +1968,12 @@ const WELLNESSLIVING_STUDIOS = {
     source: "Louisville Community Yoga",
     city: "Louisville",
     linkFallback: "https://louisvillecommunityyoga.com/workshops/"
+  },
+  raising_parents: {
+    url: "https://raisingparentsco.com/calendar",
+    source: "Raising Parents",
+    city: "Lafayette",
+    linkFallback: "https://raisingparentsco.com/calendar"
   }
 };
 // Only kid/caregiver offerings belong on Playroute; this studio's list is
@@ -2000,24 +2006,44 @@ const WL_EVENT_SCHEMA = {
   required: ["events"]
 };
 
-async function browserRunJson(env, body) {
+async function browserRun(env, action, body) {
+  let res;
   if (env.BROWSER && typeof env.BROWSER.quickAction === "function") {
-    const res = await env.BROWSER.quickAction("json", body);
-    const data = await res.json();
-    if (!res.ok || !data.success) throw new Error(`Browser Run (binding) failed: ${res.status} ${JSON.stringify(data.errors || data).slice(0, 300)}`);
-    return data.result;
-  }
-  if (!env.CF_ACCOUNT_ID || !env.CF_BROWSER_TOKEN) {
+    res = await env.BROWSER.quickAction(action, body);
+  } else if (env.CF_ACCOUNT_ID && env.CF_BROWSER_TOKEN) {
+    res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/browser-run/${action}`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${env.CF_BROWSER_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } else {
     throw new Error("Browser Run not configured: add a BROWSER binding, or CF_ACCOUNT_ID + CF_BROWSER_TOKEN");
   }
-  const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/browser-run/json`, {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${env.CF_BROWSER_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.success) throw new Error(`Browser Run (REST) failed: ${res.status} ${JSON.stringify(data.errors || data).slice(0, 300)}`);
+  if (!res.ok || !data.success) throw new Error(`Browser Run /${action} failed: ${res.status} ${JSON.stringify(data.errors || data).slice(0, 300)}`);
   return data.result;
+}
+
+// The studio sites embed WellnessLiving in an <iframe>, and /json only reads
+// the top-level document -- the first live run (2026-09-30) found 0 events
+// for exactly this reason. So: list the page's iframes, and if one points at
+// WellnessLiving, extract from that frame's URL directly.
+async function findWellnessLivingFrame(env, pageUrl) {
+  const result = await browserRun(env, "scrape", {
+    url: pageUrl,
+    gotoOptions: { waitUntil: "networkidle0", timeout: 45000 },
+    elements: [{ selector: "iframe" }]
+  });
+  const srcs = [];
+  for (const group of Array.isArray(result) ? result : []) {
+    for (const el of group.results || []) {
+      const attrs = el.attributes || [];
+      const src = (attrs.find((a) => a.name === "src") || {}).value;
+      if (src) srcs.push(src);
+    }
+  }
+  const wl = srcs.find((u) => /wellnessliving\.com/i.test(u));
+  return { frameUrl: wl ? new URL(wl, pageUrl).toString() : null, srcs };
 }
 
 function wlAgeRange(text) {
@@ -2037,13 +2063,22 @@ function wlFmtTime(hhmm) {
 async function runWellnessLivingStudio(env, key) {
   const cfg = WELLNESSLIVING_STUDIOS[key];
   if (!env) throw new Error("env required for Browser Run");
-  const result = await browserRunJson(env, {
-    url: cfg.url,
-    gotoOptions: { waitUntil: "networkidle2", timeout: 45000 },
-    prompt: "List every upcoming class series, workshop, or event shown in the schedule/booking widget on this page. Use only dates and times actually shown on the page; do not guess. Times are US Mountain Time.",
+  const { frameUrl, srcs } = await findWellnessLivingFrame(env, cfg.url);
+  const target = cfg.frameUrl || frameUrl || cfg.url;
+  const result = await browserRun(env, "json", {
+    url: target,
+    gotoOptions: { waitUntil: "networkidle0", timeout: 60000 },
+    prompt: "List every upcoming class series, workshop, or event shown in the schedule/booking list on this page. Use only dates and times actually shown on the page; do not guess. Times are US Mountain Time.",
     response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA }
   });
   const items = (result && Array.isArray(result.events)) ? result.events : [];
+  // Zero events from a studio that always has a schedule means the browser
+  // didn't see the widget -- fail loudly (shows as an error on the admin
+  // page, and verification skips this source) instead of returning [] and
+  // letting every linked class look cancelled.
+  if (items.length === 0) {
+    throw new Error(`Browser saw no events at ${target} (iframes on page: ${srcs.length ? srcs.join(", ").slice(0, 200) : "none"})`);
+  }
   const today = toMountainDateStr(new Date());
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/, TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const out = [];
@@ -2089,6 +2124,7 @@ async function runWellnessLivingStudio(env, key) {
   return out;
 }
 SOURCE_RUNNERS.louisville_community_yoga = async (env) => runWellnessLivingStudio(env, "louisville_community_yoga");
+SOURCE_RUNNERS.raising_parents = async (env) => runWellnessLivingStudio(env, "raising_parents");
 
 
 const CORS_HEADERS = {
@@ -3952,6 +3988,19 @@ async function queueChangeCandidate(env, ev) {
   ).run();
 }
 
+// Titles drift between what's typed by hand and what a source shows
+// ("Baby + Me Yoga" vs "Baby + Me Yoga Series", "Pop-Up" vs "Pop Up"), so
+// verification compares a normalized form, and accepts one containing the
+// other, instead of requiring an exact string match.
+function normEventTitle(t) {
+  return String(t || "").toLowerCase().replace(/\b(series|class|session)\b/g, " ").replace(/[^a-z0-9]+/g, " ").trim();
+}
+function sameEventTitle(a, b) {
+  const x = normEventTitle(a), y = normEventTitle(b);
+  if (!x || !y) return false;
+  return x === y || x.includes(y) || y.includes(x);
+}
+
 async function runSourceVerification(env, cadence = null, sourceKey = null) {
   // cadence filter added alongside the weekly-a/b/c split above: without
   // this, verification would re-run the full fetch pattern for EVERY
@@ -3996,9 +4045,17 @@ async function runSourceVerification(env, cadence = null, sourceKey = null) {
       continue;
     }
 
+    // An empty result while this source has live linked events almost
+    // always means the scrape failed (page changed, widget didn't load),
+    // not that every single class was cancelled at once. Don't flag.
+    if (!freshCandidates || freshCandidates.length === 0) {
+      errors.push({ source: source.source_key, error: "returned 0 events; skipped cancellation check" });
+      continue;
+    }
+
     for (const existing of linkedEvents) {
       const match = freshCandidates.find((c) =>
-        c.title === existing.title &&
+        sameEventTitle(c.title, existing.title) &&
         (existing.recurrence === "dated" ? c.event_date === existing.event_date : c.day_of_week === existing.day_of_week)
       );
 
