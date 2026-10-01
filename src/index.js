@@ -3106,19 +3106,35 @@ async function handleRecommendedExperiment(env) {
   ).all();
   const pick = (arm) => results.find((r) => r.arm === arm) || { sessions: 0, engaged: 0, expanded_sessions: 0, clickthrough_sessions: 0, detail_views: 0, source_clicks: 0, exposed: 0, rec_clicks: 0 };
   const c = pick("control"), t = pick("treatment");
+  // Thumbs up/down on the recommended strip, attributed to an arm through the
+  // experiment session id the client now sends with each vote. Votes from
+  // before that fix (or from someone outside the experiment, e.g. via
+  // ?ff_recommended=1) have no matching session and are reported separately.
+  const { results: voteRows } = await env.DB.prepare(
+    `SELECT COALESCE(es.arm, 'unattributed') AS arm, f.vote, COUNT(*) AS n
+     FROM recommended_feedback f LEFT JOIN experiment_sessions es ON es.session_id = f.session_id
+     GROUP BY COALESCE(es.arm, 'unattributed'), f.vote`
+  ).all();
+  const votes = (arm, vote) => (voteRows || []).find((r) => r.arm === arm && r.vote === vote)?.n || 0;
   const metric = (key) => {
     const r = twoProportionZTest(c[key] || 0, c.sessions || 0, t[key] || 0, t.sessions || 0);
     const need = sampleSizeForPower(r.p1, r.p2, 0.8);
     return { control: r.p1, treatment: r.p2, liftPct: r.p1 ? Math.round(((r.p2 - r.p1) / r.p1) * 1000) / 10 : null, pValue: r.pValue, significant: r.pValue !== null && r.pValue < EXPERIMENT_ALPHA, sessionsNeededPerArm: need };
   };
   const perSession = (x) => (x.sessions ? Math.round(((x.detail_views || 0) / x.sessions) * 100) / 100 : null);
-  const armOut = (x) => ({ sessions: x.sessions || 0, engaged: x.engaged || 0, expanded: x.expanded_sessions || 0, clickedThrough: x.clickthrough_sessions || 0, detailViews: x.detail_views || 0, sourceClicks: x.source_clicks || 0, exposed: x.exposed || 0, recClicks: x.rec_clicks || 0, expandsPerSession: perSession(x) });
+  const armOut = (x, arm) => ({ sessions: x.sessions || 0, engaged: x.engaged || 0, expanded: x.expanded_sessions || 0, clickedThrough: x.clickthrough_sessions || 0, detailViews: x.detail_views || 0, sourceClicks: x.source_clicks || 0, exposed: x.exposed || 0, recClicks: x.rec_clicks || 0, expandsPerSession: perSession(x), votesUp: votes(arm, "up"), votesDown: votes(arm, "down") });
   const started = [c.started_at, t.started_at].filter(Boolean).sort()[0] || null;
   return json({
     startedAt: started,
-    control: armOut(c),
-    treatment: armOut(t),
+    control: armOut(c, "control"),
+    treatment: armOut(t, "treatment"),
     metrics: { engaged: metric("engaged"), expanded: metric("expanded_sessions"), clickedThrough: metric("clickthrough_sessions") },
+    unattributedVotes: { up: votes("unattributed", "up"), down: votes("unattributed", "down") },
+    // Which numbers are site-wide vs strip-only, so the admin can say so.
+    scope: {
+      siteWide: ["sessions", "engaged", "expanded", "clickedThrough", "detailViews", "sourceClicks", "expandsPerSession"],
+      recommendedWidgetOnly: ["exposed", "recClicks", "votesUp", "votesDown", "unattributedVotes"]
+    },
     generatedAt: new Date().toISOString()
   });
 }

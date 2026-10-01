@@ -443,7 +443,7 @@
     <div class="cols">
   <div class="card">
     <h2>🧪 Recommended for you — A/B test</h2>
-    <p>Half of browsers get the ✨ Recommended strip (treatment), half never see it (control). A visitor keeps their group on later visits; each visit counts as one session. Treatment visitors only actually see the strip once they've clicked 3+ events, so "saw strip" shows how many were really exposed.</p>
+    <p>Half of browsers get the ✨ Recommended strip (treatment), half never see it (control). A visitor keeps their group on later visits; each visit counts as one session. Treatment visitors only actually see the strip once they've clicked 3+ events, so "saw strip" shows how many were really exposed. The significance-tested rows count clicks on <strong>any</strong> event card across the whole site, not just the strip — that's the real question (does the strip change overall behavior). Strip-only clicks and 👍/👎 votes are listed separately.</p>
     <button class="secondary" onclick="loadRecExperiment()">Load A/B results</button>
     <div id="recExpOutput" style="margin-top:12px;"></div>
   </div>
@@ -1056,17 +1056,23 @@ async function loadRecExperiment(){
     const row = (name, key) => `<tr><td>${name}<div>${lift(m[key])}</div></td><td>${pct(m[key].control)}</td><td>${pct(m[key].treatment)}</td></tr>`;
     const need = m.clickedThrough.sessionsNeededPerArm;
     const smaller = Math.min(c.sessions, t.sessions);
+    const helpful = (up, down) => (up + down) ? `${Math.round(100 * up / (up + down))}% helpful` : 'no votes yet';
+    const uv = d.unattributedVotes || {up:0, down:0};
     out.innerHTML = `
       <table class="ab-table">
         <tr><th></th><th>Control</th><th>Treatment</th></tr>
         <tr><td>Sessions</td><td>${c.sessions}</td><td>${t.sessions}</td></tr>
+        <tr><th colspan="3" style="text-align:left;padding-top:12px;">Whole site · any event card, anywhere on the page</th></tr>
         ${row('Clicked through to a source', 'clickedThrough')}
         ${row('Expanded an event', 'expanded')}
-        ${row('Engaged (any click)', 'engaged')}
+        ${row('Engaged (any click: expand, source, calendar, share, support)', 'engaged')}
         <tr><td>Expands per session</td><td>${c.expandsPerSession ?? '—'}</td><td>${t.expandsPerSession ?? '—'}</td></tr>
+        <tr><th colspan="3" style="text-align:left;padding-top:12px;">Recommended widget only · treatment sees it, control never does</th></tr>
         <tr><td>Saw the strip</td><td>—</td><td>${t.exposed} (${t.sessions ? Math.round(100 * t.exposed / t.sessions) : 0}%)</td></tr>
-        <tr><td>Clicks from the strip</td><td>—</td><td>${t.recClicks}</td></tr>
+        <tr><td>Clicks on recommended cards</td><td>—</td><td>${t.recClicks}</td></tr>
+        <tr><td>👍 / 👎 on the strip<div><span class="ab-sig" style="color:#7A6650;">${helpful(t.votesUp||0, t.votesDown||0)}</span></div></td><td>—</td><td>${t.votesUp||0} / ${t.votesDown||0}</td></tr>
       </table>
+      ${(uv.up + uv.down) ? `<p style="font-size:11px;color:#7A6650;margin:8px 0 0;">Plus ${uv.up} 👍 / ${uv.down} 👎 not tied to a session (cast before votes were linked to the experiment, or from outside it).</p>` : ''}
       <p style="font-size:11px;color:#7A6650;margin:8px 0 0;">
         ${need ? `At the click-through gap so far, a reliable read needs ~${need.toLocaleString()} sessions per group (smaller group has ${smaller.toLocaleString()}, ${Math.min(100, Math.round(100 * smaller / need))}%).` : 'Not enough difference yet to estimate how many sessions are needed.'}
         ${d.startedAt ? ` Running since ${new Date(d.startedAt.replace(' ', 'T') + 'Z').toLocaleDateString()}.` : ''}
