@@ -72,9 +72,13 @@ when a rule here turns out wrong, fix it in the same PR.
 ## Product notes
 - Coverage area: Boulder County towns plus Broomfield, Westminster, Arvada, Thornton
   and Mead. City filter is built from the data.
-- Admin: `public/admin.html` (unlisted). It shows the pending queue, coverage
-  alerts, manual-source gaps, the source and city freshness panel, and the
-  recommended A/B test.
+- Admin: `public/admin.html` (unlisted). Left-rail views (bottom tabs on phones):
+  Today, Review, Pipeline, Growth, Experiments, Content, Digest. Today is built
+  from existing endpoints; its Coverage runway ranks sources using the `priority`
+  and `ease` fields `/api/source-freshness` adds (`enrichSourcesForTriage`).
+  Keep every card's element ids when moving things: the loaders write into them.
+- Weekly stats are week-to-date (the visitor-hash salt rotates Monday midnight MT),
+  so `/api/stats` compares against the same elapsed time last week, not the full week.
 - Recommended-section A/B test: 50/50 random split. Read at **80% confidence**
   (p < 0.20) with 80% power. These are directional reads.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.

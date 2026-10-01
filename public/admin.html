@@ -166,102 +166,216 @@
   .ab-sig{font-size:10.5px;font-weight:600;}
   .card-collapse-toggle .chev{transition:transform .2s ease;color:#7A6650;font-size:13px;}
   .card.open .card-collapse-toggle .chev{transform:rotate(180deg);}
+
+  /* ══ 2026-10 redesign: nav shell, Today command center, mobile-first ══
+     Everything above still styles the cards the loaders render; this block
+     re-skins them and adds the shell. Desktop: left rail. Phone: bottom tabs. */
+  :root{--ink:#1D2422;--mute:#5E655F;--line:#E1DED6;--soft:#EEECE6;--ground:#F3F2EE;--panel:#FFFFFF;
+    --brand:#245E7A;--brand-ink:#163F53;--alert:#A3401F;--alert-bg:#FBF1EC;--warn:#7A4E10;--ok:#2D7A4F;}
+  body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--ground);color:var(--ink);
+    max-width:none;margin:0;padding:0;}
+  a{color:var(--brand);}
+  .app{display:flex;min-height:100vh;}
+  .rail{width:220px;flex-shrink:0;background:#1D2422;padding:18px 12px;display:flex;flex-direction:column;gap:2px;
+    position:sticky;top:0;height:100vh;}
+  .brand{display:flex;align-items:center;gap:8px;padding:4px 10px 18px;color:#fff;font-weight:700;font-size:16px;}
+  .brand small{color:#8A938E;font-weight:500;font-size:12px;}
+  .brand svg{width:22px;height:22px;fill:none;stroke:#8FC1D6;stroke-width:2;stroke-linejoin:round;}
+  .nav-link{display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;color:#C9CFCB;text-decoration:none;
+    font-size:14px;font-weight:500;min-height:40px;}
+  .nav-link svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
+  .nav-link span{flex:1;}
+  .nav-link.active{background:#2E3936;color:#fff;}
+  .nav-badge{font:600 11px ui-monospace,monospace;background:#C2562E;color:#fff;border-radius:99px;padding:1px 7px;}
+  .nav-badge:empty{display:none;}
+  .rail-foot{margin-top:auto;color:#8A938E;font-size:11.5px;line-height:1.5;padding:10px;}
+  .main{flex:1;min-width:0;padding:26px clamp(16px,3vw,40px) 60px;max-width:1240px;}
+  .view{display:none;}
+  .view.active{display:block;}
+  .view-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:18px;}
+  .view-head h1{font-family:inherit;font-size:26px;line-height:1.25;margin:4px 0 0;letter-spacing:-.01em;}
+  .eyebrow{font-size:11.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);}
+  .head-actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:16px;align-items:start;}
+  .cols > .card{margin-bottom:0;}
+  .review-cols > .card:first-child{grid-column:1/-1;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px;}
+  .card h2{font-size:16px;margin-bottom:6px;}
+  .card p{color:var(--mute);}
+  .card-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:6px 12px;margin-bottom:8px;}
+  .card-head h2{margin:0;}
+  .card-foot{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  .fine{font-size:12px;color:var(--mute);}
+  #kpiNote{margin:-6px 0 16px;}
+  button{background:var(--brand);border-radius:8px;min-height:40px;}
+  button.secondary{background:#E6EEF2;color:var(--brand-ink);}
+  button.btn-sm{min-height:36px;padding:7px 14px;font-size:13px;}
+  button.ghost{background:#fff;color:var(--ink);border:1px solid #CFCBC1;}
+  button.danger{background:#fff;color:var(--alert);border:1px solid #E3B8A6;}
+  .stat-num,.sum-num{color:var(--brand);}
+  .summary-strip{background:#1D2422;}
+  .summary-strip .sum-num{color:#8FC1D6;}
+  .danger-zone{margin-top:0;padding-top:0;border-top:0;}
+  .danger-zone .section-label{margin-top:8px;}
+  /* KPIs */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(45%,200px),1fr));gap:12px;margin-bottom:16px;}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .kpi-num{font:600 30px ui-monospace,'SF Mono',monospace;margin-top:6px;letter-spacing:-.02em;}
+  .kpi-delta{font:600 12.5px ui-monospace,monospace;}
+  .kpi-delta.up{color:var(--ok);} .kpi-delta.down{color:var(--alert);} .kpi-delta.flat{color:var(--mute);}
+  .kpi-sub{font-size:12px;color:var(--mute);margin-top:4px;}
+  /* Needs you */
+  .task{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px 0;border-top:1px solid var(--soft);}
+  .task:first-child{border-top:0;}
+  .task-dot{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;}
+  .task-dot.hi{background:#F6E2D8;color:var(--alert);} .task-dot.mid{background:#DCEAF1;color:var(--brand);} .task-dot.lo{background:var(--soft);color:var(--mute);}
+  .task-title{font-weight:600;font-size:14px;}
+  .task-sub{font-size:12.5px;color:var(--mute);margin-top:2px;}
+  .task-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+  .all-clear{padding:14px;border-radius:10px;background:#E8F2EC;color:#1F5C3A;font-size:14px;}
+  /* Signals */
+  .signal{padding:12px 14px;border-radius:10px;background:#EEF4F6;margin-bottom:10px;font-size:14px;line-height:1.5;}
+  .signal .eyebrow{color:var(--brand);margin-bottom:4px;}
+  .signal.alert{background:var(--alert-bg);} .signal.alert .eyebrow{color:var(--alert);}
+  .signal.quiet{background:#F4F3EF;} .signal.quiet .eyebrow{color:var(--mute);}
+  /* Runway */
+  .ease-legend{font-size:12px;color:var(--mute);display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+  .ease{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:99px;white-space:nowrap;}
+  .ease.easy{background:#DDEFE3;color:#1F5C3A;} .ease.medium{background:#FBEBC9;color:#6E4708;} .ease.hard{background:#E9E6DF;color:#3E4541;}
+  .thin{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr));gap:12px 18px;padding:14px;border-radius:10px;background:#FBFAF7;margin:12px 0 6px;}
+  .thin .eyebrow{grid-column:1/-1;}
+  .thin-row{display:flex;justify-content:space-between;font-size:13px;}
+  .cbar{display:flex;height:9px;border-radius:5px;overflow:hidden;background:var(--soft);margin-top:4px;}
+  .cbar .d{background:var(--brand);} .cbar .r{background:#7FA9BD;}
+  .rw{display:grid;grid-template-columns:24px minmax(160px,1.2fr) minmax(200px,1.5fr) minmax(150px,1fr) auto;gap:14px;align-items:center;padding:14px 0;border-top:1px solid var(--soft);}
+  .rw.head{border-top:0;padding-bottom:2px;}
+  .rw-rank{font:600 13px ui-monospace,monospace;color:var(--mute);}
+  .rw-name{font-weight:600;font-size:14px;}
+  .rw-status{font:600 11px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.03em;}
+  .rw-status.error{color:var(--alert);} .rw-status.stale,.rw-status.aging{color:var(--warn);} .rw-status.empty{color:var(--mute);}
+  .rw-why{font-size:12px;color:var(--mute);margin-top:4px;line-height:1.45;}
+  .track{position:relative;height:10px;border-radius:5px;
+    background:repeating-linear-gradient(90deg,var(--soft) 0,var(--soft) calc(12.5% - 2px),#fff calc(12.5% - 2px),#fff 12.5%);}
+  .track i{position:absolute;left:0;top:0;bottom:0;border-radius:5px;background:var(--brand);}
+  .track i.short{background:#C2562E;}
+  .wk{display:flex;justify-content:space-between;font:500 11px ui-monospace,monospace;color:var(--mute);margin-top:4px;}
+  .rw-acts{display:flex;gap:6px;flex-wrap:wrap;}
+  /* ── Phone: bottom tab bar, single column, 44px targets ── */
+  @media (max-width:900px){
+    .app{display:block;}
+    .rail{position:fixed;left:0;right:0;bottom:0;top:auto;width:auto;height:auto;z-index:20;flex-direction:row;gap:0;
+      padding:6px 4px calc(6px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--line);overflow-x:auto;}
+    .brand,.rail-foot{display:none;}
+    .nav-link{flex:1 0 auto;flex-direction:column;gap:2px;padding:6px 8px;min-width:58px;min-height:48px;font-size:11px;
+      font-weight:600;color:var(--mute);position:relative;justify-content:center;}
+    .nav-link.active{background:none;color:var(--brand);}
+    .nav-link svg{width:22px;height:22px;}
+    .nav-link span{flex:none;}
+    .nav-badge{position:absolute;top:2px;right:6px;font-size:10px;padding:0 5px;}
+    .main{padding:18px 14px 96px;}
+    .view-head h1{font-size:21px;}
+    .head-actions{width:100%;}
+    .head-actions button{flex:1;}
+    button,button.btn-sm{min-height:44px;}
+    .task{grid-template-columns:30px minmax(0,1fr);}
+    .task-acts{grid-column:2;justify-content:flex-start;}
+    .task-acts button{flex:1;}
+    .rw{grid-template-columns:24px minmax(0,1fr);gap:8px 10px;padding:16px 0;}
+    .rw > *:nth-child(n+3){grid-column:2;}
+    .rw.head{display:none;}
+    .rw-acts button{flex:1;}
+    .card{padding:16px;}
+  }
 </style>
 </head>
 <body>
+<div class="app">
+  <nav class="rail" aria-label="Admin sections">
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20l6-12 4 7 3-4 5 9z"/></svg><span>Playroute</span><small>admin</small></div>
+    <a href="#today" class="nav-link" data-view="today"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v9H4z"/></svg><span>Today</span></a>
+    <a href="#review" class="nav-link" data-view="review"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg><span>Review</span><b class="nav-badge" id="navBadgeReview"></b></a>
+    <a href="#pipeline" class="nav-link" data-view="pipeline"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M4 17h6M18 7h2M14 17h6"/><circle cx="16" cy="7" r="2"/><circle cx="12" cy="17" r="2"/></svg><span>Pipeline</span><b class="nav-badge" id="navBadgePipeline"></b></a>
+    <a href="#growth" class="nav-link" data-view="growth"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18l5-6 4 3 7-9"/></svg><span>Growth</span></a>
+    <a href="#experiments" class="nav-link" data-view="experiments"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 002 3h10a2 2 0 002-3l-5-9V3"/></svg><span>Tests</span></a>
+    <a href="#content" class="nav-link" data-view="content"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 17l-5-5-8 7"/></svg><span>Content</span></a>
+    <a href="#newsletter" class="nav-link" data-view="newsletter"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg><span>Digest</span></a>
+    <div class="rail-foot">Unlisted page, no password.<br>Don't share this URL.</div>
+  </nav>
 
-  <h1>Playroute Admin</h1>
-  <div class="subtitle">Private control panel — not linked from the app</div>
+  <main class="main">
+  <section class="view active" id="view-today" data-view="today">
+    <header class="view-head">
+      <div><p class="eyebrow" id="todayDate">Today</p><h1 id="todayHeadline">Loading today…</h1></div>
+      <div class="head-actions">
+        <button class="btn-sm ghost" onclick="loadToday()">Refresh</button>
+        <button class="btn-sm" onclick="showView('pipeline');runAllSourcesAndRefresh()">Run all sources</button>
+      </div>
+    </header>
+    <div class="kpis" id="todayKpis"></div>
+    <p class="fine" id="kpiNote">Internal hash-based counts. Google Analytics is the source of truth for DAU/MAU.</p>
+    <div class="cols">
+      <div class="card"><div class="card-head"><h2>Needs you</h2><span class="fine">Ranked by what families would see wrong</span></div><div id="needsYou"><div class="pending-empty">Loading…</div></div></div>
+      <div class="card"><div class="card-head"><h2>Signals</h2><span class="fine">Written from this week's data</span></div><div id="signals"><div class="pending-empty">Loading…</div></div></div>
+    </div>
+    <div class="card" id="runwayCard">
+      <div class="card-head"><h2>Coverage runway</h2><span class="ease-legend">Ease to automate: <span class="ease easy">Easy</span><span class="ease medium">Medium</span><span class="ease hard">Hard</span></span></div>
+      <p>Where upcoming events run out over the next 8 weeks, and which sources to fix first. Bars run from today to each source's last dated event.</p>
+      <div id="thinCities"></div>
+      <div id="runwayList"><div class="pending-empty">Loading…</div></div>
+      <div class="card-foot"><button class="btn-sm ghost" onclick="toggleRunwayAll(this)">Show all needing attention</button><button class="btn-sm ghost" onclick="showView('pipeline')">All sources</button></div>
+    </div>
+  </section>
 
-  <div class="warn">⚠️ This page has no password. Don't share this URL. Bookmark it to your home screen for quick access.</div>
-
-  <div class="summary-strip" id="summaryStrip">
-    <div class="sum-item"><span>Loading summary…</span></div>
-  </div>
-
-  <div class="coverage-alerts" id="coverageAlerts"></div>
-
-  <div class="coverage-alerts" id="manualSourceGaps"></div>
-
-  <details class="fresh-panel" id="freshPanel"><summary>🩺 Source &amp; city freshness</summary><div id="freshBody">Loading…</div></details>
-
-  <div class="section-label">Analytics</div>
-
+  <section class="view" id="view-review" data-view="review">
+    <header class="view-head"><div><p class="eyebrow">Approve, reject, and teach the pipeline</p><h1>Review queue</h1></div></header>
+    <div class="cols review-cols">
   <div class="card">
-    <h2>📊 Live stats</h2>
-    <p>Pulls straight from /api/stats — active users, clicks, newsletter visits.</p>
-    <button onclick="loadStats()">Refresh stats</button>
-    <div id="statsOutput"></div>
+    <h2>📋 Pending events</h2>
+    <p>Everything currently sitting in the review queue — approve or reject right here instead of waiting for the email. ⛔ marks items missing required info (blocked from approval until fixed); ⚠️ marks judgment calls that are still approvable.</p>
+    <button class="secondary" onclick="loadPendingEvents()">Refresh list</button>
+    <div id="pendingListOutput" style="margin-top:12px;"></div>
   </div>
-
-  <div class="card">
-    <h2>🔥 Trending &amp; popular events</h2>
-    <p>Scored weekly (Sundays) from what people actually click, add to calendar, and share — see the digest job spec for the exact thresholds. 🔥 trending = running well above that event's own usual pace; ⭐ popular = simply the highest raw volume this week, regardless of trend.</p>
-    <button onclick="loadEngagement()">Load trending &amp; popular</button>
-    <div id="engagementOutput" style="margin-top:12px;"></div>
+  <div class="card collapsible open" id="dupCheckCard">
+    <div class="card-collapse-toggle" onclick="toggleCardCollapse('dupCheckCard')">
+      <h2>🔎 Check pending against what's already live</h2>
+      <span class="chev">▾</span>
+    </div>
+    <div class="card-body">
+      <p>Cross-checks every item in the review queue against your real calendar (same title/city/day-or-date/location). Exact matches get a one-tap bulk-reject; same-slot-different-time gets flagged for you to look at rather than auto-resolved either direction.</p>
+      <button class="secondary" onclick="checkPendingDuplicates()">Run check</button>
+      <div id="dupCheckOutput" style="margin-top:12px;"></div>
+    </div>
   </div>
-
-  <div class="card">
-    <h2>🎯 Referrals driven</h2>
-    <p>How many outbound source-clicks you're actually sending to trending &amp; popular events, and whether that number is growing week over week. Pulled from the same weekly scoring as the card above, so the events shown always match what's currently badged 🔥 or ⭐.</p>
-    <button onclick="loadReferralsTrend()">Load referrals trend</button>
-    <div id="referralsTrendOutput" style="margin-top:12px;"></div>
-  </div>
-
-  <div class="card">
-    <h2>🔎 Search insights</h2>
-    <p>What people actually type into the search box, last 30 days. Zero-result searches are the useful signal — someone looked for something specific and Playroute had nothing to show them, a direct pointer to what to add next.</p>
-    <button onclick="loadSearchInsights()">Load search insights</button>
-    <div id="searchInsightsOutput" style="margin-top:12px;"></div>
-  </div>
-
-  <div class="card">
-    <h2>📈 Weekly active users trend</h2>
-    <p>A real trend over time, not just this-week-vs-last-week — so you can actually tell if you're growing or shrinking.</p>
-    <button class="secondary" onclick="loadWauTrend()">Load trend (last 12 weeks)</button>
-    <div id="wauTrendOutput" style="margin-top:12px;"></div>
-  </div>
-
-  <div class="card">
-    <h2>🧪 Recommended for you — A/B test</h2>
-    <p>Half of browsers get the ✨ Recommended strip (treatment), half never see it (control). A visitor keeps their group on later visits; each visit counts as one session. Treatment visitors only actually see the strip once they've clicked 3+ events, so "saw strip" shows how many were really exposed.</p>
-    <button class="secondary" onclick="loadRecExperiment()">Load A/B results</button>
-    <div id="recExpOutput" style="margin-top:12px;"></div>
-  </div>
-
-  <div class="section-label">Newsletter</div>
-
-  <div class="card">
-    <h2>✉️ Send test digest</h2>
-    <p>Sends this week's real digest content to one address only. Doesn't touch your subscriber list.</p>
-    <input type="email" id="testEmail" placeholder="you@example.com" value="hndunn9@gmail.com">
-    <button onclick="sendTestDigest()">Send test digest</button>
-    <div class="result" id="digestResult"></div>
-  </div>
-
-  <div class="section-label">Content pipeline</div>
-
-  <div class="card">
-    <h2>🗂️ Sources</h2>
-    <p>Every source, split by what's automated vs. what still needs your eyes. Automated sources show their cadence, confidence, and last run result — use <strong>Run</strong> on any row to test that one source on its own.</p>
-    <button class="secondary" onclick="loadSources()">Load sources</button>
-    <div id="sourcesListOutput" style="margin-top:12px;"></div>
-  </div>
-
   <div class="card">
     <h2>🧭 Review feedback</h2>
     <p>What your approve/reject decisions say about each scraper. High "scraper problems" (wrong details, broken links, duplicates) means that scraper's code needs fixing. Programs you've told it to skip, or rejected twice as not for kids / not relevant, stop being queued automatically.</p>
     <button class="secondary" onclick="loadReviewFeedback()">Load review feedback</button>
     <div id="reviewFeedbackOutput" style="margin-top:12px;"></div>
   </div>
+    </div>
+  </section>
 
+  <section class="view" id="view-pipeline" data-view="pipeline">
+    <header class="view-head"><div><p class="eyebrow">Sources, runs, coverage</p><h1>Pipeline</h1></div></header>
+    <div class="summary-strip" id="summaryStrip">
+      <div class="sum-item"><span>Loading summary…</span></div>
+    </div>
+    <div class="coverage-alerts" id="coverageAlerts"></div>
+    <div class="coverage-alerts" id="manualSourceGaps"></div>
+    <details class="fresh-panel" id="freshPanel"><summary>Source &amp; city freshness</summary><div id="freshBody">Loading…</div></details>
+    <div class="cols">
+  <div class="card">
+    <h2>🗂️ Sources</h2>
+    <p>Every source, split by what's automated vs. what still needs your eyes. Automated sources show their cadence, confidence, and last run result — use <strong>Run</strong> on any row to test that one source on its own.</p>
+    <button class="secondary" onclick="loadSources()">Load sources</button>
+    <div id="sourcesListOutput" style="margin-top:12px;"></div>
+  </div>
   <div class="card">
     <h2>🔄 Run all sources → review queue</h2>
     <p>Runs every automated source (daily, weekly, and monthly), each in its own separate run so one busy source can't starve the rest. Everything flows into the review queue below — nothing publishes automatically. Takes a minute or two.</p>
     <button class="secondary" onclick="runAllSourcesAndRefresh()">Run all sources now</button>
     <div class="result" id="sourcesResult"></div>
   </div>
-
   <div class="card">
     <h2>🔍 LLM event discovery (new, untested)</h2>
     <p>Uses Claude with live web search to find family activity providers NOT already in Playroute, one city at a time. Different from the scrapers above -- this is genuine discovery, not re-scraping a known page. Still funnels into the same review queue below (source shows as "LLM Discovery"). <strong>First runs should be treated as a trial</strong> -- check the actual pending items by hand before trusting this on autopilot.</p>
@@ -285,28 +399,60 @@
       <div class="result" id="discoveryStatusResult"></div>
     </div>
   </div>
+    </div>
+  </section>
 
+  <section class="view" id="view-growth" data-view="growth">
+    <header class="view-head"><div><p class="eyebrow">Audience and engagement</p><h1>Growth</h1></div></header>
+    <div class="cols">
   <div class="card">
-    <h2>📋 Pending events</h2>
-    <p>Everything currently sitting in the review queue — approve or reject right here instead of waiting for the email. ⛔ marks items missing required info (blocked from approval until fixed); ⚠️ marks judgment calls that are still approvable.</p>
-    <button class="secondary" onclick="loadPendingEvents()">Refresh list</button>
-    <div id="pendingListOutput" style="margin-top:12px;"></div>
+    <h2>📊 Live stats</h2>
+    <p>Pulls straight from /api/stats — active users, clicks, newsletter visits.</p>
+    <button onclick="loadStats()">Refresh stats</button>
+    <div id="statsOutput"></div>
   </div>
-
-  <div class="card collapsible" id="dupCheckCard">
-    <div class="card-collapse-toggle" onclick="toggleCardCollapse('dupCheckCard')">
-      <h2>🔎 Check pending against what's already live</h2>
-      <span class="chev">▾</span>
-    </div>
-    <div class="card-body">
-      <p>Cross-checks every item in the review queue against your real calendar (same title/city/day-or-date/location). Exact matches get a one-tap bulk-reject; same-slot-different-time gets flagged for you to look at rather than auto-resolved either direction.</p>
-      <button class="secondary" onclick="checkPendingDuplicates()">Run check</button>
-      <div id="dupCheckOutput" style="margin-top:12px;"></div>
-    </div>
+  <div class="card">
+    <h2>📈 Weekly active users trend</h2>
+    <p>A real trend over time, not just this-week-vs-last-week — so you can actually tell if you're growing or shrinking.</p>
+    <button class="secondary" onclick="loadWauTrend()">Load trend (last 12 weeks)</button>
+    <div id="wauTrendOutput" style="margin-top:12px;"></div>
   </div>
+  <div class="card">
+    <h2>🔥 Trending &amp; popular events</h2>
+    <p>Scored weekly (Sundays) from what people actually click, add to calendar, and share — see the digest job spec for the exact thresholds. 🔥 trending = running well above that event's own usual pace; ⭐ popular = simply the highest raw volume this week, regardless of trend.</p>
+    <button onclick="loadEngagement()">Load trending &amp; popular</button>
+    <div id="engagementOutput" style="margin-top:12px;"></div>
+  </div>
+  <div class="card">
+    <h2>🎯 Referrals driven</h2>
+    <p>How many outbound source-clicks you're actually sending to trending &amp; popular events, and whether that number is growing week over week. Pulled from the same weekly scoring as the card above, so the events shown always match what's currently badged 🔥 or ⭐.</p>
+    <button onclick="loadReferralsTrend()">Load referrals trend</button>
+    <div id="referralsTrendOutput" style="margin-top:12px;"></div>
+  </div>
+  <div class="card">
+    <h2>🔎 Search insights</h2>
+    <p>What people actually type into the search box, last 30 days. Zero-result searches are the useful signal — someone looked for something specific and Playroute had nothing to show them, a direct pointer to what to add next.</p>
+    <button onclick="loadSearchInsights()">Load search insights</button>
+    <div id="searchInsightsOutput" style="margin-top:12px;"></div>
+  </div>
+    </div>
+  </section>
 
-  <div class="section-label">Media</div>
+  <section class="view" id="view-experiments" data-view="experiments">
+    <header class="view-head"><div><p class="eyebrow">A/B tests</p><h1>Experiments</h1></div></header>
+    <div class="cols">
+  <div class="card">
+    <h2>🧪 Recommended for you — A/B test</h2>
+    <p>Half of browsers get the ✨ Recommended strip (treatment), half never see it (control). A visitor keeps their group on later visits; each visit counts as one session. Treatment visitors only actually see the strip once they've clicked 3+ events, so "saw strip" shows how many were really exposed.</p>
+    <button class="secondary" onclick="loadRecExperiment()">Load A/B results</button>
+    <div id="recExpOutput" style="margin-top:12px;"></div>
+  </div>
+    </div>
+  </section>
 
+  <section class="view" id="view-content" data-view="content">
+    <header class="view-head"><div><p class="eyebrow">Photos and media</p><h1>Content</h1></div></header>
+    <div class="cols">
   <div class="card collapsible" id="photoUploadCard">
     <div class="card-collapse-toggle" onclick="toggleCardCollapse('photoUploadCard')">
       <h2>📸 Upload playground photo</h2>
@@ -320,7 +466,19 @@
       <div class="result" id="photoResult"></div>
     </div>
   </div>
+    </div>
+  </section>
 
+  <section class="view" id="view-newsletter" data-view="newsletter">
+    <header class="view-head"><div><p class="eyebrow">Newsletter</p><h1>Weekly digest</h1></div></header>
+    <div class="cols">
+  <div class="card">
+    <h2>✉️ Send test digest</h2>
+    <p>Sends this week's real digest content to one address only. Doesn't touch your subscriber list.</p>
+    <input type="email" id="testEmail" placeholder="you@example.com" value="hndunn9@gmail.com">
+    <button onclick="sendTestDigest()">Send test digest</button>
+    <div class="result" id="digestResult"></div>
+  </div>
   <div class="danger-zone">
     <div class="section-label">⚠️ Irreversible</div>
     <div class="card">
@@ -330,6 +488,11 @@
       <div class="result" id="realDigestResult"></div>
     </div>
   </div>
+    </div>
+  </section>
+
+  </main>
+</div>
 
 <script>
 async function runDiscovery(){
@@ -463,7 +626,8 @@ function sendTestDigest(){
 }
 
 function sendRealDigest(){
-  if(!confirm('This will email EVERY active subscriber right now. Are you sure?')) return;
+  const typed = prompt('This emails EVERY active subscriber right now. Type SEND to confirm.');
+  if((typed||'').trim().toUpperCase() !== 'SEND') return;
   runAction('/api/digest-now', 'realDigestResult');
 }
 
@@ -1153,6 +1317,262 @@ async function loadFreshness(){
   }catch(err){ el.textContent = "Couldn't load freshness."; }
 }
 loadFreshness();
+
+// ══ 2026-10 redesign: view routing + Today command center ══════════════════
+// Every original card and loader is unchanged; they now live in views. Views
+// load their cards the first time they're opened, so nothing needs a
+// "Load…" click (the buttons still work as refreshes).
+const VIEWS = ['today','review','pipeline','growth','experiments','content','newsletter'];
+const viewLoaded = {};
+const VIEW_LOADERS = {
+  review: () => { loadReviewFeedback(); checkPendingDuplicates(); },
+  growth: () => { loadEngagement(); loadReferralsTrend(); loadSearchInsights(); loadWauTrend(); },
+  experiments: () => loadRecExperiment()
+};
+function showView(v){
+  if(!VIEWS.includes(v)) v = 'today';
+  document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.dataset.view === v));
+  document.querySelectorAll('.nav-link').forEach(a => {
+    const on = a.dataset.view === v;
+    a.classList.toggle('active', on);
+    if(on) a.setAttribute('aria-current','page'); else a.removeAttribute('aria-current');
+  });
+  if(location.hash !== '#' + v) history.replaceState(null, '', '#' + v);
+  if(!viewLoaded[v] && VIEW_LOADERS[v]){ viewLoaded[v] = true; VIEW_LOADERS[v](); }
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll('.nav-link').forEach(a => a.addEventListener('click', e => { e.preventDefault(); showView(a.dataset.view); }));
+window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
+
+const RUNWAY_DAYS = 56;
+let runwayShowAll = false;
+let lastFresh = null;
+
+function kpiDelta(pct, label){
+  if(pct === null || pct === undefined) return `<span class="kpi-delta flat">new</span>`;
+  const cls = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+  const arrow = pct > 0 ? '▲' : pct < 0 ? '▼' : '';
+  return `<span class="kpi-delta ${cls}">${arrow} ${Math.abs(pct).toFixed(1)}%</span>${label?` <span class="fine">${label}</span>`:''}`;
+}
+function kpiTile(label, num, deltaHtml, sub){
+  return `<div class="kpi"><div class="eyebrow">${label}</div><div class="kpi-num">${num}</div>
+    <div>${deltaHtml||''}</div>${sub?`<div class="kpi-sub">${sub}</div>`:''}</div>`;
+}
+function fmtNum(n){ return (n ?? 0).toLocaleString(); }
+function dayLabel(offsetDays){
+  const d = new Date(); d.setDate(d.getDate() + offsetDays);
+  return d.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+}
+function weekdayToday(){
+  const d = new Date();
+  return d.toLocaleDateString(undefined, {weekday:'short'});
+}
+
+function renderKpis(s){
+  const el = document.getElementById('todayKpis');
+  if(!s){ el.innerHTML = '<div class="pending-empty">Stats unavailable.</div>'; return; }
+  const a = s.all_time || {};
+  el.innerHTML = [
+    kpiTile('Daily active', fmtNum(s.daily_active_users), kpiDelta(s.daily_active_users_change_pct), `vs ${fmtNum(s.daily_active_users_prev)} yesterday`),
+    kpiTile(`Weekly active · Mon–${weekdayToday()}`, fmtNum(s.weekly_active_users), kpiDelta(s.weekly_active_users_change_pct, 'pace'),
+      `vs ${fmtNum(s.weekly_active_users_prev)} at this point last week${s.weekly_active_users_prev_full?` · ${fmtNum(s.weekly_active_users_prev_full)} all last week`:''}`),
+    kpiTile('Monthly active', fmtNum(s.monthly_active_users), kpiDelta(s.monthly_active_users_change_pct), `vs ${fmtNum(s.monthly_active_users_prev)} last month`),
+    kpiTile('Subscribers', fmtNum(a.active_subscribers), '', `${fmtNum(s.newsletter_visits_7d)} newsletter visits this week`)
+  ].join('');
+}
+
+function taskRow(level, mark, title, sub, actsHtml){
+  return `<div class="task"><div class="task-dot ${level}" aria-hidden="true">${mark}</div>
+    <div><div class="task-title">${title}</div>${sub?`<div class="task-sub">${sub}</div>`:''}</div>
+    <div class="task-acts">${actsHtml||''}</div></div>`;
+}
+
+async function todayDecide(token, action, btn){
+  btn.disabled = true;
+  try{
+    const path = action === 'approve' ? '/api/approve-pending' : '/api/reject-pending';
+    const res = await fetch(`${path}?token=${encodeURIComponent(token)}`);
+    if(!res.ok) throw new Error((await res.text()) || 'Request failed');
+    loadToday(); loadPendingEvents(); loadSummaryStrip();
+  }catch(err){ btn.disabled = false; alert(err.message); }
+}
+async function todayRejectDuplicates(btn){
+  await bulkRejectDuplicates(btn);
+  loadToday();
+}
+async function runSourcesByKey(keys, btn){
+  btn.disabled = true; btn.textContent = 'Running…';
+  for(const k of keys){
+    await fetch(`/api/run-sources?source=${encodeURIComponent(k)}&email=0`, {method:'POST'}).catch(()=>{});
+  }
+  btn.textContent = 'Done';
+  loadToday(); loadSources(); loadFreshness(); loadSummaryStrip();
+}
+
+function buildTasks(pending, fresh, dups, coverage){
+  const tasks = [];
+  const items = (pending && pending.pending) || [];
+  const sources = (fresh && fresh.sources) || [];
+  for(const it of items.filter(i => i.change_type).slice(0, 3)){
+    const cancelled = it.change_type === 'cancelled';
+    tasks.push(taskRow('hi', '!', `${cancelled ? 'Possible cancellation' : 'Time changed'}: ${escapeHtml(it.title)}`,
+      escapeHtml([it.city, it.source].filter(Boolean).join(' · ')),
+      `<button class="btn-sm ${cancelled?'danger':''}" onclick="todayDecide('${it.approval_token}','approve',this)">${cancelled?'Confirm &amp; remove':'Apply change'}</button>
+       <button class="btn-sm ghost" onclick="todayDecide('${it.approval_token}','reject',this)">False alarm</button>`));
+  }
+  const failing = sources.filter(s => s.status === 'error');
+  if(failing.length){
+    const names = failing.map(s => s.platform.replace(/\s*\(.*\)$/,'')).slice(0, 4).join(', ');
+    const biggest = failing.slice().sort((a,b) => b.upcoming - a.upcoming)[0];
+    const keys = failing.map(s => s.source_key).filter(Boolean);
+    tasks.push(taskRow('hi', '!', `${failing.length} source${failing.length>1?'s':''} failing: ${escapeHtml(names)}`,
+      biggest && biggest.upcoming ? `${escapeHtml(biggest.platform)} feeds ${biggest.upcoming} upcoming events` : 'See the runway below',
+      keys.length ? `<button class="btn-sm" onclick='runSourcesByKey(${JSON.stringify(keys)}, this)'>Rerun ${keys.length>1?'all':''}</button>` : ''));
+  }
+  const exact = (dups && dups.exact_duplicates) || [];
+  if(exact.length){
+    tasks.push(taskRow('mid', '2×', `${exact.length} pending event${exact.length>1?'s':''} duplicate live ones`,
+      'Same title, city, day and start time', `<button class="btn-sm" onclick="todayRejectDuplicates(this)">Reject all ${exact.length}</button>`));
+  }
+  const total = (pending && pending.count) || items.length;
+  if(total){
+    const blocked = items.filter(i => i.severity === 'error').length;
+    tasks.push(taskRow('mid', '≡', `${total} event${total>1?'s':''} waiting for review${blocked?`, ${blocked} blocked`:''}`,
+      '', `<button class="btn-sm" onclick="showView('review')">Open queue</button>`));
+  }
+  const neverRun = sources.filter(s => s.mode === 'auto' && s.detail === 'never run');
+  if(neverRun.length){
+    const keys = neverRun.map(s => s.source_key).filter(Boolean);
+    tasks.push(taskRow('lo', '○', `${neverRun.length} automated source${neverRun.length>1?'s have':' has'} never run`,
+      escapeHtml(neverRun.map(s => s.platform.replace(/\s*\(.*\)$/,'')).slice(0,4).join(', ')),
+      keys.length ? `<button class="btn-sm ghost" onclick='runSourcesByKey(${JSON.stringify(keys)}, this)'>Run them</button>` : ''));
+  }
+  for(const a of ((coverage && coverage.alerts) || []).slice(0, 2)){
+    tasks.push(taskRow('lo', '⌖', escapeHtml(a.city), escapeHtml(a.message), ''));
+  }
+  return tasks;
+}
+
+function renderSignals(s, search, fresh){
+  const out = [];
+  const sources = (fresh && fresh.sources) || [];
+  if(sources.length){
+    const stale = sources.filter(x => x.status === 'stale' || x.status === 'aging').length;
+    const empty = sources.filter(x => x.status === 'empty').length;
+    if(stale + empty) out.push(`<div class="signal alert"><div class="eyebrow">Supply</div>${stale} of ${sources.length} sources haven't added anything in 2+ weeks and ${empty} have no upcoming events. Ranked fixes are in the runway below.</div>`);
+  }
+  if(s){
+    const cities = s.top_cities_7d || [];
+    if(cities.length){
+      const top = cities[0];
+      const covered = new Set(((fresh && fresh.cities) || []).map(c => c.city));
+      const next3 = cities.slice(1, 4);
+      const rest = next3.reduce((n, c) => n + c.n, 0);
+      let line = `${escapeHtml(top.city)} sent the most visitors this week (${top.n})`;
+      if(next3.length === 3 && top.n > rest) line += `, more than ${next3.map(c => escapeHtml(c.city)).join(', ')} combined`;
+      line += '.';
+      if(covered.size && !covered.has(top.city)) line += ' It is outside your coverage area — worth a look at demand there.';
+      out.push(`<div class="signal"><div class="eyebrow">Demand</div>${line}</div>`);
+    }
+    const types = s.link_clicks_by_type_7d || [];
+    const clicks = types.reduce((n, t) => n + t.n, 0);
+    const dev = s.by_device_7d || [];
+    const devTotal = dev.reduce((n, d) => n + d.n, 0);
+    const mobile = dev.find(d => d.device_type === 'mobile');
+    const bits = [];
+    if(types.length && clicks) bits.push(`${escapeHtml(types[0].category)} events drive ${Math.round(types[0].n / clicks * 100)}% of outbound clicks.`);
+    if(mobile && devTotal) bits.push(`${Math.round(mobile.n / devTotal * 100)}% of visitors are on mobile.`);
+    if(bits.length) out.push(`<div class="signal"><div class="eyebrow">What works</div>${bits.join(' ')}</div>`);
+  }
+  const zero = (search && search.zeroResults) || [];
+  if(zero.length){
+    out.push(`<div class="signal quiet"><div class="eyebrow">Gap</div>Top zero-result search: “${escapeHtml(zero[0].query)}” (${zero[0].n}×). <a href="#growth" onclick="event.preventDefault();showView('growth')">Search insights</a></div>`);
+  }
+  document.getElementById('signals').innerHTML = out.join('') || '<div class="pending-empty">No signals yet this week.</div>';
+}
+
+function renderThinCities(fresh){
+  const el = document.getElementById('thinCities');
+  const cities = ((fresh && fresh.cities) || []).slice().sort((a,b) => a.total - b.total).slice(0, 6);
+  if(!cities.length){ el.innerHTML = ''; return; }
+  const max = Math.max(...cities.map(c => c.total), 1);
+  el.innerHTML = `<div class="thin"><div class="eyebrow">Thinnest cities · next ${fresh.lookaheadDays||30} days · <span style="color:var(--brand)">dated</span> + <span style="color:#7FA9BD">recurring</span></div>
+    ${cities.map(c => `<div><div class="thin-row"><span>${escapeHtml(c.city)}</span><span>${c.total}</span></div>
+      <div class="cbar"><span class="d" style="width:${c.dated/max*100}%"></span><span class="r" style="width:${c.recurring/max*100}%"></span></div></div>`).join('')}</div>`;
+}
+
+function renderRunway(fresh){
+  lastFresh = fresh;
+  const el = document.getElementById('runwayList');
+  if(!fresh){ el.innerHTML = '<div class="pending-empty">Source freshness unavailable.</div>'; return; }
+  renderThinCities(fresh);
+  const ranked = ((fresh && fresh.sources) || []).filter(s => s.priority && s.priority.score > 0)
+    .sort((a,b) => b.priority.score - a.priority.score);
+  if(!ranked.length){ el.innerHTML = '<div class="all-clear">Every source is fresh with runway past the next 4 weeks.</div>'; return; }
+  const list = runwayShowAll ? ranked : ranked.slice(0, 7);
+  const ticks = [0,14,28,42,56].map((d,i) => `<span>${i ? dayLabel(d) : 'Today'}</span>`).join('');
+  el.innerHTML = `<div class="rw head"><span></span><span class="eyebrow">Source</span><div><span class="eyebrow">Runway · last dated event</span><div class="wk">${ticks}</div></div><span class="eyebrow">Ease to automate</span><span></span></div>` +
+    list.map((s, i) => {
+      const pct = s.runway_days === null ? 0 : Math.max(0, Math.min(100, s.runway_days / RUNWAY_DAYS * 100));
+      const short = s.runway_days !== null && s.runway_days <= 14;
+      const runwayText = s.runway_days === null
+        ? (s.upcoming ? 'Recurring listings only, nothing dated' : 'Nothing upcoming')
+        : `Last dated event ${dayLabel(s.runway_days)}`;
+      const ease = s.ease || {level:'hard', reasons:[]};
+      const act = s.mode === 'auto' && s.source_key
+        ? `<button class="btn-sm ghost" onclick="runOneSource('${s.source_key}', this)">Run</button>`
+        : `<button class="btn-sm ghost" onclick="showView('pipeline');document.getElementById('freshPanel').open=true">Details</button>`;
+      return `<div class="rw"><span class="rw-rank">${i+1}</span>
+        <div><div class="rw-name">${escapeHtml(s.platform)}</div>
+          <div><span class="rw-status ${s.status}">${s.mode==='auto'?'Auto':'Manual'} · ${escapeHtml(s.detail)}</span>
+          <span class="fine">· ${escapeHtml(s.city)}${s.upcoming?` · ${s.upcoming} upcoming`:''}</span></div></div>
+        <div><div class="track"><i class="${short?'short':''}" style="width:${pct}%"></i></div>
+          <div class="rw-why">${escapeHtml(s.priority.reason)}. ${runwayText}.</div></div>
+        <div><span class="ease ${ease.level}">${ease.level[0].toUpperCase()+ease.level.slice(1)}</span>
+          <div class="rw-why">${escapeHtml(ease.reasons.join('. '))}</div></div>
+        <div class="rw-acts">${act}</div></div>`;
+    }).join('') +
+    (ranked.length > 7 && !runwayShowAll ? `<p class="fine" style="margin-top:8px">${ranked.length - 7} more need attention.</p>` : '');
+}
+function toggleRunwayAll(btn){
+  runwayShowAll = !runwayShowAll;
+  btn.textContent = runwayShowAll ? 'Show top 7' : 'Show all needing attention';
+  if(lastFresh) renderRunway(lastFresh);
+}
+
+function renderHeadline(fresh, pending, taskCount){
+  const parts = [];
+  const sources = (fresh && fresh.sources) || [];
+  const soon = sources.filter(s => s.status !== 'fresh' && s.runway_days !== null && s.runway_days <= 21)
+    .sort((a,b) => a.runway_days - b.runway_days)[0];
+  if(soon) parts.push(`${soon.city} runs out of dated events ${soon.runway_days <= 0 ? 'today' : `in ${soon.runway_days} day${soon.runway_days===1?'':'s'}`}.`);
+  const failing = sources.filter(s => s.status === 'error').length;
+  if(failing) parts.push(`${failing} source${failing>1?'s':''} failing.`);
+  if(!parts.length && pending && pending.count) parts.push(`${pending.count} events to review.`);
+  document.getElementById('todayHeadline').textContent = parts.join(' ') || (taskCount ? `${taskCount} things need you.` : 'All clear. Nothing needs you.');
+}
+
+async function loadToday(){
+  document.getElementById('todayDate').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric'});
+  const get = u => fetch(u).then(r => r.ok ? r.json() : null).catch(() => null);
+  const [stats, pending, fresh, dups, search, coverage] = await Promise.all([
+    get('/api/stats'), get('/api/pending-events'), get('/api/source-freshness'),
+    get('/api/check-pending-duplicates'), get('/api/search-insights'), get('/api/coverage-alerts')
+  ]);
+  renderKpis(stats);
+  const tasks = buildTasks(pending, fresh, dups, coverage);
+  document.getElementById('needsYou').innerHTML = tasks.join('') || '<div class="all-clear">All clear. Nothing needs you right now.</div>';
+  renderSignals(stats, search, fresh);
+  renderRunway(fresh);
+  renderHeadline(fresh, pending, tasks.length);
+  const pCount = (pending && pending.count) || 0;
+  const failing = ((fresh && fresh.sources) || []).filter(s => s.status === 'error').length;
+  document.getElementById('navBadgeReview').textContent = pCount || '';
+  document.getElementById('navBadgePipeline').textContent = failing || '';
+}
+showView(location.hash.slice(1) || 'today');
+loadToday();
+setInterval(() => { if(!document.hidden && document.getElementById('view-today').classList.contains('active')) loadToday(); }, 5 * 60 * 1000);
 </script>
 </body>
 </html>
