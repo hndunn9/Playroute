@@ -2121,7 +2121,7 @@ function submitRecommendedFeedback(vote){
   if(row) row.innerHTML = `<span>Thanks for the feedback! 🙏</span>`;
   try{ localStorage.setItem(RECOMMENDED_FEEDBACK_GIVEN_KEY, "true"); }catch(e){}
   try{
-    fetch(`${API_BASE}/api/recommended-feedback`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({vote, experimentSessionId:null}),keepalive:true}).catch(()=>{});
+    fetch(`${API_BASE}/api/recommended-feedback`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({vote, experimentArm:getExpArm(), experimentSessionId:getExpSessionId()}),keepalive:true}).catch(()=>{});
   }catch(e){}
 }
 

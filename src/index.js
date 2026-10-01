@@ -2721,7 +2721,7 @@ const MANUAL_SOURCE_KEYWORDS = {
 // real signal for those.
 async function handleSourceFreshness(env) {
   const { results: src } = await env.DB.prepare(
-    `SELECT s.id, s.city, s.platform, s.mode, s.last_run_at, s.last_run_status,
+    `SELECT s.id, s.city, s.platform, s.mode, s.last_run_at, s.last_run_status, s.source_key, s.method, s.adapter_type, s.cadence,
             COUNT(e.id) AS total,
             SUM(CASE WHEN e.id IS NOT NULL AND (e.event_date IS NULL OR e.event_date >= date('now')) THEN 1 ELSE 0 END) AS upcoming,
             MAX(e.created_at) AS last_added,
@@ -2752,7 +2752,9 @@ async function handleSourceFreshness(env) {
       else if (d > 14) { status = "aging"; detail = `last added ${d}d ago`; }
       else { status = "fresh"; detail = d === 0 ? "added today" : `last added ${d}d ago`; }
     }
-    return { id: r.id, city: r.city, platform: r.platform, mode: r.mode, status, detail, upcoming: r.upcoming || 0, furthest: r.furthest };
+    return { id: r.id, city: r.city, platform: r.platform, mode: r.mode, status, detail, upcoming: r.upcoming || 0, furthest: r.furthest,
+             source_key: r.source_key, method: r.method, adapter_type: r.adapter_type, cadence: r.cadence,
+             last_run_at: r.last_run_at, last_run_status: r.last_run_status };
   });
 
   const { results: dated } = await env.DB.prepare(
@@ -2767,8 +2769,193 @@ async function handleSourceFreshness(env) {
   for (const d of dated) bump(d.city, "dated", d.n);
   for (const r of rec) bump(r.city, "recurring", estimateOccurrencesInWindow(r.day_of_week, r.recurrence, COVERAGE_LOOKAHEAD_DAYS));
   const cities = [...cityMap.values()].map((c) => ({ ...c, total: c.dated + c.recurring })).sort((a, b) => b.total - a.total);
-  return json({ sources, cities, lookaheadDays: COVERAGE_LOOKAHEAD_DAYS, generatedAt: new Date().toISOString() });
+  const runHistory = await loadSourceRunHistory(env);
+  enrichSourcesForTriage(sources, cities, runHistory);
+  return json({ sources, cities, lookaheadDays: COVERAGE_LOOKAHEAD_DAYS, runwayWindowDays: RUNWAY_WINDOW_DAYS, generatedAt: new Date().toISOString() });
 }
+
+// ── Source triage for the admin "Coverage runway" ──────────────────────────
+// Two judgments per source, both recomputed on every request from data we
+// already keep:
+//   ease     -- how hard it would be to automate (or keep automated) this
+//               source, from its platform family, whether a runner/adapter
+//               already exists, and how its recent runs went (job_runs).
+//   priority -- how urgently it needs attention: how soon its upcoming events
+//               run out, how thin its city is, and its current status.
+// Ease is shown next to priority but doesn't feed it, so a hard-but-urgent
+// source still ranks high and you can pick quick wins by eye.
+const RUNWAY_WINDOW_DAYS = 56;
+const RUN_HISTORY_DAYS = 60;
+
+// Platform families, matched against platform + method + adapter_type.
+// feed: publishes a structured feed or has a known API we can read with fetch().
+// widget: JS-rendered, needs Browser Run (1 request / 10 s on Workers Free).
+const PLATFORM_FAMILIES = [
+  { key: "libcal", re: /libcal|springshare/i, kind: "feed", label: "LibCal" },
+  { key: "communico", re: /communico|anythink/i, kind: "feed", label: "Communico" },
+  { key: "civicplus", re: /civicplus|civicengage/i, kind: "feed", label: "CivicPlus (iCal)" },
+  { key: "squarespace", re: /squarespace/i, kind: "feed", label: "Squarespace (JSON)" },
+  { key: "ical", re: /\bical\b|\.ics|icalendar|google calendar/i, kind: "feed", label: "iCal" },
+  { key: "wordpress", re: /wordpress|tribe|the events calendar/i, kind: "feed", label: "WordPress events API" },
+  { key: "eventbrite", re: /eventbrite/i, kind: "api", label: "Eventbrite" },
+  { key: "wellnessliving", re: /wellnessliving/i, kind: "widget", label: "WellnessLiving" },
+  { key: "iclasspro", re: /iclasspro/i, kind: "widget", label: "iClassPro" },
+  { key: "arketa", re: /arketa/i, kind: "widget", label: "Arketa" },
+  { key: "mindbody", re: /mindbody/i, kind: "widget", label: "Mindbody" },
+];
+
+function platformFamily(s) {
+  const text = [s.platform, s.method, s.adapter_type].filter(Boolean).join(" ");
+  return PLATFORM_FAMILIES.find((f) => f.re.test(text)) || null;
+}
+
+// Per-source ok/error counts from the last RUN_HISTORY_DAYS of source runs.
+// job_runs.details is a JSON array of { source, status, ... } but is capped at
+// 4000 chars, so fall back to a regex over truncated JSON.
+async function loadSourceRunHistory(env) {
+  const hist = new Map();
+  let rows = [];
+  try {
+    ({ results: rows } = await env.DB.prepare(
+      `SELECT details FROM job_runs WHERE ran_at >= datetime('now', ?) AND details LIKE '%"source%'`
+    ).bind(`-${RUN_HISTORY_DAYS} days`).all());
+  } catch (e) {
+    return hist; // triage still works without history
+  }
+  const bump = (key, status, error) => {
+    if (!key) return;
+    const h = hist.get(key) || { runs: 0, errors: 0, lastError: null };
+    h.runs += 1;
+    if (error || /error/i.test(String(status))) { h.errors += 1; if (error && !h.lastError) h.lastError = String(error).slice(0, 160); }
+    hist.set(key, h);
+  };
+  for (const r of rows || []) {
+    const text = String(r.details || "");
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+    if (Array.isArray(parsed)) {
+      for (const x of parsed) bump(x.source_key || x.source, x.status, x.error);
+    } else if (parsed && Array.isArray(parsed.errors)) {
+      for (const x of parsed.errors) bump(x.source_key || x.source, "error", x.error || "error");
+    } else if (!parsed) {
+      // details are capped at 4000 chars, so truncated JSON falls back to a regex
+      const re = /"source(?:_key)?":"([^"]+)"[^{}]*?"(?:status|error)":"([^"]+)"/g;
+      let m;
+      while ((m = re.exec(text))) bump(m[1], m[2], /error/i.test(m[2]) ? m[2] : null);
+    }
+  }
+  return hist;
+}
+
+function assessAutomationEase(s, ctx) {
+  const fam = platformFamily(s);
+  const reasons = [];
+  let level;
+  const hist = s.run_history;
+  const peer = fam ? ctx.healthyAutoByFamily.get(fam.key) : null;
+  const peerOther = peer && peer.id !== s.id ? peer : null;
+
+  if (s.mode === "auto") {
+    const hasRunner = !!(s.source_key && SOURCE_RUNNERS[s.source_key]);
+    if (!hasRunner) {
+      level = "medium";
+      reasons.push("No runner registered for this source yet");
+    } else if (!s.last_run_at) {
+      level = "easy";
+      reasons.push("Runner exists, it has just never run");
+    } else if (hist && hist.runs >= 3 && hist.errors / hist.runs > 0.5) {
+      level = peerOther ? "medium" : "hard";
+      reasons.push(`Breaks often: ${hist.errors} of ${hist.runs} recent runs failed`);
+      if (peerOther) reasons.push(`Same ${fam.label} adapter works for ${peerOther.city}`);
+    } else if (s.status === "error") {
+      level = "easy";
+      reasons.push(peerOther ? `Same ${fam.label} adapter works for ${peerOther.city}` : "Already automated; fix the failing run");
+      if (hist && hist.runs) reasons.push(`${hist.runs - hist.errors} of ${hist.runs} recent runs succeeded`);
+    } else {
+      level = "easy";
+      reasons.push(hist && hist.runs ? `Automated; ${hist.runs - hist.errors} of ${hist.runs} recent runs succeeded` : "Already automated");
+    }
+  } else if (!s.platform || /unknown/i.test(s.platform)) {
+    level = "hard";
+    reasons.push("Platform unknown; check the site first");
+  } else if (fam && peerOther && fam.kind !== "widget") {
+    level = "easy";
+    reasons.push(`Reuse the ${fam.label} adapter already running for ${peerOther.city}`);
+  } else if (fam && fam.kind === "feed") {
+    level = "easy";
+    reasons.push(`${fam.label} publishes a structured feed`);
+  } else if (fam && fam.kind === "api") {
+    level = "medium";
+    reasons.push(`${fam.label}: organizer-level API only`);
+  } else if (fam && fam.kind === "widget") {
+    level = "medium";
+    reasons.push(`${fam.label} is a JS widget; needs Browser Run (1 request per 10 s)`);
+    if (peerOther) reasons.push(`Browser Run already used for ${peerOther.city}`);
+  } else {
+    level = "hard";
+    reasons.push("Bespoke site; keep manual, LLM discovery, or a batched sweep");
+  }
+  if (hist && hist.lastError && /\b(403|429)\b|forbidden|blocked/i.test(hist.lastError)) {
+    if (level === "easy") level = "medium";
+    reasons.push("Site has blocked our requests (403/429) recently");
+  } else if (hist && hist.lastError && /too many subrequests/i.test(hist.lastError)) {
+    reasons.push("Hits the Worker subrequest cap; split across cadences");
+  }
+  if (s.mode !== "auto" && s.upcoming > 0 && s.upcoming <= 3 && !s.furthest) {
+    reasons.push(`Low yield: ${s.upcoming} recurring listing${s.upcoming === 1 ? "" : "s"}`);
+  }
+  return { level, family: fam ? fam.label : null, reasons };
+}
+
+function computeTriagePriority(s, cityTotal) {
+  if (s.status === "fresh" && (s.runway_days === null || s.runway_days > 28)) {
+    return { score: 0, reason: "Healthy" };
+  }
+  let score = 0;
+  const drivers = [];
+  const statusPts = { error: 30, empty: 25, stale: 20, aging: 8, fresh: 0 }[s.status] || 0;
+  score += statusPts;
+  if (s.runway_days !== null) {
+    const pts = Math.max(0, RUNWAY_WINDOW_DAYS - s.runway_days) / RUNWAY_WINDOW_DAYS * 40;
+    score += pts;
+    if (s.runway_days <= 14) drivers.push(s.runway_days <= 0 ? "Dated events end today" : `Dated events end in ${s.runway_days} days`);
+  } else if (!s.upcoming) {
+    score += 40;
+    drivers.push("No upcoming events");
+  } else {
+    score += 10; // recurring-only: still showing something, but nothing new or seasonal
+  }
+  if (cityTotal < 20) { score += 25; drivers.push(`${s.city} has only ${cityTotal} events in the next 30 days`); }
+  else if (cityTotal < 50) { score += 12; drivers.push(`${s.city} is thin (${cityTotal} in 30 days)`); }
+  if (s.status === "error" && s.upcoming) {
+    score += Math.min(s.upcoming, 200) / 200 * 15;
+    drivers.push(`Feeds ${s.upcoming} upcoming events`);
+  }
+  if (s.status === "error" && !drivers.length) drivers.push("Last run failed");
+  if (!drivers.length) drivers.push(s.detail);
+  return { score: Math.round(score), reason: drivers[0], drivers };
+}
+
+function enrichSourcesForTriage(sources, cities, runHistory) {
+  const today = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
+  const cityTotals = new Map(cities.map((c) => [c.city, c.total]));
+  const healthyAutoByFamily = new Map();
+  for (const s of sources) {
+    const fam = platformFamily(s);
+    if (fam && s.mode === "auto" && s.status === "fresh" && !healthyAutoByFamily.has(fam.key)) healthyAutoByFamily.set(fam.key, s);
+  }
+  for (const s of sources) {
+    s.runway_days = s.furthest ? Math.round((Date.parse(s.furthest + "T00:00:00Z") - today) / 86400000) : null;
+    s.run_history = (s.source_key && runHistory.get(s.source_key)) || runHistory.get(s.platform) || null;
+  }
+  for (const s of sources) {
+    s.ease = assessAutomationEase(s, { runHistory, healthyAutoByFamily });
+    // Multi-city sources don't belong to one city's thinness score.
+    const cityTotal = /multi/i.test(s.city || "") ? 999 : (cityTotals.get(s.city) ?? 0);
+    s.priority = computeTriagePriority(s, cityTotal);
+  }
+}
+
 
 async function handleManualSourceGaps(env) {
   const { results: sources } = await env.DB.prepare(
@@ -2919,19 +3106,35 @@ async function handleRecommendedExperiment(env) {
   ).all();
   const pick = (arm) => results.find((r) => r.arm === arm) || { sessions: 0, engaged: 0, expanded_sessions: 0, clickthrough_sessions: 0, detail_views: 0, source_clicks: 0, exposed: 0, rec_clicks: 0 };
   const c = pick("control"), t = pick("treatment");
+  // Thumbs up/down on the recommended strip, attributed to an arm through the
+  // experiment session id the client now sends with each vote. Votes from
+  // before that fix (or from someone outside the experiment, e.g. via
+  // ?ff_recommended=1) have no matching session and are reported separately.
+  const { results: voteRows } = await env.DB.prepare(
+    `SELECT COALESCE(es.arm, 'unattributed') AS arm, f.vote, COUNT(*) AS n
+     FROM recommended_feedback f LEFT JOIN experiment_sessions es ON es.session_id = f.session_id
+     GROUP BY COALESCE(es.arm, 'unattributed'), f.vote`
+  ).all();
+  const votes = (arm, vote) => (voteRows || []).find((r) => r.arm === arm && r.vote === vote)?.n || 0;
   const metric = (key) => {
     const r = twoProportionZTest(c[key] || 0, c.sessions || 0, t[key] || 0, t.sessions || 0);
     const need = sampleSizeForPower(r.p1, r.p2, 0.8);
     return { control: r.p1, treatment: r.p2, liftPct: r.p1 ? Math.round(((r.p2 - r.p1) / r.p1) * 1000) / 10 : null, pValue: r.pValue, significant: r.pValue !== null && r.pValue < EXPERIMENT_ALPHA, sessionsNeededPerArm: need };
   };
   const perSession = (x) => (x.sessions ? Math.round(((x.detail_views || 0) / x.sessions) * 100) / 100 : null);
-  const armOut = (x) => ({ sessions: x.sessions || 0, engaged: x.engaged || 0, expanded: x.expanded_sessions || 0, clickedThrough: x.clickthrough_sessions || 0, detailViews: x.detail_views || 0, sourceClicks: x.source_clicks || 0, exposed: x.exposed || 0, recClicks: x.rec_clicks || 0, expandsPerSession: perSession(x) });
+  const armOut = (x, arm) => ({ sessions: x.sessions || 0, engaged: x.engaged || 0, expanded: x.expanded_sessions || 0, clickedThrough: x.clickthrough_sessions || 0, detailViews: x.detail_views || 0, sourceClicks: x.source_clicks || 0, exposed: x.exposed || 0, recClicks: x.rec_clicks || 0, expandsPerSession: perSession(x), votesUp: votes(arm, "up"), votesDown: votes(arm, "down") });
   const started = [c.started_at, t.started_at].filter(Boolean).sort()[0] || null;
   return json({
     startedAt: started,
-    control: armOut(c),
-    treatment: armOut(t),
+    control: armOut(c, "control"),
+    treatment: armOut(t, "treatment"),
     metrics: { engaged: metric("engaged"), expanded: metric("expanded_sessions"), clickedThrough: metric("clickthrough_sessions") },
+    unattributedVotes: { up: votes("unattributed", "up"), down: votes("unattributed", "down") },
+    // Which numbers are site-wide vs strip-only, so the admin can say so.
+    scope: {
+      siteWide: ["sessions", "engaged", "expanded", "clickedThrough", "detailViews", "sourceClicks", "expandsPerSession"],
+      recommendedWidgetOnly: ["exposed", "recClicks", "votesUp", "votesDown", "unattributedVotes"]
+    },
     generatedAt: new Date().toISOString()
   });
 }
@@ -2944,10 +3147,18 @@ async function handleStats(env) {
   const yesterdayStart = mountainMidnightYesterdayUTC();
   const prevWeekStart = mountainMidnightPrevWeekUTC();
   const monthStart = mountainMidnightThisMonthUTC();
+  // Every "this week" metric below is week-to-date (Monday midnight MT to now),
+  // because the weekly visitor-hash salt rotates at that same boundary for
+  // privacy. Comparing Mon-Wed against a full prior week made Wednesdays look
+  // like a 60% crash, so "prev" windows now stop at the same elapsed point of
+  // last week (a like-for-like pace comparison). The full prior week is still
+  // reported as weekly_active_users_prev_full.
+  const sqliteMs = (t) => Date.parse(String(t).replace(" ", "T") + "Z");
+  const prevWeekSameTime = toSqliteUTCString(new Date(sqliteMs(prevWeekStart) + (Date.now() - sqliteMs(weekStart))));
   const prevMonthStart = mountainMidnightPrevMonthUTC();
-  // Filtering to US only — your product is Colorado-specific, but country-level
-  // geo data (from Cloudflare's edge) is reliable enough to use as the main
-  // filter; state-level data below is a bonus, finer-grained signal on top.
+  // Filtering to US only — the product is Colorado-specific and country-level
+  // geo (from Cloudflare's edge) is reliable enough as the filter. Visitor
+  // city/state breakdowns were removed from the admin on purpose.
   const US = `AND country = 'US'`;
 
   const dau = await env.DB.prepare(
@@ -2962,6 +3173,9 @@ async function handleStats(env) {
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US}`
   ).bind(weekStart).first();
   const wauPrev = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US}`
+  ).bind(prevWeekStart, prevWeekSameTime).first();
+  const wauPrevFull = await env.DB.prepare(
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US}`
   ).bind(prevWeekStart, weekStart).first();
   // MAU uses visitor_hash_month, NOT visitor_hash -- the weekly hash rotates
@@ -2979,24 +3193,9 @@ async function handleStats(env) {
   ).bind(weekStart).first();
   const totalViewsPrevWeek = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US}`
-  ).bind(prevWeekStart, weekStart).first();
+  ).bind(prevWeekStart, prevWeekSameTime).first();
   const byDevice = await env.DB.prepare(
     `SELECT device_type, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} GROUP BY device_type`
-  ).bind(weekStart).all();
-  const byCity = await env.DB.prepare(
-    `SELECT city, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND city IS NOT NULL GROUP BY city ORDER BY n DESC LIMIT 10`
-  ).bind(weekStart).all();
-
-  // Bonus, more precise signal: Cloudflare gives state-level geo for free
-  // (cf.regionCode), not just country. Since this product is Colorado-only,
-  // this tells you what fraction of "US" visits are actually in-state —
-  // useful for spotting e.g. VPN traffic or out-of-market curiosity clicks
-  // that a country-level filter alone can't catch.
-  const coloradoVisitors7d = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND region = 'CO'`
-  ).bind(weekStart).first();
-  const byRegion7d = await env.DB.prepare(
-    `SELECT region, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND region IS NOT NULL GROUP BY region ORDER BY n DESC LIMIT 10`
   ).bind(weekStart).all();
 
   // Visits that came specifically from clicking the link in a digest email
@@ -3010,7 +3209,7 @@ async function handleStats(env) {
   ).bind(weekStart).first();
   const newsletterVisits7dPrev = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM page_views WHERE viewed_at >= ? AND viewed_at < ? ${US} AND source = 'newsletter'`
-  ).bind(prevWeekStart, weekStart).first();
+  ).bind(prevWeekStart, prevWeekSameTime).first();
   const newsletterVisitors7d = await env.DB.prepare(
     `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND source = 'newsletter'`
   ).bind(weekStart).first();
@@ -3031,7 +3230,7 @@ async function handleStats(env) {
   ).bind(weekStart).first();
   const totalClicks7dPrev = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM link_clicks WHERE clicked_at >= ? AND clicked_at < ?`
-  ).bind(prevWeekStart, weekStart).first();
+  ).bind(prevWeekStart, prevWeekSameTime).first();
 
   // "Events discovered, all time" — a promotable number for the app itself.
   // Counts every real signal someone found an event useful: expanding a card
@@ -3090,9 +3289,6 @@ async function handleStats(env) {
   const uniqueVisitorsAllTime = await env.DB.prepare(
     `SELECT COUNT(DISTINCT COALESCE(visitor_hash_month, visitor_hash)) AS n FROM page_views WHERE country = 'US'`
   ).first();
-  const coloradoVisitorsAllTime = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT COALESCE(visitor_hash_month, visitor_hash)) AS n FROM page_views WHERE country = 'US' AND region = 'CO'`
-  ).first();
   const linkClicksAllTime = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM link_clicks`
   ).first();
@@ -3108,7 +3304,6 @@ async function handleStats(env) {
   ).first();
 
   const uniqueAllTimeN = uniqueVisitorsAllTime?.n || 0;
-  const coloradoAllTimeN = coloradoVisitorsAllTime?.n || 0;
 
   return json({
     monthly_active_users: mauN,
@@ -3117,6 +3312,8 @@ async function handleStats(env) {
     weekly_active_users: wauN,
     weekly_active_users_prev: wauPrevN,
     weekly_active_users_change_pct: pctChange(wauN, wauPrevN),
+    weekly_active_users_prev_full: wauPrevFull?.n || 0,
+    week_comparison: "week-to-date vs the same elapsed time last week",
     daily_active_users: dauN,
     daily_active_users_prev: dauPrevN,
     daily_active_users_change_pct: pctChange(dauN, dauPrevN),
@@ -3124,9 +3321,6 @@ async function handleStats(env) {
     page_views_7d_prev: views7dPrevN,
     page_views_7d_change_pct: pctChange(views7dN, views7dPrevN),
     by_device_7d: byDevice.results || [],
-    top_cities_7d: byCity.results || [],
-    colorado_visitors_7d: coloradoVisitors7d?.n || 0,
-    by_region_7d: byRegion7d.results || [],
     newsletter_visits_1d: newsletterVisits1d?.n || 0,
     newsletter_visits_7d: newsletter7dN,
     newsletter_visits_7d_prev: newsletter7dPrevN,
@@ -3143,8 +3337,6 @@ async function handleStats(env) {
       tracking_since: trackingSince?.d || null,
       page_views: pageViewsAllTime?.n || 0,
       unique_visitors: uniqueAllTimeN,
-      colorado_visitors: coloradoAllTimeN,
-      colorado_visitor_pct: uniqueAllTimeN > 0 ? Math.round((coloradoAllTimeN / uniqueAllTimeN) * 100) : null,
       link_clicks: linkClicksAllTime?.n || 0,
       active_subscribers: activeSubscribers?.n || 0,
       total_events: contentCounts?.events || 0,
