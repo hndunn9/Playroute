@@ -1490,11 +1490,11 @@ function renderRunway(fresh){
   const el = document.getElementById('runwayList');
   if(!fresh){ el.innerHTML = '<div class="pending-empty">Source freshness unavailable.</div>'; return; }
   renderThinCities(fresh);
-  // The API ranks every source; only those over its threshold (max 6) show by
-  // default. "Unknown" platforms come back excluded and never appear here.
+  // The API ranks every source; the top 10 show by default, the rest behind
+  // a toggle. "Unknown" platforms come back excluded and never appear here.
   const ranked = ((fresh && fresh.sources) || []).filter(s => s.priority && s.priority.score > 0 && !s.priority.excluded)
     .sort((a,b) => b.priority.score - a.priority.score);
-  const top = ranked.filter(s => s.priority.show).slice(0, 6);
+  const top = ranked.slice(0, 10);
   const lower = ranked.length - top.length;
   const btn = document.getElementById('runwayToggle');
   if(btn){ btn.style.display = lower ? '' : 'none'; btn.textContent = runwayShowAll ? 'Show top priorities only' : `Show ${lower} lower priority`; }
