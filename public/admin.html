@@ -861,15 +861,6 @@ async function loadStats(){
         <strong>Clicks by type (7d):</strong>
         ${(s.link_clicks_by_type_7d||[]).map(c=>`<div class="breakdown-row"><span>${c.category||'(none)'}</span><span>${c.n}</span></div>`).join('') || '<div class="breakdown-row">No clicks yet</div>'}
       </div>
-      <div class="breakdown">
-        <strong>Top cities (7d):</strong>
-        ${(s.top_cities_7d||[]).map(c=>`<div class="breakdown-row"><span>${c.city}</span><span>${c.n}</span></div>`).join('') || '<div class="breakdown-row">No data yet</div>'}
-      </div>
-      <div class="breakdown">
-        <strong>US visits actually from Colorado (7d):</strong>
-        <div class="breakdown-row"><span>${s.colorado_visitors_7d} of ${s.weekly_active_users} US visitors</span></div>
-        ${(s.by_region_7d||[]).map(r=>`<div class="breakdown-row"><span>${r.region}</span><span>${r.n}</span></div>`).join('') || ''}
-      </div>
       <div class="breakdown" style="margin-top:16px;padding-top:14px;border-top:1px solid #EDE2CA;">
         <strong>📈 All-time (since ${s.all_time.tracking_since ? new Date(s.all_time.tracking_since+'Z').toLocaleDateString() : 'tracking started'}) — for advertiser pitches</strong>
       </div>
@@ -878,8 +869,7 @@ async function loadStats(){
         <div class="stat-box"><div class="stat-num">${s.all_time.page_views.toLocaleString()}</div><div class="stat-label">Page views</div></div>
         <div class="stat-box"><div class="stat-num">${s.all_time.link_clicks.toLocaleString()}</div><div class="stat-label">Link clicks</div></div>
         <div class="stat-box"><div class="stat-num">${s.events_discovered_all_time.toLocaleString()}</div><div class="stat-label">Events discovered</div></div>
-        <div class="stat-box"><div class="stat-num">${s.all_time.colorado_visitor_pct !== null ? s.all_time.colorado_visitor_pct+'%' : '—'}</div><div class="stat-label">In-state (CO)</div></div>
-        <div class="stat-box"><div class="stat-num">${s.all_time.active_subscribers.toLocaleString()}</div><div class="stat-label">Newsletter subs</div></div>
+        <div class="stat-box" style="grid-column:span 2;"><div class="stat-num">${s.all_time.active_subscribers.toLocaleString()}</div><div class="stat-label">Newsletter subs</div></div>
         <div class="stat-box" style="grid-column:span 2;"><div class="stat-num">${s.all_time.cities_covered}</div><div class="stat-label">Towns covered</div></div>
         <div class="stat-box" style="grid-column:span 2;"><div class="stat-num">${s.all_time.total_events + s.all_time.total_playgrounds + s.all_time.total_hikes}</div><div class="stat-label">Total listings (${s.all_time.total_events} events, ${s.all_time.total_playgrounds} parks, ${s.all_time.total_hikes} hikes)</div></div>
       </div>
@@ -1462,18 +1452,6 @@ function renderSignals(s, search, fresh){
     if(stale + empty) out.push(`<div class="signal alert"><div class="eyebrow">Supply</div>${stale} of ${sources.length} sources haven't added anything in 2+ weeks and ${empty} have no upcoming events. Ranked fixes are in the runway below.</div>`);
   }
   if(s){
-    const cities = s.top_cities_7d || [];
-    if(cities.length){
-      const top = cities[0];
-      const covered = new Set(((fresh && fresh.cities) || []).map(c => c.city));
-      const next3 = cities.slice(1, 4);
-      const rest = next3.reduce((n, c) => n + c.n, 0);
-      let line = `${escapeHtml(top.city)} sent the most visitors this week (${top.n})`;
-      if(next3.length === 3 && top.n > rest) line += `, more than ${next3.map(c => escapeHtml(c.city)).join(', ')} combined`;
-      line += '.';
-      if(covered.size && !covered.has(top.city)) line += ' It is outside your coverage area — worth a look at demand there.';
-      out.push(`<div class="signal"><div class="eyebrow">Demand</div>${line}</div>`);
-    }
     const types = s.link_clicks_by_type_7d || [];
     const clicks = types.reduce((n, t) => n + t.n, 0);
     const dev = s.by_device_7d || [];

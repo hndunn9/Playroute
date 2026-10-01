@@ -3140,9 +3140,9 @@ async function handleStats(env) {
   const sqliteMs = (t) => Date.parse(String(t).replace(" ", "T") + "Z");
   const prevWeekSameTime = toSqliteUTCString(new Date(sqliteMs(prevWeekStart) + (Date.now() - sqliteMs(weekStart))));
   const prevMonthStart = mountainMidnightPrevMonthUTC();
-  // Filtering to US only — your product is Colorado-specific, but country-level
-  // geo data (from Cloudflare's edge) is reliable enough to use as the main
-  // filter; state-level data below is a bonus, finer-grained signal on top.
+  // Filtering to US only — the product is Colorado-specific and country-level
+  // geo (from Cloudflare's edge) is reliable enough as the filter. Visitor
+  // city/state breakdowns were removed from the admin on purpose.
   const US = `AND country = 'US'`;
 
   const dau = await env.DB.prepare(
@@ -3180,21 +3180,6 @@ async function handleStats(env) {
   ).bind(prevWeekStart, prevWeekSameTime).first();
   const byDevice = await env.DB.prepare(
     `SELECT device_type, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} GROUP BY device_type`
-  ).bind(weekStart).all();
-  const byCity = await env.DB.prepare(
-    `SELECT city, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND city IS NOT NULL GROUP BY city ORDER BY n DESC LIMIT 10`
-  ).bind(weekStart).all();
-
-  // Bonus, more precise signal: Cloudflare gives state-level geo for free
-  // (cf.regionCode), not just country. Since this product is Colorado-only,
-  // this tells you what fraction of "US" visits are actually in-state —
-  // useful for spotting e.g. VPN traffic or out-of-market curiosity clicks
-  // that a country-level filter alone can't catch.
-  const coloradoVisitors7d = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND region = 'CO'`
-  ).bind(weekStart).first();
-  const byRegion7d = await env.DB.prepare(
-    `SELECT region, COUNT(DISTINCT visitor_hash) AS n FROM page_views WHERE viewed_at >= ? ${US} AND region IS NOT NULL GROUP BY region ORDER BY n DESC LIMIT 10`
   ).bind(weekStart).all();
 
   // Visits that came specifically from clicking the link in a digest email
@@ -3288,9 +3273,6 @@ async function handleStats(env) {
   const uniqueVisitorsAllTime = await env.DB.prepare(
     `SELECT COUNT(DISTINCT COALESCE(visitor_hash_month, visitor_hash)) AS n FROM page_views WHERE country = 'US'`
   ).first();
-  const coloradoVisitorsAllTime = await env.DB.prepare(
-    `SELECT COUNT(DISTINCT COALESCE(visitor_hash_month, visitor_hash)) AS n FROM page_views WHERE country = 'US' AND region = 'CO'`
-  ).first();
   const linkClicksAllTime = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM link_clicks`
   ).first();
@@ -3306,7 +3288,6 @@ async function handleStats(env) {
   ).first();
 
   const uniqueAllTimeN = uniqueVisitorsAllTime?.n || 0;
-  const coloradoAllTimeN = coloradoVisitorsAllTime?.n || 0;
 
   return json({
     monthly_active_users: mauN,
@@ -3324,9 +3305,6 @@ async function handleStats(env) {
     page_views_7d_prev: views7dPrevN,
     page_views_7d_change_pct: pctChange(views7dN, views7dPrevN),
     by_device_7d: byDevice.results || [],
-    top_cities_7d: byCity.results || [],
-    colorado_visitors_7d: coloradoVisitors7d?.n || 0,
-    by_region_7d: byRegion7d.results || [],
     newsletter_visits_1d: newsletterVisits1d?.n || 0,
     newsletter_visits_7d: newsletter7dN,
     newsletter_visits_7d_prev: newsletter7dPrevN,
@@ -3343,8 +3321,6 @@ async function handleStats(env) {
       tracking_since: trackingSince?.d || null,
       page_views: pageViewsAllTime?.n || 0,
       unique_visitors: uniqueAllTimeN,
-      colorado_visitors: coloradoAllTimeN,
-      colorado_visitor_pct: uniqueAllTimeN > 0 ? Math.round((coloradoAllTimeN / uniqueAllTimeN) * 100) : null,
       link_clicks: linkClicksAllTime?.n || 0,
       active_subscribers: activeSubscribers?.n || 0,
       total_events: contentCounts?.events || 0,
