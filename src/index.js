@@ -1945,6 +1945,152 @@ async function fetchAndScanWarriorPlayground() {
 }
 SOURCE_RUNNERS.warrior_playground = async () => fetchAndScanWarriorPlayground();
 
+// ---------------------------------------------------------------------
+// WellnessLiving studios (Louisville Community Yoga, and later Raising
+// Parents). Their schedule widget is JS-rendered and its API requires a
+// per-request signature computed by the widget's own code, so a plain
+// fetch() gets nothing (confirmed 2026-09-30: ApiSignatureException).
+// Instead we ask Cloudflare Browser Run to load the studio page in a real
+// headless browser (so the widget signs its own requests) and extract the
+// rendered workshops with the /json quick action.
+//
+// Auth: uses a Browser binding (env.BROWSER) if one is configured,
+// otherwise the REST API with CF_ACCOUNT_ID + CF_BROWSER_TOKEN (token needs
+// Account > Browser Rendering > Edit). Workers Free includes 10 browser
+// minutes/day; one run is well under a minute.
+//
+// Everything goes to the pending-review queue (auto_publish stays 0). The
+// /json action uses an AI model to read the page, so results are checked
+// here (valid dates/times, family keyword filter) before they're queued.
+const WELLNESSLIVING_STUDIOS = {
+  louisville_community_yoga: {
+    url: "https://louisvillecommunityyoga.com/workshops/",
+    source: "Louisville Community Yoga",
+    city: "Louisville",
+    linkFallback: "https://louisvillecommunityyoga.com/workshops/"
+  }
+};
+// Only kid/caregiver offerings belong on Playroute; this studio's list is
+// mostly adult workshops (yin, restorative, etc.).
+const WL_FAMILY_RE = /\b(baby|babies|toddler|tot|kid|kids|child|children|family|families|mama|mom|parent|postpartum|prenatal|little ones?)\b/i;
+const WL_SKIP_RE = /\bvirtual\b/i;
+
+const WL_EVENT_SCHEMA = {
+  type: "object",
+  properties: {
+    events: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          first_date: { type: "string", description: "YYYY-MM-DD of the first session" },
+          last_date: { type: "string", description: "YYYY-MM-DD of the last session; same as first_date for a one-time event" },
+          weekday: { type: "string", description: "Day of week the sessions run, e.g. Wednesday" },
+          start_time: { type: "string", description: "24-hour HH:MM local start time" },
+          end_time: { type: "string", description: "24-hour HH:MM local end time" },
+          price: { type: "string", description: "Price text exactly as shown, e.g. $30 drop-in, $150 series" },
+          description: { type: "string", description: "One or two sentence summary" },
+          link: { type: "string", description: "Booking or details URL if shown" }
+        },
+        required: ["title", "first_date"]
+      }
+    }
+  },
+  required: ["events"]
+};
+
+async function browserRunJson(env, body) {
+  if (env.BROWSER && typeof env.BROWSER.quickAction === "function") {
+    const res = await env.BROWSER.quickAction("json", body);
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(`Browser Run (binding) failed: ${res.status} ${JSON.stringify(data.errors || data).slice(0, 300)}`);
+    return data.result;
+  }
+  if (!env.CF_ACCOUNT_ID || !env.CF_BROWSER_TOKEN) {
+    throw new Error("Browser Run not configured: add a BROWSER binding, or CF_ACCOUNT_ID + CF_BROWSER_TOKEN");
+  }
+  const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/browser-run/json`, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${env.CF_BROWSER_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.success) throw new Error(`Browser Run (REST) failed: ${res.status} ${JSON.stringify(data.errors || data).slice(0, 300)}`);
+  return data.result;
+}
+
+function wlAgeRange(text) {
+  const t = text.toLowerCase();
+  if (/postpartum|baby|babies|infant/.test(t)) return [0, 1];
+  if (/toddler|tot\b/.test(t)) return [1, 5];
+  if (/kid|child/.test(t)) return [3, 12];
+  return [0, 12];
+}
+
+function wlFmtTime(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  const ap = h >= 12 ? "PM" : "AM";
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${ap}`;
+}
+
+async function runWellnessLivingStudio(env, key) {
+  const cfg = WELLNESSLIVING_STUDIOS[key];
+  if (!env) throw new Error("env required for Browser Run");
+  const result = await browserRunJson(env, {
+    url: cfg.url,
+    gotoOptions: { waitUntil: "networkidle2", timeout: 45000 },
+    prompt: "List every upcoming class series, workshop, or event shown in the schedule/booking widget on this page. Use only dates and times actually shown on the page; do not guess. Times are US Mountain Time.",
+    response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA }
+  });
+  const items = (result && Array.isArray(result.events)) ? result.events : [];
+  const today = toMountainDateStr(new Date());
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/, TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const out = [];
+  for (const it of items) {
+    const title = String(it.title || "").trim();
+    const blob = `${title} ${it.description || ""}`;
+    if (!title || !WL_FAMILY_RE.test(blob) || WL_SKIP_RE.test(title)) continue;
+    if (!DATE_RE.test(it.first_date || "")) continue;
+    const last = DATE_RE.test(it.last_date || "") ? it.last_date : it.first_date;
+    if (last < today) continue;
+    const start = TIME_RE.test(it.start_time || "") ? it.start_time : null;
+    if (!start) continue; // no reliable time -> skip rather than guess
+    const end = TIME_RE.test(it.end_time || "") ? it.end_time : null;
+    const firstDay = DAY_NAMES[new Date(`${it.first_date}T12:00:00Z`).getUTCDay()];
+    const isSeries = last !== it.first_date;
+    const [ageMin, ageMax] = wlAgeRange(blob);
+    const price = String(it.price || "").trim();
+    const isFree = /\bfree\b/i.test(price) && !/\$\s*[1-9]/.test(price);
+    const note = [String(it.description || "").trim(), price].filter(Boolean).join(" ");
+    const ev = {
+      title,
+      source: cfg.source,
+      city: cfg.city,
+      category: "rec",
+      cost: isFree ? "free" : "paid",
+      age_min: ageMin,
+      age_max: ageMax,
+      day_of_week: firstDay,
+      start_time: start,
+      display_time: end ? `${wlFmtTime(start)} – ${wlFmtTime(end)}` : wlFmtTime(start),
+      note: truncateAtBoundary(note, 300),
+      source_url: /^https?:\/\//.test(it.link || "") ? it.link : cfg.linkFallback,
+      dedup_key: `wl:${key}:${title.toLowerCase()}:${it.first_date}:${start}`,
+      raw_excerpt: JSON.stringify(it).slice(0, 500)
+    };
+    if (isSeries) {
+      Object.assign(ev, { recurrence: "weekly", season_start: it.first_date.slice(5), season_end: last.slice(5) });
+    } else {
+      Object.assign(ev, { recurrence: "dated", event_date: it.first_date });
+    }
+    out.push(ev);
+  }
+  return out;
+}
+SOURCE_RUNNERS.louisville_community_yoga = async (env) => runWellnessLivingStudio(env, "louisville_community_yoga");
+
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -3840,7 +3986,7 @@ async function runSourceVerification(env, cadence = null, sourceKey = null) {
 
     let freshCandidates;
     try {
-      freshCandidates = await runner();
+      freshCandidates = await runner(env, source);
     } catch (err) {
       // A fetch failure must NOT be treated as "everything got cancelled"
       // -- that would turn a temporary site outage into dozens of false
