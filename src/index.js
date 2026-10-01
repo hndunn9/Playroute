@@ -2006,7 +2006,16 @@ const WL_EVENT_SCHEMA = {
   required: ["events"]
 };
 
-async function browserRun(env, action, body) {
+// Workers Free allows one Browser Run request every 10 seconds (429 if
+// faster). Space calls out within an isolate and retry a 429 once.
+const BROWSER_RUN_GAP_MS = 11000;
+let lastBrowserRunAt = 0;
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function browserRun(env, action, body, attempt = 0) {
+  const wait = lastBrowserRunAt + BROWSER_RUN_GAP_MS - Date.now();
+  if (wait > 0) await sleepMs(wait);
+  lastBrowserRunAt = Date.now();
   let res;
   if (env.BROWSER && typeof env.BROWSER.quickAction === "function") {
     res = await env.BROWSER.quickAction(action, body);
@@ -2018,6 +2027,10 @@ async function browserRun(env, action, body) {
     });
   } else {
     throw new Error("Browser Run not configured: add a BROWSER binding, or CF_ACCOUNT_ID + CF_BROWSER_TOKEN");
+  }
+  if (res.status === 429 && attempt === 0) {
+    await sleepMs(BROWSER_RUN_GAP_MS);
+    return browserRun(env, action, body, 1);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.success) throw new Error(`Browser Run /${action} failed: ${res.status} ${JSON.stringify(data.errors || data).slice(0, 300)}`);
@@ -2060,7 +2073,19 @@ function wlFmtTime(hhmm) {
   return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${ap}`;
 }
 
+// Each run costs two Browser Run calls; verification re-runs the same
+// runner right after ingest. Reuse a result from the last 10 minutes in
+// this isolate instead of hitting the rate limit again.
+const wlResultCache = new Map();
 async function runWellnessLivingStudio(env, key) {
+  const hit = wlResultCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.events;
+  const events = await scrapeWellnessLivingStudio(env, key);
+  wlResultCache.set(key, { at: Date.now(), events });
+  return events;
+}
+
+async function scrapeWellnessLivingStudio(env, key) {
   const cfg = WELLNESSLIVING_STUDIOS[key];
   if (!env) throw new Error("env required for Browser Run");
   const { frameUrl, srcs } = await findWellnessLivingFrame(env, cfg.url);
