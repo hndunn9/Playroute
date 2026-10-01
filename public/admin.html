@@ -322,7 +322,7 @@
       <p>Where upcoming events run out over the next 8 weeks, and which sources to fix first. Bars run from today to each source's last dated event.</p>
       <div id="thinCities"></div>
       <div id="runwayList"><div class="pending-empty">Loading…</div></div>
-      <div class="card-foot"><button class="btn-sm ghost" onclick="toggleRunwayAll(this)">Show all needing attention</button><button class="btn-sm ghost" onclick="showView('pipeline')">All sources</button></div>
+      <div class="card-foot"><button class="btn-sm ghost" id="runwayToggle" onclick="toggleRunwayAll(this)">Show lower priority</button><button class="btn-sm ghost" onclick="showView('pipeline')">All sources</button></div>
     </div>
   </section>
 
@@ -1490,10 +1490,17 @@ function renderRunway(fresh){
   const el = document.getElementById('runwayList');
   if(!fresh){ el.innerHTML = '<div class="pending-empty">Source freshness unavailable.</div>'; return; }
   renderThinCities(fresh);
-  const ranked = ((fresh && fresh.sources) || []).filter(s => s.priority && s.priority.score > 0)
+  // The API ranks every source; the top 10 show by default, the rest behind
+  // a toggle. "Unknown" platforms come back excluded and never appear here.
+  const ranked = ((fresh && fresh.sources) || []).filter(s => s.priority && s.priority.score > 0 && !s.priority.excluded)
     .sort((a,b) => b.priority.score - a.priority.score);
+  const top = ranked.slice(0, 10);
+  const lower = ranked.length - top.length;
+  const btn = document.getElementById('runwayToggle');
+  if(btn){ btn.style.display = lower ? '' : 'none'; btn.textContent = runwayShowAll ? 'Show top priorities only' : `Show ${lower} lower priority`; }
   if(!ranked.length){ el.innerHTML = '<div class="all-clear">Every source is fresh with runway past the next 4 weeks.</div>'; return; }
-  const list = runwayShowAll ? ranked : ranked.slice(0, 7);
+  if(!top.length && !runwayShowAll){ el.innerHTML = `<div class="all-clear">Nothing urgent. ${lower} lower-priority source${lower===1?'':'s'} can wait.</div>`; return; }
+  const list = runwayShowAll ? ranked : top;
   const ticks = [0,14,28,42,56].map((d,i) => `<span>${i ? dayLabel(d) : 'Today'}</span>`).join('');
   el.innerHTML = `<div class="rw head"><span></span><span class="eyebrow">Source</span><div><span class="eyebrow">Runway · last dated event</span><div class="wk">${ticks}</div></div><span class="eyebrow">Ease to automate</span><span></span></div>` +
     list.map((s, i) => {
@@ -1516,18 +1523,17 @@ function renderRunway(fresh){
           <div class="rw-why">${escapeHtml(ease.reasons.join('. '))}</div></div>
         <div class="rw-acts">${act}</div></div>`;
     }).join('') +
-    (ranked.length > 7 && !runwayShowAll ? `<p class="fine" style="margin-top:8px">${ranked.length - 7} more need attention.</p>` : '');
+    '';
 }
 function toggleRunwayAll(btn){
   runwayShowAll = !runwayShowAll;
-  btn.textContent = runwayShowAll ? 'Show top 7' : 'Show all needing attention';
   if(lastFresh) renderRunway(lastFresh);
 }
 
 function renderHeadline(fresh, pending, taskCount){
   const parts = [];
   const sources = (fresh && fresh.sources) || [];
-  const soon = sources.filter(s => s.status !== 'fresh' && s.runway_days !== null && s.runway_days <= 21)
+  const soon = sources.filter(s => s.priority && s.priority.show && s.runway_days !== null && s.runway_days <= 21)
     .sort((a,b) => a.runway_days - b.runway_days)[0];
   if(soon) parts.push(`${soon.city} runs out of dated events ${soon.runway_days <= 0 ? 'today' : `in ${soon.runway_days} day${soon.runway_days===1?'':'s'}`}.`);
   const failing = sources.filter(s => s.status === 'error').length;

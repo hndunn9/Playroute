@@ -705,196 +705,6 @@ async function fetchAndNormalizeWowCalendar() {
 // wow_museum runner — just returns candidates, ingestCandidate handles the rest.
 SOURCE_RUNNERS.wow_museum = async () => fetchAndNormalizeWowCalendar();
 
-// --- Town of Mead scraper ---
-// Source feed: https://www.meadco.gov/calendar/json
-// Unlike the library/rec-center feeds, this JSON has no structured date
-// field (meeting_date is always empty) — the actual date/time lives buried
-// in freeform HTML prose inside `body`, in wildly inconsistent formats.
-// Rather than risk silently inserting a wrong date, this only auto-adds
-// items where it can confidently extract a single clean "Month Day" (+
-// optional time). Multi-session/recurring listings (e.g. "Thursdays from
-// July 9 - July 30") are skipped on purpose — those need a human to read
-// them once, same as you did manually for the Skyhawks classes.
-// Mead's site structures URLs by department (e.g. /parksandrec/, /municourt/,
-// /boardoftrustees/) — filtering on that path is far more reliable than
-// guessing at title keywords, since it comes from how the town itself
-// organizes the content rather than from us pattern-matching prose.
-const MEAD_FAMILY_PATH_PREFIX = "/parksandrec/";
-// Even within parksandrec, a few things aren't "fun family activity" in the
-// way this app means it — registration paperwork, naming contests you don't
-// attend, and solemn civic ceremonies. Excluded by title keyword.
-const MEAD_TITLE_BLOCKLIST = [
-  /entry form/i, /name the snowplow/i, /ceremony/i, /memorial/i, /veterans/i
-];
-const MEAD_MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December";
-
-function meadDecodeEntities(str) {
-  let s = String(str || "");
-  // The feed double-encodes HTML entities, so unescape twice.
-  for (let i = 0; i < 2; i++) {
-    s = s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-         .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&nbsp;/g, " ");
-  }
-  return s;
-}
-function meadStripTags(html) {
-  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-// Finds one confident "Month Day[, Year]" plus an optional start time.
-// Returns null (skip this item) if it can't find an unambiguous single date.
-function extractMeadDateTime(text) {
-  // "Month Day" (with optional ordinal suffix: "July 4th", "September 12")
-  let dateMatch = text.match(new RegExp(`\\b(${MEAD_MONTHS})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, "i"));
-  let monthName, day;
-  if (dateMatch) {
-    monthName = dateMatch[1]; day = parseInt(dateMatch[2], 10);
-  } else {
-    // Fallback: "4th of July" / "12th of September" ordering
-    const altMatch = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+of\\s+(${MEAD_MONTHS})\\b`, "i"));
-    if (!altMatch) return null;
-    day = parseInt(altMatch[1], 10); monthName = altMatch[2];
-  }
-  const monthNum = new Date(`${monthName} 1, 2000`).getMonth() + 1;
-
-  // If the post mentions more than one distinct "Month Day", it's describing
-  // a multi-day event (e.g. a Friday date + a separate Saturday date/time) —
-  // too ambiguous to safely pick a single date+time pairing. Skip it.
-  const allDateMatches = text.match(new RegExp(`\\b(${MEAD_MONTHS})\\s+\\d{1,2}(?:st|nd|rd|th)?\\b`, "gi")) || [];
-  const distinctDates = new Set(allDateMatches.map(s => s.toLowerCase().replace(/(st|nd|rd|th)\b/i, "")));
-  if (distinctDates.size > 1) return null;
-
-  // Bail out on anything that reads as a recurring/multi-date listing —
-  // those are exactly the cases we don't want to guess at.
-  if (/\b(thursdays|fridays|saturdays|sundays|mondays|tuesdays|wednesdays)\b/i.test(text)) return null;
-  if (/\bdates?:\s*\w+\s+\d{1,2}\s*[-–]\s*\w*\s*\d{0,2}/i.test(text)) return null;
-
-  // Time extraction, in priority order:
-  // 1) A range where BOTH ends have their own am/pm ("11 a.m. to 3 p.m.") — use the first directly.
-  // 2) A range with only a trailing am/pm ("4 to 9:30 p.m.") — infer the start's period rather
-  //    than mistakenly grabbing the end time as if it were the start.
-  // 3) A single standalone time.
-  let startTime = null, displayHour = null;
-  const bothMarked = text.match(/(\d{1,2})(:\d{2})?\s*(a\.m\.|p\.m\.|am|pm)\s*(?:to|-|–)\s*\d{1,2}(:\d{2})?\s*(?:a\.m\.|p\.m\.|am|pm)/i);
-  const trailingOnly = !bothMarked && text.match(/(\d{1,2})(:\d{2})?\s*(?:to|-|–)\s*(\d{1,2})(:\d{2})?\s*(a\.m\.|p\.m\.|am|pm)/i);
-  const singleTime = !bothMarked && !trailingOnly && text.match(/(\d{1,2})(:\d{2})?\s*(a\.m\.|p\.m\.|am|pm)/i);
-
-  let h = null, min = "00", isPM = null;
-  if (bothMarked) {
-    h = parseInt(bothMarked[1], 10); min = bothMarked[2] ? bothMarked[2].slice(1) : "00";
-    isPM = /p/i.test(bothMarked[3]);
-  } else if (trailingOnly) {
-    const startHour = parseInt(trailingOnly[1], 10);
-    const endHour = parseInt(trailingOnly[3], 10);
-    const endIsPM = /p/i.test(trailingOnly[5]);
-    h = startHour; min = trailingOnly[2] ? trailingOnly[2].slice(1) : "00";
-    // If the start hour is <= the end hour, they share the same period.
-    // If start > end numerically (e.g. "11 to 1 p.m." = 11am-1pm), the
-    // start must be the opposite period (crosses noon).
-    isPM = startHour <= endHour ? endIsPM : !endIsPM;
-  } else if (singleTime) {
-    h = parseInt(singleTime[1], 10); min = singleTime[2] ? singleTime[2].slice(1) : "00";
-    isPM = /p/i.test(singleTime[3]);
-  }
-  if (h !== null) {
-    if (isPM && h < 12) h += 12;
-    if (!isPM && h === 12) h = 0;
-    startTime = `${String(h).padStart(2, "0")}:${min}`;
-    displayHour = { h, min };
-  }
-  return { monthNum, day, startTime, displayHour };
-}
-function meadDisplayTime(displayHour) {
-  if (!displayHour) return "Check listing for time";
-  const { h, min } = displayHour;
-  const period = h >= 12 ? "PM" : "AM";
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${min} ${period}`;
-}
-
-async function fetchAndNormalizeMeadCalendar() {
-  const res = await fetch("https://www.meadco.gov/calendar/json");
-  if (!res.ok) throw new Error(`Mead calendar fetch failed: ${res.status}`);
-  const items = await res.json();
-
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const lookAheadCutoff = new Date(startOfToday.getTime() + 90 * 86400000);
-  const currentYear = now.getFullYear();
-
-  const events = [];
-  const needsReview = []; // family-relevant items that couldn't be confidently auto-parsed
-  for (const item of items) {
-    const title = (item.title || "").trim();
-    if (!title) continue;
-    if (!(item.link || "").startsWith(MEAD_FAMILY_PATH_PREFIX)) continue; // civic/court/board content lives elsewhere on the site
-    if (MEAD_TITLE_BLOCKLIST.some(re => re.test(title))) continue;
-
-    const plainBody = meadStripTags(meadDecodeEntities(item.body || ""));
-    const parsed = extractMeadDateTime(plainBody);
-    if (!parsed) {
-      // Passed the family-relevance filter but couldn't confidently parse a
-      // single clean date (recurring/multi-session listing, ambiguous
-      // phrasing, etc.) — rather than silently dropping it, surface it for
-      // a human to look at once, instead of guessing.
-      needsReview.push({
-        title,
-        source: "Town of Mead Parks & Recreation",
-        city: "Mead",
-        note: truncateAtBoundary(plainBody, 300),
-        source_url: `https://www.meadco.gov${item.link}`,
-        dedup_key: `mead-review:${item.id}`
-      });
-      continue;
-    }
-
-    // Try this year first; if that's already passed, try next year (handles
-    // items posted late in the year for an early-next-year date).
-    let eventDate = new Date(currentYear, parsed.monthNum - 1, parsed.day);
-    if (eventDate < startOfToday) {
-      eventDate = new Date(currentYear + 1, parsed.monthNum - 1, parsed.day);
-    }
-    if (eventDate < startOfToday || eventDate > lookAheadCutoff) continue;
-
-    const dayOfWeek = eventDate.toLocaleDateString("en-US", { weekday: "long" });
-    const eventDateStr = `${eventDate.getFullYear()}-${String(eventDate.getMonth() + 1).padStart(2, "0")}-${String(eventDate.getDate()).padStart(2, "0")}`;
-    const startTime = parsed.startTime || "09:00";
-    const displayTime = meadDisplayTime(parsed.displayHour);
-
-    events.push({
-      title,
-      source: "Town of Mead Parks & Recreation",
-      city: "Mead",
-      category: "outdoor",
-      cost: "free",
-      age_min: 0,
-      age_max: 12,
-      day_of_week: dayOfWeek,
-      start_time: startTime,
-      display_time: displayTime,
-      recurrence: "dated",
-      event_date: eventDateStr,
-      note: truncateAtBoundary(plainBody, 300),
-      source_url: `https://www.meadco.gov${item.link}`,
-      verified: 0, // auto-parsed from prose — flagged unverified, unlike hand-curated entries
-      libcal_event_id: `mead:${item.id}`,
-      _assumedTime: !parsed.startTime // true when no real time was found and we fell back to 9am
-    });
-  }
-  return { events, needsReview };
-}
-
-// Both halves — confidently-parsed single-date events AND the
-// couldn't-parse-confidently "needs review" items — now flow through the
-// same pending_events path (per your instruction: everything automated
-// goes to review for now). The needsReview items are missing several
-// required fields on purpose (category/cost/age/time were never guessed at)
-// so validateCandidate will correctly flag them as needing your attention
-// rather than silently showing up looking complete.
-SOURCE_RUNNERS.mead_json = async () => {
-  const { events, needsReview } = await fetchAndNormalizeMeadCalendar();
-  return [...events, ...needsReview];
-};
-
 // --- Westminster Public Library scraper (pending-review only) ---
 // Source: https://westminsterco.librarycalendar.com
 //
@@ -2676,7 +2486,6 @@ const MANUAL_SOURCE_KEYWORDS = {
   21: "Museum of Boulder",
   22: "Tinker Art Studio",
   23: "Junkyard Social Club",
-  24: "Town of Mead",
   26: "Nederland Community Library",
   27: "Boulder County Parks",
   28: "Downtown Longmont",
@@ -2771,7 +2580,7 @@ async function handleSourceFreshness(env) {
   const cities = [...cityMap.values()].map((c) => ({ ...c, total: c.dated + c.recurring })).sort((a, b) => b.total - a.total);
   const runHistory = await loadSourceRunHistory(env);
   enrichSourcesForTriage(sources, cities, runHistory);
-  return json({ sources, cities, lookaheadDays: COVERAGE_LOOKAHEAD_DAYS, runwayWindowDays: RUNWAY_WINDOW_DAYS, generatedAt: new Date().toISOString() });
+  return json({ sources, cities, lookaheadDays: COVERAGE_LOOKAHEAD_DAYS, runwayWindowDays: RUNWAY_WINDOW_DAYS, triageShowThreshold: TRIAGE_SHOW_THRESHOLD, generatedAt: new Date().toISOString() });
 }
 
 // ── Source triage for the admin "Coverage runway" ──────────────────────────
@@ -2907,33 +2716,45 @@ function assessAutomationEase(s, ctx) {
   return { level, family: fam ? fam.label : null, reasons };
 }
 
+// Ranking rules, tuned so only a handful of sources surface at once:
+//  - "Unknown" platforms are left out entirely (nothing actionable to rank).
+//  - Status and how soon dated events run out drive urgency.
+//  - "No upcoming events" only scores high when the city is thin; an empty
+//    single-venue source in Boulder barely changes what families see.
+//  - Low-yield manual sources (three or fewer recurring listings, nothing
+//    dated, or nothing at all) outside thin cities are discounted.
+//  - Failing sources that feed many events get a volume bump.
+const TRIAGE_SHOW_THRESHOLD = 45;
 function computeTriagePriority(s, cityTotal) {
+  if (!s.platform || /unknown/i.test(s.platform)) {
+    return { score: 0, reason: "Platform unknown, not ranked", excluded: true };
+  }
   if (s.status === "fresh" && (s.runway_days === null || s.runway_days > 28)) {
     return { score: 0, reason: "Healthy" };
   }
-  let score = 0;
+  const cityWeight = cityTotal < 20 ? 1 : cityTotal < 50 ? 0.3 : 0.15;
+  let score = { error: 30, empty: 15, stale: 18, aging: 6, fresh: 0 }[s.status] || 0;
   const drivers = [];
-  const statusPts = { error: 30, empty: 25, stale: 20, aging: 8, fresh: 0 }[s.status] || 0;
-  score += statusPts;
   if (s.runway_days !== null) {
-    const pts = Math.max(0, RUNWAY_WINDOW_DAYS - s.runway_days) / RUNWAY_WINDOW_DAYS * 40;
-    score += pts;
-    if (s.runway_days <= 14) drivers.push(s.runway_days <= 0 ? "Dated events end today" : `Dated events end in ${s.runway_days} days`);
+    score += Math.max(0, RUNWAY_WINDOW_DAYS - s.runway_days) / RUNWAY_WINDOW_DAYS * 40;
+    if (s.runway_days <= 21) drivers.push(s.runway_days <= 0 ? "Dated events end today" : `Dated events end in ${s.runway_days} days`);
   } else if (!s.upcoming) {
-    score += 40;
+    score += 10 + 30 * cityWeight;
     drivers.push("No upcoming events");
   } else {
-    score += 10; // recurring-only: still showing something, but nothing new or seasonal
+    score += 5; // recurring-only: still showing something, just nothing new or seasonal
   }
-  if (cityTotal < 20) { score += 25; drivers.push(`${s.city} has only ${cityTotal} events in the next 30 days`); }
+  if (cityTotal < 20) { score += 25; drivers.unshift(`${s.city} has only ${cityTotal} events in the next 30 days`); }
   else if (cityTotal < 50) { score += 12; drivers.push(`${s.city} is thin (${cityTotal} in 30 days)`); }
   if (s.status === "error" && s.upcoming) {
-    score += Math.min(s.upcoming, 200) / 200 * 15;
+    score += Math.min(s.upcoming, 200) / 200 * 30;
     drivers.push(`Feeds ${s.upcoming} upcoming events`);
   }
+  if (s.mode !== "auto" && s.upcoming <= 3 && !s.furthest && cityTotal >= 20) score *= 0.6;
   if (s.status === "error" && !drivers.length) drivers.push("Last run failed");
   if (!drivers.length) drivers.push(s.detail);
-  return { score: Math.round(score), reason: drivers[0], drivers };
+  score = Math.round(score);
+  return { score, reason: drivers[0], drivers, show: score >= TRIAGE_SHOW_THRESHOLD };
 }
 
 function enrichSourcesForTriage(sources, cities, runHistory) {
