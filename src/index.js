@@ -1967,12 +1967,14 @@ const WELLNESSLIVING_STUDIOS = {
     url: "https://louisvillecommunityyoga.com/workshops/",
     source: "Louisville Community Yoga",
     city: "Louisville",
+    familyOnly: true, // mostly adult workshops -- keep only kid/caregiver ones
     linkFallback: "https://louisvillecommunityyoga.com/workshops/"
   },
   raising_parents: {
     url: "https://raisingparentsco.com/calendar",
     source: "Raising Parents",
     city: "Lafayette",
+    familyOnly: false, // everything they run is family programming
     linkFallback: "https://raisingparentsco.com/calendar"
   }
 };
@@ -2067,6 +2069,17 @@ function wlAgeRange(text) {
   return [0, 12];
 }
 
+// Accepts "09:30", "9:30", "9:30 AM", "9:30am", "9 am"; returns "HH:MM" or null.
+function wlParseTime(t) {
+  const m = String(t || "").trim().match(/^(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?\s*m?\.?$/i);
+  if (!m) return null;
+  let h = Number(m[1]); const min = Number(m[2] || 0); const ap = (m[3] || "").toLowerCase();
+  if (ap === "p" && h < 12) h += 12;
+  if (ap === "a" && h === 12) h = 0;
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
 function wlFmtTime(hhmm) {
   const [h, m] = hhmm.split(":").map(Number);
   const ap = h >= 12 ? "PM" : "AM";
@@ -2107,16 +2120,19 @@ async function scrapeWellnessLivingStudio(env, key) {
   const today = toMountainDateStr(new Date());
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/, TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const out = [];
+  const dropped = { notFamily: 0, virtual: 0, badDate: 0, past: 0, noTime: 0 };
   for (const it of items) {
     const title = String(it.title || "").trim();
     const blob = `${title} ${it.description || ""}`;
-    if (!title || !WL_FAMILY_RE.test(blob) || WL_SKIP_RE.test(title)) continue;
-    if (!DATE_RE.test(it.first_date || "")) continue;
+    if (!title) continue;
+    if (WL_SKIP_RE.test(title)) { dropped.virtual++; continue; }
+    if (cfg.familyOnly && !WL_FAMILY_RE.test(blob)) { dropped.notFamily++; continue; }
+    if (!DATE_RE.test(it.first_date || "")) { dropped.badDate++; continue; }
     const last = DATE_RE.test(it.last_date || "") ? it.last_date : it.first_date;
-    if (last < today) continue;
-    const start = TIME_RE.test(it.start_time || "") ? it.start_time : null;
-    if (!start) continue; // no reliable time -> skip rather than guess
-    const end = TIME_RE.test(it.end_time || "") ? it.end_time : null;
+    if (last < today) { dropped.past++; continue; }
+    const start = wlParseTime(it.start_time);
+    if (!start) { dropped.noTime++; continue; } // no reliable time -> skip rather than guess
+    const end = wlParseTime(it.end_time);
     const firstDay = DAY_NAMES[new Date(`${it.first_date}T12:00:00Z`).getUTCDay()];
     const isSeries = last !== it.first_date;
     const [ageMin, ageMax] = wlAgeRange(blob);
@@ -2145,6 +2161,10 @@ async function scrapeWellnessLivingStudio(env, key) {
       Object.assign(ev, { recurrence: "dated", event_date: it.first_date });
     }
     out.push(ev);
+  }
+  if (out.length === 0) {
+    const why = Object.entries(dropped).filter(([, n]) => n).map(([k, n]) => `${k}: ${n}`).join(", ");
+    throw new Error(`Browser saw ${items.length} events but none were usable (${why || "no titles"}). First: ${JSON.stringify(items[0]).slice(0, 200)}`);
   }
   return out;
 }

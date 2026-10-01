@@ -64,6 +64,8 @@ when a rule here turns out wrong, fix it in the same PR.
   Workers Free allows **1 Browser Run request per 10 s** (429 otherwise).
   `browserRun()` spaces calls 11 s apart and retries a 429 once. Results are cached
   for 10 min so verification doesn't re-scrape.
+  Each studio in `WELLNESSLIVING_STUDIOS` sets `familyOnly` (keyword filter on/off).
+  A run that drops every event throws with the drop reasons, so it never reports "ok, 0 found".
 - Verification flags "possibly cancelled" and "time changed". It skips sources
   that return 0 events and matches titles loosely (`sameEventTitle`).
 
