@@ -916,7 +916,7 @@ async function loadRecExperiment(){
       <p style="font-size:11px;color:#7A6650;margin:8px 0 0;">
         ${need ? `At the click-through gap so far, a reliable read needs ~${need.toLocaleString()} sessions per group (smaller group has ${smaller.toLocaleString()}, ${Math.min(100, Math.round(100 * smaller / need))}%).` : 'Not enough difference yet to estimate how many sessions are needed.'}
         ${d.startedAt ? ` Running since ${new Date(d.startedAt.replace(' ', 'T') + 'Z').toLocaleDateString()}.` : ''}
-        "Significant" = p &lt; 0.05; early reads swing a lot.
+        "Significant" = 80% confidence (p &lt; 0.20), a directional read; early reads swing a lot.
       </p>`;
   }catch(err){
     out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
