@@ -66,6 +66,10 @@ when a rule here turns out wrong, fix it in the same PR.
   for 10 min so verification doesn't re-scrape.
   Each studio in `WELLNESSLIVING_STUDIOS` sets `familyOnly` (keyword filter on/off).
   A run that drops every event throws with the drop reasons, so it never reports "ok, 0 found".
+  Flow: `/scrape` finds the widget iframe, `/markdown` renders it (networkidle0 + 5 s wait),
+  then Claude (`WL_EXTRACT_MODEL`, needs `ANTHROPIC_API_KEY`) extracts sessions with today's
+  date, because the widget's week headings omit the year. Without the key it falls back to
+  `/json` on the rendered text. If no clock times render, the error quotes what the browser saw.
 - Verification flags "possibly cancelled" and "time changed". It skips sources
   that return 0 events and matches titles loosely (`sameEventTitle`).
 

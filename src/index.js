@@ -1908,26 +1908,79 @@ async function runWellnessLivingStudio(env, key) {
   return events;
 }
 
+// Extraction model for the rendered widget text. Sonnet is plenty for
+// reading a schedule; it gets today's date so it can resolve WellnessLiving's
+// year-less headings ("Mon, Sep 28").
+const WL_EXTRACT_MODEL = "claude-sonnet-5-5";
+const WL_TIME_RE = /\b\d{1,2}:\d{2}\s*[ap]\.?m\b/i;
+
+async function wlExtractWithClaude(env, cfg, markdown, today) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: WL_EXTRACT_MODEL,
+      max_tokens: 4096,
+      system: "You extract class and event sessions from a booking widget's rendered text. Reply with only a JSON object, no prose.",
+      messages: [{ role: "user", content:
+`Today is ${today} (US Mountain Time). Below is the rendered schedule for ${cfg.source} in ${cfg.city}, Colorado.
+
+List every upcoming session shown in the schedule itself (not filter lists or menus). Dates on the page may omit the year: resolve each to the next occurrence on or after today. Use only times actually shown. Set last_date equal to first_date unless that specific listing explicitly says it repeats through a later date.
+
+Return {"events":[{"title","first_date":"YYYY-MM-DD","last_date":"YYYY-MM-DD","weekday","start_time":"HH:MM 24h","end_time":"HH:MM 24h","price","description","link"}]}. Return {"events":[]} if no sessions are shown.
+
+---
+${markdown.slice(0, 60000)}` }]
+    })
+  });
+  if (!res.ok) throw new Error(`Anthropic API error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  const text = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error(`Couldn't parse events from model reply: ${text.slice(0, 200)}`);
+  const parsed = JSON.parse(m[0]);
+  return Array.isArray(parsed.events) ? parsed.events : [];
+}
+
+// What the browser actually rendered, condensed for an error message.
+function wlSnippet(markdown) {
+  return String(markdown || "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\s+/g, " ").trim().slice(0, 280) || "(empty page)";
+}
+
 async function scrapeWellnessLivingStudio(env, key) {
   const cfg = WELLNESSLIVING_STUDIOS[key];
   if (!env) throw new Error("env required for Browser Run");
-  const { frameUrl, srcs } = await findWellnessLivingFrame(env, cfg.url);
+  const { frameUrl } = await findWellnessLivingFrame(env, cfg.url);
   const target = cfg.frameUrl || frameUrl || cfg.url;
-  const result = await browserRun(env, "json", {
+  const today = toMountainDateStr(new Date());
+  // Render the widget to Markdown (deterministic, no AI). The widget fetches
+  // its sessions with signed requests after load, so wait for the network to
+  // settle and then a few seconds more before reading the page.
+  const markdown = String(await browserRun(env, "markdown", {
     url: target,
     gotoOptions: { waitUntil: "networkidle0", timeout: 60000 },
-    prompt: "List every upcoming class series, workshop, or event shown in the schedule/booking list on this page. Use only dates and times actually shown on the page; do not guess. Times are US Mountain Time.",
-    response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA }
-  });
-  const items = (result && Array.isArray(result.events)) ? result.events : [];
-  // Zero events from a studio that always has a schedule means the browser
-  // didn't see the widget -- fail loudly (shows as an error on the admin
-  // page, and verification skips this source) instead of returning [] and
-  // letting every linked class look cancelled.
-  if (items.length === 0) {
-    throw new Error(`Browser saw no events at ${target} (iframes on page: ${srcs.length ? srcs.join(", ").slice(0, 200) : "none"})`);
+    waitForTimeout: 5000
+  }) || "");
+  // No clock times anywhere means the sessions never rendered (widget blocked
+  // headless, or nothing scheduled). Fail loudly with what the browser saw
+  // instead of returning [] and letting every linked class look cancelled.
+  if (!WL_TIME_RE.test(markdown)) {
+    throw new Error(`No session times rendered at ${cfg.url} (frame ${frameUrl ? "found" : "not found"}). Browser saw: ${wlSnippet(markdown)}`);
   }
-  const today = toMountainDateStr(new Date());
+  let items;
+  if (env.ANTHROPIC_API_KEY) {
+    items = await wlExtractWithClaude(env, cfg, markdown, today);
+  } else {
+    const result = await browserRun(env, "json", {
+      html: `<pre>${markdown.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`,
+      prompt: `Today is ${today}. List every upcoming session in this schedule. Dates may omit the year: resolve each to the next occurrence on or after today. Use only times actually shown. Times are US Mountain Time.`,
+      response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA }
+    });
+    items = (result && Array.isArray(result.events)) ? result.events : [];
+  }
+  if (items.length === 0) {
+    throw new Error(`Schedule rendered at ${target.slice(0, 120)} but no sessions were extracted. Browser saw: ${wlSnippet(markdown)}`);
+  }
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/, TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const out = [];
   const dropped = { notFamily: 0, virtual: 0, badDate: 0, past: 0, noTime: 0 };
