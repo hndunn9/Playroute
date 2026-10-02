@@ -100,8 +100,9 @@ keep reads proportional to traffic:
   studios with `pageWeeks` instead inject `wlWeekPagerScript` to click through that many weeks
   in the same call and capture each, reporting problems on a `PAGER:` line),
   then Claude (`WL_EXTRACT_MODEL`, needs `ANTHROPIC_API_KEY`) extracts sessions with today's
-  date, because the widget's week headings omit the year. Without the key it falls back to
-  `/json` on the rendered text. If no clock times render, the error quotes what the browser saw.
+  date, because the widget's week headings omit the year. If the key is missing or the Claude
+  call fails (e.g. low credit balance), it falls back to `/json` (Cloudflare's model) on the
+  rendered text, capped at ~45k chars; the reason is logged and included in any error. If no clock times render, the error quotes what the browser saw.
 - **Subrequest budget:** `runSources` preloads seen dedup keys and a live-events index once per
   run (`preloadIngestIndex`) and checks duplicates in memory, so a run costs ~1 D1 call per NEW
   item instead of ~5 per candidate. Verification only judges live events up to the feed's
