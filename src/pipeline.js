@@ -139,7 +139,7 @@ function validateCandidate(ev, sourceRow) {
 // dedup_key mechanism (which prevents re-queuing the same pending candidate
 // repeatedly). This catches the case where something was already approved
 // under a slightly different dedup_key history, or manually entered by hand.
-async function checkDuplicateRisk(env, ev) {
+async function checkDuplicateRisk(env, ev, sourceRow = null) {
   // Real gap found 2026-07-14: title+city alone is far too loose — a
   // generic recurring title (e.g. "Storytime") legitimately has many
   // distinct real sessions at different days/times/locations under the
@@ -178,6 +178,15 @@ async function checkDuplicateRisk(env, ev) {
       `SELECT 1 FROM events WHERE lower(title) = lower(?) AND city = ? AND event_date = ? AND start_time = ? LIMIT 1`
     ).bind(ev.title, ev.city, ev.event_date, ev.start_time).first();
     if (anySource) return { isDuplicate: true };
+  }
+
+  // Recurring coverage with loose titles (see coveredByRecurring).
+  if (isDated) {
+    const { results: recurringRows } = await env.DB.prepare(
+      `SELECT title, source, source_id, recurrence, day_of_week, season_start, season_end, excluded_ranges
+         FROM events WHERE city = ? AND start_time = ? AND (recurrence = 'weekly' OR recurrence LIKE 'monthly-%')`
+    ).bind(ev.city, ev.start_time).all();
+    if (coveredByRecurring(recurringRows, ev, sourceRow)) return { isDuplicate: true };
   }
 
   // Third gap found 2026-09-25: a DATED candidate that falls on a slot a
@@ -245,12 +254,17 @@ async function preloadIngestIndex(env, sourceRow, candidates) {
   }
   if (!cities.length) return { existingKeys, live: null };
   const { results: rows } = await env.DB.prepare(
-    `SELECT title, city, event_date, start_time, day_of_week, recurrence, source, season_start, season_end
+    `SELECT title, city, event_date, start_time, day_of_week, recurrence, source, source_id, season_start, season_end, excluded_ranges
        FROM events WHERE city IN (${cities.map(() => "?").join(",")})
         AND (recurrence = 'weekly' OR event_date IS NULL OR event_date >= date('now', '-1 day'))`
   ).bind(...cities).all();
-  const live = { exact: new Set(), datedAny: new Set(), weekly: new Map(), sameDay: new Map() };
+  const live = { exact: new Set(), datedAny: new Set(), weekly: new Map(), sameDay: new Map(), recurring: new Map() };
   for (const e of rows || []) {
+    if (e.recurrence === "weekly" || String(e.recurrence || "").startsWith("monthly-")) {
+      const rk = [e.city, e.start_time].join("|");
+      if (!live.recurring.has(rk)) live.recurring.set(rk, []);
+      live.recurring.get(rk).push(e);
+    }
     const lt = String(e.title || "").toLowerCase();
     live.exact.add([e.title, e.city, e.start_time, e.recurrence === "dated" ? e.event_date : e.day_of_week, e.source].join("|"));
     if (e.event_date) {
@@ -272,12 +286,72 @@ function inSeason(mmdd, start, end) {
   return start <= end ? (mmdd >= start && mmdd <= end) : (mmdd >= start || mmdd <= end);
 }
 
+// ---------------------------------------------------------------------------
+// RECURRING-COVERAGE DUPLICATES (2026-10-02). A scraper often lists each date
+// of a program that's already live as ONE recurring row -- weekly, or
+// "monthly-first-tuesday" -- often under a slightly different title ("Family
+// Flow (Family Yoga)" vs "Family Yoga", "The Village Talks" vs "The Village
+// Talks: Maternal Mental Health..."). Three such pairs reached the site for
+// Raising Parents. A dated candidate is a duplicate when a live recurring row
+// covers that date AND has the same city, start time and source, AND the
+// titles loosely match (one normalized title contains the other).
+// ---------------------------------------------------------------------------
+const ORDINALS = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5 };
+const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+function looseTitleMatch(a, b) {
+  const na = titleKey(a), nb = titleKey(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const [short, long] = na.length <= nb.length ? [na, nb] : [nb, na];
+  return short.length >= 6 && (` ${long} `).includes(` ${short} `);
+}
+
+function sameSource(row, ev, sourceRow) {
+  if (row.source_id && sourceRow && sourceRow.id) return row.source_id === sourceRow.id;
+  const norm = (x) => String(x || "").toLowerCase().split(/[—–,(-]/)[0].trim();
+  return !!row.source && norm(row.source) === norm(ev.source);
+}
+
+// Does a live weekly / monthly-<ordinal>-<weekday> row occur on dateStr?
+function recurringCoversDate(row, dateStr) {
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  if (isNaN(d.getTime())) return false;
+  const weekday = WEEKDAYS[d.getUTCDay()];
+  const mmdd = dateStr.slice(5);
+  if (row.excluded_ranges) {
+    try {
+      for (const [from, to] of JSON.parse(row.excluded_ranges)) if (dateStr >= from && dateStr <= to) return false;
+    } catch (e) { /* malformed ranges: ignore */ }
+  }
+  if (row.recurrence === "weekly") {
+    if (String(row.day_of_week || "").toLowerCase() !== weekday) return false;
+    const start = row.season_start, end = row.season_end;
+    if (start && end) return start <= end ? (mmdd >= start && mmdd <= end) : (mmdd >= start || mmdd <= end);
+    if (start) return mmdd >= start;
+    return true;
+  }
+  const m = String(row.recurrence || "").match(/^monthly-(first|second|third|fourth|fifth|last)-(\w+)$/);
+  if (!m || m[2] !== weekday) return false;
+  const dom = d.getUTCDate();
+  if (m[1] === "last") {
+    const daysInMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+    return dom + 7 > daysInMonth;
+  }
+  return Math.ceil(dom / 7) === ORDINALS[m[1]];
+}
+
+function coveredByRecurring(rows, ev, sourceRow) {
+  return (rows || []).some((r) => looseTitleMatch(r.title, ev.title) && sameSource(r, ev, sourceRow) && recurringCoversDate(r, ev.event_date));
+}
+
 // Same rules as checkDuplicateRisk, answered from the preloaded index.
-function checkDuplicateRiskIndexed(live, ev) {
+function checkDuplicateRiskIndexed(live, ev, sourceRow = null) {
   const isDated = ev.recurrence === "dated" && ev.event_date;
   const slot = isDated ? ev.event_date : ev.day_of_week;
   if (ev.source && live.exact.has([ev.title, ev.city, ev.start_time, slot, ev.source].join("|"))) return { isDuplicate: true };
   if (isDated && live.datedAny.has([String(ev.title || "").toLowerCase(), ev.city, ev.event_date, ev.start_time].join("|"))) return { isDuplicate: true };
+  if (isDated && coveredByRecurring(live.recurring.get([ev.city, ev.start_time].join("|")), ev, sourceRow)) return { isDuplicate: true };
   if (isDated && ev.day_of_week) {
     const weekly = live.weekly.get([ev.title, ev.city, ev.day_of_week, ev.start_time].join("|")) || [];
     const mmdd = String(ev.event_date).slice(5);
@@ -468,8 +542,8 @@ async function ingestCandidate(env, sourceRow, ev, reviewCtx = null) {
   }
 
   const dupCheck = reviewCtx && reviewCtx.live
-    ? checkDuplicateRiskIndexed(reviewCtx.live, ev)
-    : await checkDuplicateRisk(env, ev);
+    ? checkDuplicateRiskIndexed(reviewCtx.live, ev, sourceRow)
+    : await checkDuplicateRisk(env, ev, sourceRow);
   if (dupCheck.isDuplicate) {
     return { queued: false, reason: "duplicate-in-events" };
   }
@@ -586,4 +660,4 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
   return summary;
 }
 
-export { REJECT_REASONS, preloadIngestIndex, checkDuplicateRiskIndexed, titleKey, contentFilter, decodeEntities, loadReviewContext, applyReviewHistory, validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };
+export { REJECT_REASONS, looseTitleMatch, recurringCoversDate, coveredByRecurring, preloadIngestIndex, checkDuplicateRiskIndexed, titleKey, contentFilter, decodeEntities, loadReviewContext, applyReviewHistory, validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };
