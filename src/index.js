@@ -5642,7 +5642,25 @@ async function handleInternalRunSource(request, env, url) {
   return json({ source: key, results, verification });
 }
 
-export default {
+// Seconds each read-heavy GET endpoint may be served from the edge cache.
+// Not cached: pending-events (changes on every approve/reject), anything
+// that writes, and per-visitor endpoints.
+const EDGE_CACHE_TTLS = {
+  "/api/events": 180,
+  "/api/stats": 300,
+  "/api/source-freshness": 300,
+  "/api/check-pending-duplicates": 120,
+  "/api/search-insights": 900,
+  "/api/wau-trend": 1800,
+  "/api/referrals-trend": 1800,
+  "/api/review-stats": 300,
+  "/api/coverage-alerts": 300,
+  "/api/manual-source-gaps": 900,
+  "/api/recommended-experiment": 300,
+  "/api/sources": 120
+};
+
+const worker = {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
     if (event.cron === "0 18 * * 7") {
@@ -5714,7 +5732,36 @@ export default {
   },
   // HTTP entry point — this is what the frontend fetches from instead of
   // using a hardcoded JS array.
-  async fetch(request, env) {
+  // Edge cache in front of read-heavy GET endpoints (2026-10-02). D1's free
+  // tier allows 5M row reads/day; the admin Today view (stats scans
+  // page_views ~20x, freshness joins all events, the duplicate check runs an
+  // EXISTS per pending item) plus every visitor's /api/events exhausted it
+  // and took the whole site down. Cached responses cost zero D1 reads.
+  // ?fresh=1 bypasses (admin Refresh button).
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const ttl = request.method === "GET" ? EDGE_CACHE_TTLS[url.pathname] : undefined;
+    if (!ttl || typeof caches === "undefined") return worker.route(request, env, ctx);
+    const bypass = url.searchParams.get("fresh") === "1";
+    const keyUrl = new URL(url);
+    keyUrl.searchParams.delete("fresh");
+    const cacheKey = new Request(keyUrl.toString(), { method: "GET" });
+    const cache = caches.default;
+    if (!bypass) {
+      const hit = await cache.match(cacheKey);
+      if (hit) return hit;
+    }
+    const res = await worker.route(request, env, ctx);
+    if (res.ok) {
+      const copy = new Response(res.clone().body, res);
+      copy.headers.set("Cache-Control", `public, max-age=${ttl}`);
+      const put = cache.put(cacheKey, copy);
+      if (ctx && ctx.waitUntil) ctx.waitUntil(put); else await put;
+    }
+    return res;
+  },
+
+  async route(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: CORS_HEADERS });
@@ -5873,3 +5920,5 @@ export default {
     );
   }
 };
+
+export default worker;
