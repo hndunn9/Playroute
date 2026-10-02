@@ -1785,7 +1785,8 @@ const WELLNESSLIVING_STUDIOS = {
     source: "Raising Parents",
     city: "Lafayette",
     familyOnly: false, // everything they run is family programming
-    linkFallback: "https://raisingparentsco.com/calendar"
+    linkFallback: "https://raisingparentsco.com/calendar",
+    pageWeeks: 5 // the widget shows one week at a time; page through ~a month
   }
 };
 // Only kid/caregiver offerings belong on Playroute; this studio's list is
@@ -1908,26 +1909,182 @@ async function runWellnessLivingStudio(env, key) {
   return events;
 }
 
+// In-page script for WellnessLiving's week view. Runs after load (via
+// addScriptTag): finds the "Mon D, YYYY - Mon D, YYYY" week heading, captures
+// the page text, clicks the control that advances the week, waits for the
+// heading to change, and repeats. It then replaces the page with the captured
+// weeks plus a #pr-weeks-done marker that waitForSelector waits on. If it
+// can't find the heading or a "next" control it says so on a "PAGER:" line
+// (with a snippet of the nearby controls) so the run's error explains why.
+// Kept as a plain string, not a function: the bundler's keepNames helpers
+// would not exist inside the page.
+function wlWeekPagerScript(weeks) {
+  return `(async function () {
+  var WEEKS = ${Number(weeks) || 1};
+  var RANGE = /[A-Z][a-z]{2,8}\\.?\\s+\\d{1,2},?\\s*(\\d{4})?\\s*[-\\u2013\\u2014]\\s*[A-Z][a-z]{2,8}\\.?\\s+\\d{1,2},\\s*\\d{4}/;
+  var NEXT = /next|forward|right|\\u203a|\\u00bb|\\u2192|chevron-r|arrow-r/i;
+  var PREV = /prev|back|left|\\u2039|\\u00ab|\\u2190|chevron-l|arrow-l/i;
+  var deadline = Date.now() + 48000;
+  var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  var weeksOut = [], notes = [];
+  function heading() {
+    var best = null;
+    var els = document.querySelectorAll("body *");
+    for (var i = 0; i < els.length; i++) {
+      var t = (els[i].textContent || "").trim();
+      if (t.length < 70 && RANGE.test(t) && (!best || t.length <= (best.textContent || "").trim().length)) best = els[i];
+    }
+    return best;
+  }
+  function label(el) {
+    return [el.tagName.toLowerCase(), el.getAttribute("aria-label"), el.getAttribute("title"), el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className, el.id, (el.textContent || "").trim().slice(0, 12)].join(" ");
+  }
+  function nextControl(h) {
+    var scope = h, seen = [];
+    for (var up = 0; up < 5 && scope; up++, scope = scope.parentElement) {
+      var cands = scope.querySelectorAll("button, a, [role=button], [onclick], [class*=next], [class*=arrow], [class*=right], i, svg, span");
+      for (var i = 0; i < cands.length; i++) {
+        var c = cands[i];
+        if (c === h || c.contains(h) || h.contains(c)) continue;
+        var l = label(c);
+        if (seen.length < 8) seen.push(l.replace(/\\s+/g, " ").slice(0, 60));
+        if (NEXT.test(l) && !PREV.test(l)) return { el: c };
+      }
+      var hr = h.getBoundingClientRect();
+      for (var j = 0; j < cands.length; j++) {
+        var d = cands[j];
+        if (d === h || d.contains(h) || h.contains(d)) continue;
+        var r = d.getBoundingClientRect();
+        if (r.width > 0 && r.width < 80 && r.left >= hr.right - 2 && Math.abs((r.top + r.bottom) / 2 - (hr.top + hr.bottom) / 2) < 40 && !PREV.test(label(d))) return { el: d, guessed: true };
+      }
+    }
+    return { el: null, seen: seen };
+  }
+  function click(el) {
+    var target = el.closest ? (el.closest("button, a, [role=button]") || el) : el;
+    ["mousedown", "mouseup", "click"].forEach(function (type) {
+      target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+    });
+  }
+  try {
+    var h = null;
+    while (!(h = heading()) && Date.now() < deadline) await sleep(500);
+    if (!h) notes.push("no week heading found");
+    for (var w = 0; w < WEEKS && Date.now() < deadline; w++) {
+      await sleep(1500);
+      h = heading();
+      var rangeText = h ? (h.textContent || "").trim() : "unknown";
+      weeksOut.push("=== WEEK " + (w + 1) + ": " + rangeText + " ===\\n" + document.body.innerText);
+      if (w === WEEKS - 1 || !h) break;
+      var nc = nextControl(h);
+      if (!nc.el) { notes.push("no next-week control near heading; saw: " + nc.seen.join(" | ")); break; }
+      if (nc.guessed && notes.indexOf("next control guessed by position") < 0) notes.push("next control guessed by position");
+      click(nc.el);
+      var changed = false;
+      while (Date.now() < deadline) {
+        await sleep(400);
+        var h2 = heading();
+        if (h2 && (h2.textContent || "").trim() !== rangeText) { changed = true; break; }
+      }
+      if (!changed) { notes.push("week did not change after click (" + label(nc.el).slice(0, 60) + ")"); break; }
+    }
+  } catch (e) {
+    notes.push("error: " + e);
+  } finally {
+    var pre = document.createElement("pre");
+    pre.textContent = "PAGER: captured " + weeksOut.length + " of " + WEEKS + " weeks" + (notes.length ? "; " + notes.join("; ") : "") + "\\n\\n" + weeksOut.join("\\n\\n");
+    var done = document.createElement("div");
+    done.id = "pr-weeks-done";
+    done.textContent = "done";
+    document.body.innerHTML = "";
+    document.body.appendChild(pre);
+    document.body.appendChild(done);
+  }
+})();`;
+}
+
+// Extraction model for the rendered widget text. Sonnet is plenty for
+// reading a schedule; it gets today's date so it can resolve WellnessLiving's
+// year-less headings ("Mon, Sep 28").
+const WL_EXTRACT_MODEL = "claude-sonnet-5-5";
+const WL_TIME_RE = /\b\d{1,2}:\d{2}\s*[ap]\.?m\b/i;
+
+async function wlExtractWithClaude(env, cfg, markdown, today) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: WL_EXTRACT_MODEL,
+      max_tokens: 4096,
+      system: "You extract class and event sessions from a booking widget's rendered text. Reply with only a JSON object, no prose.",
+      messages: [{ role: "user", content:
+`Today is ${today} (US Mountain Time). Below is the rendered schedule for ${cfg.source} in ${cfg.city}, Colorado.
+
+List every upcoming session shown in the schedule itself (not filter lists or menus). The text may contain several \"=== WEEK n: <date range> ===\" sections, one per week of the calendar; use each section's date range to resolve that section's day headings to full dates, and list a session once even if it appears in two sections. Where a day heading omits the year, resolve it to the next occurrence on or after today. Use only times actually shown. Set last_date equal to first_date unless that specific listing explicitly says it repeats through a later date.
+
+Return {"events":[{"title","first_date":"YYYY-MM-DD","last_date":"YYYY-MM-DD","weekday","start_time":"HH:MM 24h","end_time":"HH:MM 24h","price","description","link"}]}. Return {"events":[]} if no sessions are shown.
+
+---
+${markdown.slice(0, 120000)}` }]
+    })
+  });
+  if (!res.ok) throw new Error(`Anthropic API error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  const text = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error(`Couldn't parse events from model reply: ${text.slice(0, 200)}`);
+  const parsed = JSON.parse(m[0]);
+  return Array.isArray(parsed.events) ? parsed.events : [];
+}
+
+// What the browser actually rendered, condensed for an error message.
+function wlSnippet(markdown) {
+  return String(markdown || "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\s+/g, " ").trim().slice(0, 280) || "(empty page)";
+}
+
 async function scrapeWellnessLivingStudio(env, key) {
   const cfg = WELLNESSLIVING_STUDIOS[key];
   if (!env) throw new Error("env required for Browser Run");
-  const { frameUrl, srcs } = await findWellnessLivingFrame(env, cfg.url);
+  const { frameUrl } = await findWellnessLivingFrame(env, cfg.url);
   const target = cfg.frameUrl || frameUrl || cfg.url;
-  const result = await browserRun(env, "json", {
-    url: target,
-    gotoOptions: { waitUntil: "networkidle0", timeout: 60000 },
-    prompt: "List every upcoming class series, workshop, or event shown in the schedule/booking list on this page. Use only dates and times actually shown on the page; do not guess. Times are US Mountain Time.",
-    response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA }
-  });
-  const items = (result && Array.isArray(result.events)) ? result.events : [];
-  // Zero events from a studio that always has a schedule means the browser
-  // didn't see the widget -- fail loudly (shows as an error on the admin
-  // page, and verification skips this source) instead of returning [] and
-  // letting every linked class look cancelled.
-  if (items.length === 0) {
-    throw new Error(`Browser saw no events at ${target} (iframes on page: ${srcs.length ? srcs.join(", ").slice(0, 200) : "none"})`);
-  }
   const today = toMountainDateStr(new Date());
+  // Render the widget to Markdown (deterministic, no AI). The widget fetches
+  // its sessions with signed requests after load, so wait for the network to
+  // settle and then a few seconds more before reading the page.
+  const markdownBody = {
+    url: target,
+    gotoOptions: { waitUntil: "networkidle0", timeout: 60000 }
+  };
+  if (cfg.pageWeeks > 1) {
+    // Page through the week view in-browser and capture every week in this
+    // one Browser Run call (still 1 request against the 1-per-10 s limit).
+    markdownBody.addScriptTag = [{ content: wlWeekPagerScript(cfg.pageWeeks) }];
+    markdownBody.waitForSelector = { selector: "#pr-weeks-done", timeout: 55000 };
+  } else {
+    markdownBody.waitForTimeout = 5000;
+  }
+  const markdown = String(await browserRun(env, "markdown", markdownBody) || "");
+  const pagerNote = (markdown.match(/PAGER:[^\n]*/) || [""])[0];
+  // No clock times anywhere means the sessions never rendered (widget blocked
+  // headless, or nothing scheduled). Fail loudly with what the browser saw
+  // instead of returning [] and letting every linked class look cancelled.
+  if (!WL_TIME_RE.test(markdown)) {
+    throw new Error(`No session times rendered at ${cfg.url} (frame ${frameUrl ? "found" : "not found"}). ${pagerNote} Browser saw: ${wlSnippet(markdown)}`);
+  }
+  let items;
+  if (env.ANTHROPIC_API_KEY) {
+    items = await wlExtractWithClaude(env, cfg, markdown, today);
+  } else {
+    const result = await browserRun(env, "json", {
+      html: `<pre>${markdown.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`,
+      prompt: `Today is ${today}. List every upcoming session in this schedule. Dates may omit the year: resolve each to the next occurrence on or after today. Use only times actually shown. Times are US Mountain Time.`,
+      response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA }
+    });
+    items = (result && Array.isArray(result.events)) ? result.events : [];
+  }
+  if (items.length === 0) {
+    throw new Error(`Schedule rendered at ${target.slice(0, 120)} but no sessions were extracted. ${pagerNote} Browser saw: ${wlSnippet(markdown)}`);
+  }
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/, TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const out = [];
   const dropped = { notFamily: 0, virtual: 0, badDate: 0, past: 0, noTime: 0 };
