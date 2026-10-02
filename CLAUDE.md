@@ -55,7 +55,12 @@ when a rule here turns out wrong, fix it in the same PR.
   Manual run: `POST /api/run-sources?source=<key>` or `?cadence=weekly-b`.
 - Everything scraped goes to `pending_events` for review (`auto_publish=0`),
   except the trusted iCal/JSON feeds.
-- Boulder library iCal dedup keys include the room/source string. If the library
+- **Boulder Public Library is on Communico** (since ~2026-09-28; the LibCal iCal feed and
+  `/event/<id>` links are dead). `boulder_ical` runs `fetchBoulderCommunico` on the
+  `api.communico.co/v2/boulderlibrary/events/export.xml?start=YYYY-MM-DD` export (~12 days per
+  window, 3 windows). No per-event links exist, so `source_url` is the branch listing
+  `calendar.boulderlibrary.org/events/?l=<Branch>`.
+- Boulder library dedup keys include the room/source string. If the library
   renames a room, old and new rows can duplicate. Clean up by keeping the newer spelling.
 - **JS-rendered platforms** (WellnessLiving, Arketa, iClassPro) can't be read with
   `fetch()`. WellnessLiving's API needs a per-request signature, so use the
