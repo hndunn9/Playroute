@@ -77,6 +77,10 @@ when a rule here turns out wrong, fix it in the same PR.
   then Claude (`WL_EXTRACT_MODEL`, needs `ANTHROPIC_API_KEY`) extracts sessions with today's
   date, because the widget's week headings omit the year. Without the key it falls back to
   `/json` on the rendered text. If no clock times render, the error quotes what the browser saw.
+- **Subrequest budget:** `runSources` preloads seen dedup keys and a live-events index once per
+  run (`preloadIngestIndex`) and checks duplicates in memory, so a run costs ~1 D1 call per NEW
+  item instead of ~5 per candidate. Verification only judges live events up to the feed's
+  furthest date and skips flagging (reports an error) if >30% (and >10) would be flagged at once.
 - **Review learning** (`pipeline.js`): before queuing, `contentFilter` drops placeholder titles
   (DRAFT/TBD), "…Buddies – Register" series, ages 9+ or teen/tween titles (unless the title says
   family/all ages), and adult topics without a kid signal. Titles are HTML-entity-decoded.

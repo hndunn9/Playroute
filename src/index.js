@@ -3405,9 +3405,9 @@ const BOULDER_WINDOW_STARTS = [0, 12, 24]; // days from today
 // "Ages 9 to 11", "Ages 12 to 18", "Ages 18+", "All ages". The old feed was
 // birth-5 only; keep young kids and all-ages, drop 9+ and adult-only.
 function parseBoulderAges(raw) {
-  let min = 99, max = -1, kid = false;
+  let min = 99, max = -1, kid = false, allAges = false;
   for (const tag of String(raw || "").split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)) {
-    if (/all ages/.test(tag)) { kid = true; min = Math.min(min, 0); max = Math.max(max, 12); continue; }
+    if (/all ages/.test(tag)) { allAges = true; continue; }
     if (/18\s*\+|adult/.test(tag)) continue;
     const birth = /birth/.test(tag);
     const nums = (tag.match(/\d+/g) || []).map(Number);
@@ -3416,8 +3416,13 @@ function parseBoulderAges(raw) {
     if (lo === undefined || hi === null || lo >= 9) continue;
     kid = true; min = Math.min(min, lo); max = Math.max(max, hi);
   }
-  return kid ? { age_min: min, age_max: max } : null;
+  if (kid) return { age_min: min, age_max: max };
+  // "All ages" alone is too broad here (HiSET tutoring, concerts, makerspace
+  // studios carry it), so the caller only keeps it with a kid/family title.
+  return allAges ? { age_min: 0, age_max: 12, allAgesOnly: true } : null;
 }
+const BOULDER_KID_TITLE_RE = /\b(kids?|child|children|famil(y|ies)|toddlers?|bab(y|ies)|preschool|story ?time|storytime|tots?|little|pajama|lego|sensory|play(time|group|date)?|puppet|stay & play|music & movement)\b/i;
+const BOULDER_SKIP_TITLE_RE = /school visit|class visit|hiset|tutoring|open studio|esl|english conversation|citizenship|tax help|book club|book group/i;
 
 function boulderBranchUrl(location) {
   return `https://calendar.boulderlibrary.org/events/?l=${encodeURIComponent(location || "Main Library").replace(/%20/g, "+")}`;
@@ -3437,11 +3442,12 @@ async function fetchBoulderCommunico() {
     const eventRe = /<event>([\s\S]*?)<\/event>/g;
     let m;
     while ((m = eventRe.exec(xml)) !== null) {
-      const block = m[1];
-      const field = (tag) => {
-        const fm = block.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`));
-        return fm ? decodeHtmlEntities(fm[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/, "$1")).trim() : "";
-      };
+      // One pass over the event's child tags (cheaper than a new RegExp per field).
+      const fields = {};
+      const tagRe = /<(\w+)>([\s\S]*?)<\/\1>/g;
+      let t;
+      while ((t = tagRe.exec(m[1])) !== null) fields[t[1]] = t[2];
+      const field = (tag) => fields[tag] ? decodeHtmlEntities(fields[tag].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/, "$1")).trim() : "";
       const location = field("Location");
       if (!location || /virtual|online/i.test(location)) continue; // a place families can go
       const ages = parseBoulderAges(field("Ages"));
@@ -3453,7 +3459,8 @@ async function fetchBoulderCommunico() {
       const endLabel = field("EndTime");
       const startTime = to24HourAnythink(startLabel);
       if (!title || !monthDay || !weekday || !startTime) continue;
-      if (/^cancel/i.test(title)) continue;
+      if (/^cancel/i.test(title) || BOULDER_SKIP_TITLE_RE.test(title)) continue;
+      if (ages.allAgesOnly && !BOULDER_KID_TITLE_RE.test(title)) continue;
       const year = resolveAnythinkYear(monthDay, now);
       if (!year) continue;
       const eventDate = new Date(`${monthDay} ${year} 12:00:00`).toISOString().slice(0, 10);
@@ -4362,7 +4369,23 @@ async function runSourceVerification(env, cadence = null, sourceKey = null) {
       continue;
     }
 
-    for (const existing of linkedEvents) {
+    // Only judge live events the feed could actually contain: anything dated
+    // after the feed's furthest date isn't "missing", it's out of range
+    // (Boulder's export covers ~5 weeks; live rows run further out).
+    const horizon = freshCandidates.map((c) => c.event_date).filter(Boolean).sort().pop() || null;
+    const toCheck = linkedEvents.filter((e) => e.recurrence !== "dated" || !horizon || e.event_date <= horizon);
+    // Safety brake: if a big share of linked events would be flagged at once,
+    // the source almost certainly changed format (titles/times), not that
+    // half its programs were cancelled. Report it instead of flooding the queue.
+    const unmatched = toCheck.filter((existing) => !freshCandidates.some((c) =>
+      sameEventTitle(c.title, existing.title) &&
+      (existing.recurrence === "dated" ? c.event_date === existing.event_date : c.day_of_week === existing.day_of_week)));
+    if (unmatched.length > 10 && unmatched.length > toCheck.length * 0.3) {
+      errors.push({ source: source.source_key, error: `${unmatched.length} of ${toCheck.length} linked events not found in the feed; skipped flagging (source format likely changed)` });
+      continue;
+    }
+
+    for (const existing of toCheck) {
       const match = freshCandidates.find((c) =>
         sameEventTitle(c.title, existing.title) &&
         (existing.recurrence === "dated" ? c.event_date === existing.event_date : c.day_of_week === existing.day_of_week)
