@@ -16,6 +16,12 @@ when a rule here turns out wrong, fix it in the same PR.
   dashboard variables across deploys; prefer bindings over dashboard vars.
 - Cron triggers are capped at **5** on this account (see `wrangler.jsonc`).
 
+- **D1 free tier: 5M rows read/day** (resets midnight UTC = 6 PM MT). Hitting it took the whole
+  site down on 2026-10-02. Read-heavy GETs go through the edge cache (`EDGE_CACHE_TTLS` in
+  `src/index.js`; `?fresh=1` bypasses). Don't add polling/auto-refresh to the admin. Keep the
+  indexes in `migrations/2026-10-02-read-indexes.sql`. Ad-hoc analysis queries count too: avoid
+  `LIKE '%…%'` joins across events × link_clicks.
+
 ## Before delivering code
 - `node --check src/index.js` (and the other `src/*.js` you touched).
 - For `public/*.html`: run a real HTML tag-matching parser (htmlparser2), a real

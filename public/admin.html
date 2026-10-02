@@ -307,7 +307,7 @@
     <header class="view-head">
       <div><p class="eyebrow" id="todayDate">Today</p><h1 id="todayHeadline">Loading today…</h1></div>
       <div class="head-actions">
-        <button class="btn-sm ghost" onclick="loadToday()">Refresh</button>
+        <button class="btn-sm ghost" onclick="loadToday(true)">Refresh</button>
         <button class="btn-sm" onclick="showView('pipeline');runAllSourcesAndRefresh()">Run all sources</button>
       </div>
     </header>
@@ -1364,11 +1364,6 @@ async function loadSummaryStrip(){
   }
 }
 
-loadStats();
-loadPendingEvents();
-loadPlaygroundsForPhoto();
-loadSources();
-loadSummaryStrip();
 
 async function loadFreshness(){
   const el = document.getElementById('freshBody');
@@ -1388,7 +1383,6 @@ async function loadFreshness(){
     el.innerHTML = `<div style="color:#7A6650;">Events in the next ${d.lookaheadDays} days, by city (dated + recurring):</div><div class="fresh-chips">${chips}</div>${html}`;
   }catch(err){ el.textContent = "Couldn't load freshness."; }
 }
-loadFreshness();
 
 // ══ 2026-10 redesign: view routing + Today command center ══════════════════
 // Every original card and loader is unchanged; they now live in views. Views
@@ -1396,10 +1390,16 @@ loadFreshness();
 // "Load…" click (the buttons still work as refreshes).
 const VIEWS = ['today','review','pipeline','growth','experiments','content','newsletter'];
 const viewLoaded = {};
+// Each view loads its data the first time it's opened (2026-10-02): loading
+// every card at startup, plus a 5-minute Today auto-refresh, helped exhaust
+// D1's free daily read limit. Heavy GETs are also edge-cached for a few
+// minutes server-side; Today's Refresh button bypasses that cache.
 const VIEW_LOADERS = {
-  review: () => { loadReviewFeedback(); checkPendingDuplicates(); },
-  growth: () => { loadEngagement(); loadReferralsTrend(); loadSearchInsights(); loadWauTrend(); },
-  experiments: () => loadRecExperiment()
+  review: () => { loadPendingEvents(); loadReviewFeedback(); checkPendingDuplicates(); },
+  pipeline: () => { loadSummaryStrip(); loadSources(); loadFreshness(); },
+  growth: () => { loadStats(); loadEngagement(); loadReferralsTrend(); loadSearchInsights(); loadWauTrend(); },
+  experiments: () => loadRecExperiment(),
+  content: () => loadPlaygroundsForPhoto()
 };
 function showView(v){
   if(!VIEWS.includes(v)) v = 'today';
@@ -1618,9 +1618,9 @@ function renderHeadline(fresh, pending, taskCount){
   document.getElementById('todayHeadline').textContent = parts.join(' ') || (taskCount ? `${taskCount} things need you.` : 'All clear. Nothing needs you.');
 }
 
-async function loadToday(){
+async function loadToday(bypassCache){
   document.getElementById('todayDate').textContent = new Date().toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric'});
-  const get = u => fetch(u).then(r => r.ok ? r.json() : null).catch(() => null);
+  const get = u => fetch(bypassCache === true ? u + (u.includes('?') ? '&' : '?') + 'fresh=1' : u).then(r => r.ok ? r.json() : null).catch(() => null);
   const [stats, pending, fresh, dups, search, coverage] = await Promise.all([
     get('/api/stats'), get('/api/pending-events'), get('/api/source-freshness'),
     get('/api/check-pending-duplicates'), get('/api/search-insights'), get('/api/coverage-alerts')
@@ -1638,7 +1638,6 @@ async function loadToday(){
 }
 showView(location.hash.slice(1) || 'today');
 loadToday();
-setInterval(() => { if(!document.hidden && document.getElementById('view-today').classList.contains('active')) loadToday(); }, 5 * 60 * 1000);
 </script>
 </body>
 </html>
