@@ -40,6 +40,9 @@
   // Cloudflare Browser Run (headless Chrome) for JS-rendered sources like
   // WellnessLiving. Lives in this file so Git deploys never drop it.
   "browser": { "binding": "BROWSER" },
+  // Workers AI: fallback extractor for WellnessLiving schedules when the
+  // Anthropic call fails (wlExtractWithCloudflareAI).
+  "ai": { "binding": "AI" },
 
   // Keep variables added in the dashboard when GitHub deploys this Worker
   // (without this, every deploy wipes them).
