@@ -225,6 +225,72 @@ async function checkDuplicateRisk(env, ev) {
 
 
 // ---------------------------------------------------------------------------
+// BULK PRELOAD (2026-10-01). checkDuplicateRisk costs 2-4 D1 queries per
+// candidate, plus one INSERT each. A source with ~250 candidates (Boulder on
+// Communico) blew through the Free plan's 1,000-subrequest cap mid-run, so
+// the run died without recording itself. runSources now loads, once:
+//   - every dedup_key already seen for this source (pending/approved/rejected),
+//     so already-known candidates skip the INSERT entirely, and
+//   - a live-events index for the candidates' cities,
+// and checks duplicates in memory with the same rules as checkDuplicateRisk.
+// ---------------------------------------------------------------------------
+async function preloadIngestIndex(env, sourceRow, candidates) {
+  const cities = [...new Set((candidates || []).map((c) => c.city).filter(Boolean))];
+  const existingKeys = new Set();
+  if (sourceRow && sourceRow.id) {
+    const { results } = await env.DB.prepare(
+      `SELECT dedup_key FROM pending_events WHERE source_id = ? AND dedup_key IS NOT NULL`
+    ).bind(sourceRow.id).all();
+    for (const r of results || []) existingKeys.add(r.dedup_key);
+  }
+  if (!cities.length) return { existingKeys, live: null };
+  const { results: rows } = await env.DB.prepare(
+    `SELECT title, city, event_date, start_time, day_of_week, recurrence, source, season_start, season_end
+       FROM events WHERE city IN (${cities.map(() => "?").join(",")})
+        AND (recurrence = 'weekly' OR event_date IS NULL OR event_date >= date('now', '-1 day'))`
+  ).bind(...cities).all();
+  const live = { exact: new Set(), datedAny: new Set(), weekly: new Map(), sameDay: new Map() };
+  for (const e of rows || []) {
+    const lt = String(e.title || "").toLowerCase();
+    live.exact.add([e.title, e.city, e.start_time, e.recurrence === "dated" ? e.event_date : e.day_of_week, e.source].join("|"));
+    if (e.event_date) {
+      live.datedAny.add([lt, e.city, e.event_date, e.start_time].join("|"));
+      const dk = [e.title, e.city, e.event_date].join("|");
+      if (!live.sameDay.has(dk)) live.sameDay.set(dk, e.start_time);
+    }
+    if (e.recurrence === "weekly") {
+      const wk = [e.title, e.city, e.day_of_week, e.start_time].join("|");
+      if (!live.weekly.has(wk)) live.weekly.set(wk, []);
+      live.weekly.get(wk).push(e);
+    }
+  }
+  return { existingKeys, live };
+}
+
+function inSeason(mmdd, start, end) {
+  if (!start || !end) return true;
+  return start <= end ? (mmdd >= start && mmdd <= end) : (mmdd >= start || mmdd <= end);
+}
+
+// Same rules as checkDuplicateRisk, answered from the preloaded index.
+function checkDuplicateRiskIndexed(live, ev) {
+  const isDated = ev.recurrence === "dated" && ev.event_date;
+  const slot = isDated ? ev.event_date : ev.day_of_week;
+  if (ev.source && live.exact.has([ev.title, ev.city, ev.start_time, slot, ev.source].join("|"))) return { isDuplicate: true };
+  if (isDated && live.datedAny.has([String(ev.title || "").toLowerCase(), ev.city, ev.event_date, ev.start_time].join("|"))) return { isDuplicate: true };
+  if (isDated && ev.day_of_week) {
+    const weekly = live.weekly.get([ev.title, ev.city, ev.day_of_week, ev.start_time].join("|")) || [];
+    const mmdd = String(ev.event_date).slice(5);
+    if (weekly.some((w) => inSeason(mmdd, w.season_start, w.season_end))) return { isDuplicate: true };
+  }
+  if (isDated) {
+    const t = live.sameDay.get([ev.title, ev.city, ev.event_date].join("|"));
+    if (t) return { isDuplicate: false, possibleTimeConflict: t };
+  }
+  return { isDuplicate: false };
+}
+
+// ---------------------------------------------------------------------------
 // REVIEW FEEDBACK LOOP (2026-09-25)
 //
 // Every approve/reject in the review queue is a label on "what good looks
@@ -293,7 +359,7 @@ async function loadReviewContext(env, sourceRow) {
 
 // Records rule hits gathered during a run (one query per rule that fired).
 async function flushRuleHits(env, ctx) {
-  if (!ctx) return;
+  if (!ctx || !ctx.ruleHits) return;
   for (const [id, n] of ctx.ruleHits) {
     await env.DB.prepare(
       `UPDATE review_rules SET hits = hits + ?, last_hit_at = CURRENT_TIMESTAMP WHERE id = ?`
@@ -303,7 +369,7 @@ async function flushRuleHits(env, ctx) {
 
 // Returns { skip: true, why } or { skip: false, note } for one candidate.
 function applyReviewHistory(ctx, ev) {
-  if (!ctx || !ev.title) return { skip: false };
+  if (!ctx || !ctx.rulesByKey || !ev.title) return { skip: false };
   const key = titleKey(ev.title);
 
   const contains = (ctx.containsRules || []).find((r) => key.includes(r.title_key));
@@ -396,7 +462,14 @@ async function ingestCandidate(env, sourceRow, ev, reviewCtx = null) {
     return { queued: false, reason: history.why === "rule" ? "skipped-by-rule" : "skipped-learned" };
   }
 
-  const dupCheck = await checkDuplicateRisk(env, ev);
+  const dedupKey = ev.dedup_key || buildStableDedupKey(sourceKey, ev);
+  if (reviewCtx && reviewCtx.existingKeys && reviewCtx.existingKeys.has(dedupKey)) {
+    return { queued: false, reason: "already-seen" };
+  }
+
+  const dupCheck = reviewCtx && reviewCtx.live
+    ? checkDuplicateRiskIndexed(reviewCtx.live, ev)
+    : await checkDuplicateRisk(env, ev);
   if (dupCheck.isDuplicate) {
     return { queued: false, reason: "duplicate-in-events" };
   }
@@ -426,7 +499,6 @@ async function ingestCandidate(env, sourceRow, ev, reviewCtx = null) {
     return { queued: false, reason: "blocked-by-validation", severity: finalSeverity, issues };
   }
 
-  const dedupKey = ev.dedup_key || buildStableDedupKey(sourceKey, ev);
   const token = crypto.randomUUID();
 
   const res = await env.DB.prepare(
@@ -482,11 +554,13 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
     }
     try {
       const candidates = await runner(env, source);
-      const reviewCtx = await loadReviewContext(env, source);
-      let queued = 0, skippedDuplicate = 0, blockedInvalid = 0, warnings = 0, skippedByReview = 0, filtered = 0;
+      const reviewCtx = (await loadReviewContext(env, source)) || {};
+      Object.assign(reviewCtx, await preloadIngestIndex(env, source, candidates));
+      let queued = 0, skippedDuplicate = 0, blockedInvalid = 0, warnings = 0, skippedByReview = 0, filtered = 0, alreadySeen = 0;
       for (const ev of candidates) {
         const result = await ingestCandidate(env, source, ev, reviewCtx);
         if (result.reason === "duplicate-in-events") { skippedDuplicate++; continue; }
+        if (result.reason === "already-seen") { alreadySeen++; continue; }
         if (result.reason === "blocked-by-validation") { blockedInvalid++; continue; }
         if (result.reason === "skipped-by-rule" || result.reason === "skipped-learned") { skippedByReview++; continue; }
         if (result.reason === "filtered") { filtered++; continue; }
@@ -499,7 +573,7 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
       await env.DB.prepare(
         `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = 'ok', last_error = NULL, last_found = ? WHERE id = ?`
       ).bind(candidates.length, source.id).run();
-      summary.push({ source: source.source_key, status: "ok", found: candidates.length, queued, skippedDuplicate, blockedInvalid, skippedByReview, filtered, warnings });
+      summary.push({ source: source.source_key, status: "ok", found: candidates.length, queued, skippedDuplicate, blockedInvalid, skippedByReview, filtered, alreadySeen, warnings });
     } catch (e) {
       await env.DB.prepare(
         `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = 'error', last_error = ? WHERE id = ?`
@@ -510,4 +584,4 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
   return summary;
 }
 
-export { REJECT_REASONS, titleKey, contentFilter, decodeEntities, loadReviewContext, applyReviewHistory, validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };
+export { REJECT_REASONS, preloadIngestIndex, checkDuplicateRiskIndexed, titleKey, contentFilter, decodeEntities, loadReviewContext, applyReviewHistory, validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };
