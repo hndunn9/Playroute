@@ -167,6 +167,19 @@ async function checkDuplicateRisk(env, ev) {
   ).bind(...binds).first();
   if (row) return { isDuplicate: true };
 
+  // Fourth gap found 2026-10-01: Boulder's live storytimes were entered by
+  // hand or from the library's iCal feed with a different source string than
+  // the LibCal scraper uses, so the exact match above (which includes source)
+  // missed them and ~40 duplicates reached the queue. A dated slot with the
+  // same title (case-insensitive), city, date and start time is the same
+  // session no matter which source string it carries.
+  if (isDated) {
+    const anySource = await env.DB.prepare(
+      `SELECT 1 FROM events WHERE lower(title) = lower(?) AND city = ? AND event_date = ? AND start_time = ? LIMIT 1`
+    ).bind(ev.title, ev.city, ev.event_date, ev.start_time).first();
+    if (anySource) return { isDuplicate: true };
+  }
+
   // Third gap found 2026-09-25: a DATED candidate that falls on a slot a
   // live WEEKLY row already covers (same title, city, weekday, start time)
   // is a duplicate -- e.g. Lafayette's iCal feed lists every Tuesday's
@@ -257,21 +270,25 @@ async function loadReviewContext(env, sourceRow) {
   if (!sourceRow || !sourceRow.id) return null;
   const [{ results: rules }, { results: hist }] = await Promise.all([
     env.DB.prepare(
-      `SELECT id, title_key FROM review_rules WHERE action = 'skip' AND (source_id = ? OR source_id IS NULL)`
+      `SELECT id, title_key, action FROM review_rules WHERE action IN ('skip', 'skip_contains') AND (source_id = ? OR source_id IS NULL)`
     ).bind(sourceRow.id).all(),
     env.DB.prepare(
-      `SELECT title, status, reject_reason FROM pending_events
-        WHERE source_id = ? AND change_type IS NULL AND status IN ('approved','rejected')`
+      `SELECT title, status, reject_reason, decided_at FROM pending_events
+        WHERE source_id = ? AND change_type IS NULL AND status IN ('approved','rejected')
+        ORDER BY decided_at`
     ).bind(sourceRow.id).all()
   ]);
-  const rulesByKey = new Map((rules || []).map((r) => [r.title_key, r.id]));
+  const rulesByKey = new Map((rules || []).filter((r) => r.action === "skip").map((r) => [r.title_key, r.id]));
+  // skip_contains: drop any title whose normalized key CONTAINS the rule's
+  // key, so "kids caf" also catches "Kids Café at Brighton".
+  const containsRules = (rules || []).filter((r) => r.action === "skip_contains" && r.title_key);
   const histByKey = new Map();
   for (const r of hist || []) {
     const k = titleKey(r.title);
     if (!histByKey.has(k)) histByKey.set(k, []);
     histByKey.get(k).push(r);
   }
-  return { rulesByKey, histByKey, ruleHits: new Map() };
+  return { rulesByKey, containsRules, histByKey, ruleHits: new Map() };
 }
 
 // Records rule hits gathered during a run (one query per rule that fired).
@@ -289,7 +306,8 @@ function applyReviewHistory(ctx, ev) {
   if (!ctx || !ev.title) return { skip: false };
   const key = titleKey(ev.title);
 
-  const ruleId = ctx.rulesByKey.get(key);
+  const contains = (ctx.containsRules || []).find((r) => key.includes(r.title_key));
+  const ruleId = ctx.rulesByKey.get(key) || (contains && contains.id);
   if (ruleId) {
     ctx.ruleHits.set(ruleId, (ctx.ruleHits.get(ruleId) || 0) + 1);
     return { skip: true, why: "rule" };
@@ -300,8 +318,14 @@ function applyReviewHistory(ctx, ev) {
 
   const approved = hist.filter((r) => r.status === "approved").length;
   const rejected = hist.filter((r) => r.status === "rejected");
-  const itemLevelRejects = rejected.filter((r) => ITEM_LEVEL_REASONS.includes(r.reject_reason)).length;
-  if (approved === 0 && itemLevelRejects >= LEARNED_SKIP_MIN_REJECTIONS) {
+  // Only decisions AFTER the most recent approval count, so changing your
+  // mind (approved once, then rejected it twice) still teaches the skip.
+  // hist is ordered by decided_at.
+  let lastApproval = -1;
+  hist.forEach((r, i) => { if (r.status === "approved") lastApproval = i; });
+  const itemLevelRejects = hist.slice(lastApproval + 1)
+    .filter((r) => r.status === "rejected" && ITEM_LEVEL_REASONS.includes(r.reject_reason)).length;
+  if (itemLevelRejects >= LEARNED_SKIP_MIN_REJECTIONS) {
     return { skip: true, why: "learned" };
   }
 
@@ -319,11 +343,53 @@ function applyReviewHistory(ctx, ev) {
   return { skip: false, note };
 }
 
+// ---------------------------------------------------------------------------
+// CONTENT FILTERS (2026-10-01), built from the review history: of ~300
+// rejections, most were teen/tween programs, adult talks tagged with a
+// default 0-18 age range, placeholder titles, and registration-only
+// "buddies" series. Anything matching is dropped before it reaches the
+// queue. An explicit kid/family signal in the title always wins over the
+// adult-topic list, and ages 9+ stay only when the title says family/all ages.
+// Measured on past decisions: ages 9+ were approved 4 times, rejected 86.
+// ---------------------------------------------------------------------------
+const KID_SIGNAL_RE = /\b(kids?|child|children|famil(y|ies)|toddlers?|bab(y|ies)|preschool(ers)?|story ?time|storytime|tots?|little ones?|caregivers?|parents?|all ages)\b/i;
+const FAMILY_SIGNAL_RE = /\b(famil(y|ies)|all ages|caregivers?|parents? (and|&) (kids?|child))\b/i;
+const TEEN_TITLE_RE = /\b(teens?|tweens?|grades? (6|7|8|9|1[0-2])|middle school|high school)\b/i;
+const PLACEHOLDER_TITLE_RE = /\b(draft|tbd|tba)\b/i;
+const REGISTRATION_SERIES_RE = /\bbuddies\b.*\bregister\b|[-–—:]\s*register\s*$/i;
+const ADULT_TOPIC_RE = /\b(tech tuesday|orientation|book group|board meeting|genealogy|virtual training|book club|brew(ing|ery)|pints?|wine|beer|cocktails?|an evening with|lecture|ballots?|voters?|elections?|seed swap|tea of the month|grow your business|small business|resumes?|job search|medicare|retirement|estate planning|taxes)\b/i;
+
+function decodeEntities(str) {
+  if (!str || !/&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(str)) return str;
+  const named = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "–", mdash: "—", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", hellip: "…" };
+  return String(str)
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&([a-z]+);/gi, (m, n) => named[n.toLowerCase()] ?? m);
+}
+
+// Returns a short reason string if the candidate should be dropped, else null.
+function contentFilter(ev) {
+  const title = String(ev.title || "");
+  if (PLACEHOLDER_TITLE_RE.test(title)) return "placeholder-title";
+  if (REGISTRATION_SERIES_RE.test(title)) return "registration-series";
+  const familySignal = FAMILY_SIGNAL_RE.test(title);
+  if (!familySignal && typeof ev.age_min === "number" && ev.age_min >= 9) return "teen-tween-ages";
+  if (!familySignal && TEEN_TITLE_RE.test(title)) return "teen-tween-title";
+  if (!KID_SIGNAL_RE.test(title) && ADULT_TOPIC_RE.test(title)) return "adult-topic";
+  return null;
+}
+
 // normalize -> validate -> dedupe -> insert into pending_events.
 // sourceRow is the scrape_sources row this candidate came from (or null for
 // ad-hoc/external ingest via /api/ingest).
 async function ingestCandidate(env, sourceRow, ev, reviewCtx = null) {
   const sourceKey = (sourceRow && sourceRow.source_key) || "unknown";
+  ev.title = decodeEntities(ev.title);
+  if (ev.note) ev.note = decodeEntities(ev.note);
+
+  const filtered = contentFilter(ev);
+  if (filtered) return { queued: false, reason: "filtered", filter: filtered };
 
   const history = applyReviewHistory(reviewCtx, ev);
   if (history.skip) {
@@ -417,12 +483,13 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
     try {
       const candidates = await runner(env, source);
       const reviewCtx = await loadReviewContext(env, source);
-      let queued = 0, skippedDuplicate = 0, blockedInvalid = 0, warnings = 0, skippedByReview = 0;
+      let queued = 0, skippedDuplicate = 0, blockedInvalid = 0, warnings = 0, skippedByReview = 0, filtered = 0;
       for (const ev of candidates) {
         const result = await ingestCandidate(env, source, ev, reviewCtx);
         if (result.reason === "duplicate-in-events") { skippedDuplicate++; continue; }
         if (result.reason === "blocked-by-validation") { blockedInvalid++; continue; }
         if (result.reason === "skipped-by-rule" || result.reason === "skipped-learned") { skippedByReview++; continue; }
+        if (result.reason === "filtered") { filtered++; continue; }
         if (result.queued) {
           queued++;
           if (result.severity === "warn") warnings++;
@@ -432,7 +499,7 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
       await env.DB.prepare(
         `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = 'ok', last_error = NULL, last_found = ? WHERE id = ?`
       ).bind(candidates.length, source.id).run();
-      summary.push({ source: source.source_key, status: "ok", found: candidates.length, queued, skippedDuplicate, blockedInvalid, skippedByReview, warnings });
+      summary.push({ source: source.source_key, status: "ok", found: candidates.length, queued, skippedDuplicate, blockedInvalid, skippedByReview, filtered, warnings });
     } catch (e) {
       await env.DB.prepare(
         `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = 'error', last_error = ? WHERE id = ?`
@@ -443,4 +510,4 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
   return summary;
 }
 
-export { REJECT_REASONS, titleKey, loadReviewContext, applyReviewHistory, validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };
+export { REJECT_REASONS, titleKey, contentFilter, decodeEntities, loadReviewContext, applyReviewHistory, validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };

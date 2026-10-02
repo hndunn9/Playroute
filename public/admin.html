@@ -912,7 +912,86 @@ async function loadPendingEvents(){
       out.innerHTML = '<div class="pending-empty">Nothing waiting for review right now.</div>';
       return;
     }
-    out.innerHTML = items.map(item => `
+    // Collapse repeats: the same program (title, scraper, start time) queued
+    // for many dates becomes ONE card, so one decision covers every date.
+    const groups = new Map();
+    for(const item of items){
+      if(item.change_type) continue;
+      const k = [item.source_id||'', pendingTitleKey(item.title), item.start_time||''].join('|');
+      if(!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(item);
+    }
+    pendingGroups = {};
+    const shown = new Set();
+    const cards = [];
+    for(const item of items){
+      if(shown.has(item.id)) continue;
+      const k = item.change_type ? null : [item.source_id||'', pendingTitleKey(item.title), item.start_time||''].join('|');
+      const g = k ? groups.get(k) : null;
+      if(g && g.length > 1){
+        g.forEach(x => shown.add(x.id));
+        const gid = 'g' + g[0].id;
+        pendingGroups[gid] = g;
+        cards.push(groupCard(gid, g));
+      } else {
+        shown.add(item.id);
+        cards.push(singleCard(item));
+      }
+    }
+    out.innerHTML = cards.join('');
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
+let pendingGroups = {};
+function pendingTitleKey(t){ return String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+function shortDate(d){ return d ? new Date(d+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}) : ''; }
+function groupCard(gid, g){
+  const first = g[0];
+  const dates = g.map(x => x.event_date).filter(Boolean).sort();
+  const blocked = g.filter(x => x.severity === 'error').length;
+  return `<div class="pending-item" id="pending-${gid}" style="border-left:3px solid #245E7A;padding-left:11px;">
+    <div class="pending-title">${escapeHtml(first.title)} &nbsp; <span class="ab-sig" style="color:#245E7A;">${g.length} dates</span></div>
+    <div class="pending-meta">${escapeHtml(first.city||'')} ${first.source?'· '+escapeHtml(first.source):''} ${first.display_time?'· '+escapeHtml(first.display_time):''}</div>
+    <div class="pending-meta">${dates.length ? dates.map(shortDate).join(', ') : escapeHtml(first.day_of_week||'')}</div>
+    ${first.note?`<div class="pending-note">${escapeHtml(first.note).slice(0,220)}</div>`:''}
+    ${validationReasons(first)}
+    ${first.source_url?`<div class="pending-meta"><a href="${first.source_url}" target="_blank" rel="noopener noreferrer">View source ↗</a></div>`:''}
+    <div class="pending-actions">
+      <button onclick="decideGroup('${gid}','approve')" ${blocked?`disabled title="${blocked} of these are blocked — missing required info"`:''}>Approve all ${g.length}</button>
+      <button class="reject" onclick="toggleRejectPanel('${gid}')">Reject all…</button>
+    </div>
+    <div id="rejectPanel-${gid}" style="display:none;margin-top:8px;padding:10px;background:#f6efe2;border-radius:6px;font-size:12px;">
+      <div style="margin-bottom:6px;font-weight:600;">Why reject all ${g.length}?</div>
+      <div class="chip-row">
+        ${REJECT_REASON_OPTIONS.map(([k,label]) => `<button class="secondary btn-sm" onclick="decideGroup('${gid}','reject','${k}')">${label}</button>`).join('')}
+      </div>
+      <label style="display:block;margin-top:8px;"><input type="checkbox" id="skipFuture-${gid}" checked> Never suggest "${escapeHtml(first.title)}" from this source again</label>
+    </div>
+  </div>`;
+}
+async function decideGroup(gid, action, reason){
+  const g = pendingGroups[gid] || [];
+  const el = document.getElementById('pending-'+gid);
+  if(el) el.style.opacity = '0.5';
+  const cb = document.getElementById('skipFuture-'+gid);
+  let failed = 0;
+  for(let i = 0; i < g.length; i++){
+    const it = g[i];
+    // Only the first rejection writes the skip rule; the rest just record the reason.
+    const url = action === 'approve'
+      ? `/api/approve-pending?token=${encodeURIComponent(it.approval_token)}`
+      : `/api/reject-pending?token=${encodeURIComponent(it.approval_token)}&reason=${encodeURIComponent(reason)}&skip_future=${cb && cb.checked && i === 0 ? '1' : '0'}`;
+    const res = await fetch(url).catch(() => null);
+    if(!res || !res.ok) failed++;
+  }
+  if(failed){ if(el) el.style.opacity = '1'; alert(`${failed} of ${g.length} didn't go through — refresh and check.`); }
+  else if(el) el.remove();
+  if(typeof loadToday === 'function') loadToday();
+}
+function singleCard(item){
+  return `
       <div class="pending-item" id="pending-${item.id}" ${item.change_type?`style="border-left:3px solid #B2555A;padding-left:11px;"`:''}>
         <div class="pending-title">${item.change_type?'<span style="color:#B2555A;">⚠ '+(item.change_type==='cancelled'?'POSSIBLE CANCELLATION':'TIME CHANGED')+'</span> — ':''}${escapeHtml(item.title)} &nbsp; ${severityBadge(item)}</div>
         <div class="pending-meta">${escapeHtml(item.city||'')} ${item.source?'· '+escapeHtml(item.source):''} ${item.day_of_week?'· '+escapeHtml(item.day_of_week):''} ${item.display_time?'· '+escapeHtml(item.display_time):''} ${item.event_date?'· <strong>'+escapeHtml(item.event_date)+'</strong>':'<strong style="color:#7a2a2a;"> · no date</strong>'}</div>
@@ -927,10 +1006,7 @@ async function loadPendingEvents(){
         </div>
         ${item.change_type ? '' : rejectPanel(item)}
       </div>
-    `).join('');
-  }catch(err){
-    out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
-  }
+    `;
 }
 
 // Reject reasons feed the scrapers' feedback loop (see pipeline.js):
@@ -1218,7 +1294,7 @@ async function bulkRejectDuplicates(btn){
     const data = await res.json();
     const tokens = (data.exact_duplicates || []).map(d => d.approval_token);
     for(const token of tokens){
-      await fetch(`/api/reject-pending?token=${encodeURIComponent(token)}`).catch(()=>{});
+      await fetch(`/api/reject-pending?token=${encodeURIComponent(token)}&reason=duplicate`).catch(()=>{});
     }
     checkPendingDuplicates();
     loadPendingEvents();

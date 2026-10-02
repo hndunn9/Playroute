@@ -72,6 +72,13 @@ when a rule here turns out wrong, fix it in the same PR.
   then Claude (`WL_EXTRACT_MODEL`, needs `ANTHROPIC_API_KEY`) extracts sessions with today's
   date, because the widget's week headings omit the year. Without the key it falls back to
   `/json` on the rendered text. If no clock times render, the error quotes what the browser saw.
+- **Review learning** (`pipeline.js`): before queuing, `contentFilter` drops placeholder titles
+  (DRAFT/TBD), "…Buddies – Register" series, ages 9+ or teen/tween titles (unless the title says
+  family/all ages), and adult topics without a kid signal. Titles are HTML-entity-decoded.
+  Dated items matching a live event's title (any case), city, date and time are duplicates
+  regardless of source string. `review_rules.action` is `skip` (exact title key) or
+  `skip_contains` (key substring). Learned skips count only rejections after the latest approval.
+  The admin review queue groups repeats (same source, title, start time) into one card.
 - Verification flags "possibly cancelled" and "time changed". It skips sources
   that return 0 events and matches titles loosely (`sameEventTitle`).
 
