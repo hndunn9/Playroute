@@ -2212,19 +2212,33 @@ async function scrapeWellnessLivingStudio(env, key) {
   if (!WL_TIME_RE.test(markdown)) {
     throw new Error(`No session times rendered at ${cfg.url} (frame ${frameUrl ? "found" : "not found"}). ${pagerNote} Browser saw: ${wlSnippet(markdown)}`);
   }
-  let items;
+  // Claude first (better at reading the widget and resolving year-less dates).
+  // If it fails for any reason -- no key, out of credits, API outage -- fall
+  // back to Cloudflare's built-in model via Browser Run /json on the same
+  // rendered text, so the source keeps working (2026-10-02: a low Anthropic
+  // credit balance broke Raising Parents).
+  let items = null;
+  let extractNote = "";
   if (env.ANTHROPIC_API_KEY) {
-    items = await wlExtractWithClaude(env, cfg, markdown, today);
-  } else {
+    try {
+      items = await wlExtractWithClaude(env, cfg, markdown, today);
+    } catch (e) {
+      extractNote = `Claude extraction failed (${String(e).slice(0, 160)}); used Cloudflare AI instead.`;
+      console.warn(`[${key}] ${extractNote}`);
+    }
+  }
+  if (!items) {
     const result = await browserRun(env, "json", {
-      html: `<pre>${markdown.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`,
-      prompt: `Today is ${today}. List every upcoming session in this schedule. Dates may omit the year: resolve each to the next occurrence on or after today. Use only times actually shown. Times are US Mountain Time.`,
+      // The default model has a smaller context window than Claude; keep the
+      // rendered text to the first ~45k characters (several weeks of sessions).
+      html: `<pre>${markdown.slice(0, 45000).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`,
+      prompt: `Today is ${today}. List every upcoming session in this schedule (not filter lists or menus). The text may contain several "=== WEEK n: <date range> ===" sections; use each section's date range to resolve its day headings to full YYYY-MM-DD dates, and list a session once even if it appears twice. Use only times actually shown, as 24-hour HH:MM. Times are US Mountain Time.`,
       response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA }
     });
     items = (result && Array.isArray(result.events)) ? result.events : [];
   }
   if (items.length === 0) {
-    throw new Error(`Schedule rendered at ${target.slice(0, 120)} but no sessions were extracted. ${pagerNote} Browser saw: ${wlSnippet(markdown)}`);
+    throw new Error(`Schedule rendered at ${target.slice(0, 120)} but no sessions were extracted. ${extractNote} ${pagerNote} Browser saw: ${wlSnippet(markdown)}`);
   }
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/, TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const out = [];
