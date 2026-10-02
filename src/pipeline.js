@@ -433,15 +433,17 @@ async function ingestCandidate(env, sourceRow, ev, reviewCtx = null) {
     `INSERT INTO pending_events
       (title, source, city, category, cost, age_min, age_max, day_of_week,
        event_date, start_time, display_time, recurrence, note, source_url,
-       raw_excerpt, dedup_key, approval_token, severity, validation_notes, source_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       raw_excerpt, dedup_key, approval_token, severity, validation_notes, source_id,
+       season_start, season_end)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(dedup_key) DO NOTHING`
   ).bind(
     ev.title, ev.source ?? null, ev.city ?? null, ev.category ?? null, ev.cost ?? null,
     ev.age_min ?? null, ev.age_max ?? null, ev.day_of_week ?? null, ev.event_date ?? null,
     ev.start_time ?? null, ev.display_time ?? null, ev.recurrence ?? null, ev.note ?? null,
     ev.source_url ?? null, ev.note ?? null, dedupKey, token, finalSeverity,
-    JSON.stringify(issues), sourceRow ? sourceRow.id : null
+    JSON.stringify(issues), sourceRow ? sourceRow.id : null,
+    ev.season_start ?? null, ev.season_end ?? null
   ).run();
 
   return { queued: res.meta.changes > 0, severity: finalSeverity, issues };

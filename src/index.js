@@ -1168,6 +1168,8 @@ const LONGMONT_LIBRARY_LIST_URL = "https://longmontcolorado.gov/events/category/
 const LONGMONT_LIBRARY_MAX_PAGES = 6;
 const LONGMONT_ADULT_DENYLIST_RE = /adult|senior center|writers group|book group|conversation group|library closed|current events meeting|resume|job (search|club)|tax help/i;
 
+const LONGMONT_KID_RE = /\b(kids?|child|children|famil(y|ies)|toddlers?|bab(y|ies)|preschool(ers)?|little|discovery days|story ?time|storytime|tots?|youth|all ages|music & movement)\b/i;
+
 function ageFromLongmontTitle(title) {
   const t = title.toLowerCase();
   if (/\bbaby\b/.test(t)) return { age_min: 0, age_max: 2 };
@@ -1179,7 +1181,7 @@ function ageFromLongmontTitle(title) {
   return { age_min: 0, age_max: 18 }; // "all ages", "family", or unlabeled -- broad default, gated by review
 }
 
-function parseLongmontEventChunk(rawChunk, permalink, eventDate) {
+function parseLongmontEventChunk(rawChunk, permalink, eventDate, opts = {}) {
   const text = decodeHtmlEntities(stripTags(rawChunk)).replace(/\s+/g, " ").trim();
   if (LONGMONT_ADULT_DENYLIST_RE.test(text)) return null;
 
@@ -1187,6 +1189,9 @@ function parseLongmontEventChunk(rawChunk, permalink, eventDate) {
   if (!titleMatch) return null;
   const title = decodeHtmlEntities(titleMatch[1]).trim();
   if (LONGMONT_ADULT_DENYLIST_RE.test(title)) return null;
+  // The museum category mixes family programs with adult concerts/lectures;
+  // keep only listings whose title or text signals kids/families.
+  if (opts.kidOnly && !LONGMONT_KID_RE.test(`${title} ${text.slice(0, 400)}`)) return null;
 
   const timeMatch = text.match(/(\d{1,2}(?::\d{2})?\s*[ap]m)\s*[-\u2013\u2014]\s*(\d{1,2}(?::\d{2})?\s*[ap]m)/i);
   if (!timeMatch) return null; // no time range -- likely a multi-day banner (e.g. Summer Reading), skip
@@ -1202,7 +1207,7 @@ function parseLongmontEventChunk(rawChunk, permalink, eventDate) {
   tail = tail.replace(/^.*?\bSeries\b\s*/, "");
 
   const locationMatch = tail.match(/^Longmont Public Library\s+\d+.*?(?:CO|Colorado)(?:,\s*United States)?/);
-  let location = "Longmont Public Library";
+  let location = opts.defaultSource || "Longmont Public Library";
   if (locationMatch) {
     location = locationMatch[0].trim();
     tail = tail.slice(locationMatch[0].length).trim();
@@ -1217,7 +1222,7 @@ function parseLongmontEventChunk(rawChunk, permalink, eventDate) {
     title,
     source: location,
     city: "Longmont",
-    category: "library",
+    category: opts.category || "library",
     cost: "free",
     age_min: ages.age_min,
     age_max: ages.age_max,
@@ -1231,11 +1236,14 @@ function parseLongmontEventChunk(rawChunk, permalink, eventDate) {
   };
 }
 
-async function fetchAndScanLongmontLibrary() {
+// Same The Events Calendar list layout for every city category, so the
+// museum (2026-10-01: 209 hand-entered events) reuses this parser.
+async function fetchAndScanLongmontLibrary(opts = {}) {
+  const listUrl = opts.listUrl || LONGMONT_LIBRARY_LIST_URL;
   const needsReview = [];
   const seen = new Set();
   for (let page = 1; page <= LONGMONT_LIBRARY_MAX_PAGES; page++) {
-    const url = page === 1 ? LONGMONT_LIBRARY_LIST_URL : `${LONGMONT_LIBRARY_LIST_URL}page/${page}/`;
+    const url = page === 1 ? listUrl : `${listUrl}page/${page}/`;
     const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
     if (!res.ok) break;
     const html = await res.text();
@@ -1254,7 +1262,7 @@ async function fetchAndScanLongmontLibrary() {
       const start = hrefPositions[i].index;
       const end = i + 1 < hrefPositions.length ? hrefPositions[i + 1].index : start + 2500;
       const chunkHtml = noScript.slice(start, end);
-      const parsed = parseLongmontEventChunk(chunkHtml, hrefPositions[i].href, hrefPositions[i].eventDate);
+      const parsed = parseLongmontEventChunk(chunkHtml, hrefPositions[i].href, hrefPositions[i].eventDate, opts);
       if (!parsed) continue;
       const dedupSig = `${parsed.title}|${parsed.event_date}|${parsed.start_time}`;
       if (seen.has(dedupSig)) continue;
@@ -1266,6 +1274,137 @@ async function fetchAndScanLongmontLibrary() {
 }
 
 SOURCE_RUNNERS.longmont_library = async () => fetchAndScanLongmontLibrary();
+SOURCE_RUNNERS.longmont_museum = async () => fetchAndScanLongmontLibrary({
+  listUrl: "https://longmontcolorado.gov/events/category/museum/",
+  category: "museum",
+  defaultSource: "Longmont Museum",
+  kidOnly: true
+});
+
+// --- Museum of Boulder (WordPress The Events Calendar REST API) ---------
+// Confirmed 2026-10-01: /wp-json/tribe/events/v1/events returns clean JSON
+// with start/end times, permalinks and category names. Keep "For Kids and
+// Families" / "Children's Program" listings; drop "Member Exclusive" ones
+// (members-only, same rule as membership programming at businesses).
+const MUSEUM_OF_BOULDER_API = "https://museumofboulder.org/wp-json/tribe/events/v1/events";
+async function fetchMuseumOfBoulder() {
+  const today = toMountainDateStr(new Date());
+  const end = toMountainDateStr(new Date(Date.now() + 42 * 864e5));
+  const out = [];
+  let url = `${MUSEUM_OF_BOULDER_API}?per_page=50&start_date=${today}&end_date=${end}`;
+  for (let page = 0; url && page < 4; page++) {
+    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)", "Accept": "application/json" } });
+    if (!res.ok) throw new Error(`Museum of Boulder events API returned ${res.status}`);
+    const data = await res.json();
+    for (const e of data.events || []) {
+      const cats = (e.categories || []).map((c) => String(c.name || ""));
+      if (!cats.some((c) => /kids|famil|children/i.test(c))) continue;
+      if (cats.some((c) => /member exclusive/i.test(c))) continue;
+      if (e.all_day) continue; // no real time to show
+      const title = decodeHtmlEntities(String(e.title || "")).trim();
+      const [date, startClock] = String(e.start_date || "").split(" ");
+      const endClock = String(e.end_date || "").split(" ")[1] || "";
+      if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(date || "") || !startClock) continue;
+      const start = startClock.slice(0, 5), endT = endClock.slice(0, 5);
+      const fmt = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
+      const ages = ageFromLongmontTitle(title);
+      const free = cats.some((c) => /free/i.test(c)) || /\bfree\b/i.test(String(e.cost || ""));
+      const desc = decodeHtmlEntities(stripTags(String(e.excerpt || e.description || ""))).replace(/\s+/g, " ").trim();
+      out.push({
+        title,
+        source: "Museum of Boulder",
+        city: "Boulder",
+        category: "museum",
+        cost: free ? "free" : "paid",
+        age_min: ages.age_min === 0 && ages.age_max === 18 ? 0 : ages.age_min,
+        age_max: ages.age_min === 0 && ages.age_max === 18 ? 12 : ages.age_max,
+        day_of_week: DAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()],
+        start_time: start,
+        display_time: endT ? `${fmt(start)} – ${fmt(endT)}` : fmt(start),
+        recurrence: "dated",
+        event_date: date,
+        note: desc ? truncateAtBoundary(desc, 250) : null,
+        source_url: e.url || "https://museumofboulder.org/events/"
+      });
+    }
+    url = data.next_rest_url || null;
+  }
+  return out;
+}
+SOURCE_RUNNERS.museum_of_boulder = async () => fetchMuseumOfBoulder();
+
+// --- Jackrabbit class studios (public OpeningsJson) ----------------------
+// Confirmed 2026-10-01 for Mountain Kids (org 135459): a clean JSON list of
+// classes with meeting days, times, ages (ISO durations), location, fee and
+// season dates. Policy: businesses get drop-in events only, not enrolled
+// programs -- so keep $0 classes (their free drop-ins, e.g. Twinkle Stars)
+// and anything named "drop-in"/"open gym"/"open play". Weekly listings with
+// season_start/season_end from the class dates. Reusable for any studio on
+// Jackrabbit: add an entry to JACKRABBIT_STUDIOS and a runner line.
+const JACKRABBIT_STUDIOS = {
+  mountain_kids: {
+    orgId: 135459,
+    source: "Mountain Kids",
+    cities: { Louisville: "Louisville", Erie: "Erie" },
+    url: "https://mountainkidslouisville.com/"
+  }
+};
+const JR_DAYS = { sun: "Sunday", mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday" };
+function jrYears(iso) {
+  const m = String(iso || "").match(/P(\d+)Y(\d+)M/);
+  return m ? Math.round((Number(m[1]) + Number(m[2]) / 12) * 10) / 10 : null;
+}
+function jrCleanTitle(name) {
+  return String(name || "")
+    .replace(/\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+\d{1,2}(:\d{2})?\s*[ap]\.?m\.?/ig, "")
+    .replace(/\((erie|louisville|lafayette|boulder|broomfield)\)/ig, "")
+    .replace(/\s{2,}/g, " ").trim();
+}
+async function fetchJackrabbitStudio(key) {
+  const cfg = JACKRABBIT_STUDIOS[key];
+  const res = await fetch(`https://app.jackrabbitclass.com/jr3.0/Openings/OpeningsJson?OrgID=${cfg.orgId}`, {
+    headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)", "Accept": "application/json" }
+  });
+  if (!res.ok) throw new Error(`Jackrabbit openings for ${cfg.source} returned ${res.status}`);
+  const data = await res.json();
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  if (!rows.length) throw new Error(`Jackrabbit openings for ${cfg.source} returned no classes`);
+  const today = toMountainDateStr(new Date());
+  const fmt = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
+  const out = [];
+  for (const r of rows) {
+    const fee = Number(r.tuition && r.tuition.fee);
+    const dropIn = /drop[- ]?in|open (gym|play)/i.test(r.name || "");
+    if (!(fee === 0 || dropIn)) continue;
+    if (r.end_date && r.end_date < today) continue;
+    if (!/^\d{2}:\d{2}$/.test(r.start_time || "")) continue;
+    const city = cfg.cities[r.location_name] || cfg.cities[Object.keys(cfg.cities)[0]];
+    const title = jrCleanTitle(r.name);
+    const ageMin = jrYears(r.min_age), ageMax = jrYears(r.max_age);
+    for (const [k, on] of Object.entries(r.meeting_days || {})) {
+      if (!on || !JR_DAYS[k]) continue;
+      out.push({
+        title,
+        source: `${cfg.source} (${r.location_name || city})`,
+        city,
+        category: "rec",
+        cost: fee === 0 ? "free" : "paid",
+        age_min: ageMin ?? 0,
+        age_max: ageMax ?? 5,
+        day_of_week: JR_DAYS[k],
+        start_time: r.start_time,
+        display_time: r.end_time ? `${fmt(r.start_time)} – ${fmt(r.end_time)}` : fmt(r.start_time),
+        recurrence: "weekly",
+        season_start: r.start_date ? r.start_date.slice(5) : null,
+        season_end: r.end_date ? r.end_date.slice(5) : null,
+        note: fee === 0 ? "Free drop-in." : null,
+        source_url: cfg.url
+      });
+    }
+  }
+  return out;
+}
+SOURCE_RUNNERS.mountain_kids = async () => fetchJackrabbitStudio("mountain_kids");
 
 // --- Anythink Thornton Community Center (Communico v2 XML export feed) --
 // Source: https://api.communico.co/v2/anythinklibraries/events/export.xml
@@ -4716,7 +4855,9 @@ async function handleApprovePending(env, url) {
       source_url: row.source_url,
       verified: 0,
       libcal_event_id: row.dedup_key,
-      source_id: row.source_id ?? null
+      source_id: row.source_id ?? null,
+      season_start: row.season_start ?? null,
+      season_end: row.season_end ?? null
     });
   } catch (err) {
     // Belt-and-suspenders: upsertEvent's two chained ON CONFLICT clauses

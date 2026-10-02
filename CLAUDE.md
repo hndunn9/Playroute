@@ -62,6 +62,12 @@ when a rule here turns out wrong, fix it in the same PR.
   `calendar.boulderlibrary.org/events/?l=<Branch>`.
 - Boulder library dedup keys include the room/source string. If the library
   renames a room, old and new rows can duplicate. Clean up by keeping the newer spelling.
+- **Structured feeds worth checking first** when automating a manual source:
+  WordPress The Events Calendar (`/wp-json/tribe/events/v1/events`, e.g. `museum_of_boulder`),
+  Longmont city categories (reuse `fetchAndScanLongmontLibrary({ listUrl, category, kidOnly })`),
+  Jackrabbit studios (`/jr3.0/Openings/OpeningsJson?OrgID=`, add to `JACKRABBIT_STUDIOS`; keep
+  free/drop-in classes only), Communico libraries (`api.communico.co/v2/<org>/events/export.xml`).
+  Queued items carry `season_start`/`season_end`, and approval copies them to `events`.
 - **JS-rendered platforms** (WellnessLiving, Arketa, iClassPro) can't be read with
   `fetch()`. WellnessLiving's API needs a per-request signature, so use the
   Browser Run binding (`env.BROWSER`) via `browserRun()` and read the
