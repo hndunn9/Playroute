@@ -4530,13 +4530,14 @@ function buildPendingEventsEmailHtml(pending) {
       <div style="font-size:13px;color:#5c4a38;margin-bottom:10px;">${escapeHtml((p.note || "").slice(0, 200))}</div>
       ${p.source_url ? `<div style="font-size:12px;margin-bottom:10px;"><a href="${p.source_url}" style="color:#9b5c2a;">View original listing ↗</a></div>` : ""}
       <a href="${DIGEST_SITE_URL}/api/approve-pending?token=${p.approval_token}" style="display:inline-block;background:#2c1f14;color:#fff;text-decoration:none;padding:8px 16px;border-radius:6px;font-size:13px;font-family:sans-serif;margin-right:8px;">Approve</a>
-      <a href="${DIGEST_SITE_URL}/api/reject-pending?token=${p.approval_token}" style="display:inline-block;background:#eee;color:#5c4a38;text-decoration:none;padding:8px 16px;border-radius:6px;font-size:13px;font-family:sans-serif;">Reject</a>
+      <a href="${DIGEST_SITE_URL}/api/reject-pending?token=${p.approval_token}&reason=not_for_kids" style="display:inline-block;background:#eee;color:#5c4a38;text-decoration:none;padding:8px 16px;border-radius:6px;font-size:13px;font-family:sans-serif;">Reject: not for kids</a>
+      <a href="${DIGEST_SITE_URL}/api/reject-pending?token=${p.approval_token}&reason=not_relevant" style="display:inline-block;background:#eee;color:#5c4a38;text-decoration:none;padding:8px 16px;border-radius:6px;font-size:13px;font-family:sans-serif;margin-left:6px;">Reject: not relevant</a>
     </td></tr>`).join("");
 
   return `
   <div style="max-width:520px;margin:0 auto;font-family:sans-serif;">
     <h1 style="font-family:serif;font-size:20px;color:#2c1f14;">New events to review</h1>
-    <p style="color:#8a7a63;font-size:13px;">Found on Mead's calendar but couldn't be auto-added with confidence — take a look and approve or reject each one.</p>
+    <p style="color:#8a7a63;font-size:13px;">Found by the scrapers and waiting for review. A reject with a reason teaches the scraper; grouped repeats are easier to handle in the admin page.</p>
     <table width="100%" cellpadding="0" cellspacing="0">${rows}</table>
   </div>`;
 }
@@ -4651,7 +4652,7 @@ async function handleRejectPending(env, url) {
   }
   // Optional feedback (admin panel): ?reason=<REJECT_REASONS key> and
   // ?skip_future=1 to stop this program from this source ever being queued
-  // again. Email one-tap rejects send neither and behave exactly as before.
+  // again. Email rejects send a reason (not_for_kids / not_relevant) so they feed the learning too.
   const reasonParam = url.searchParams.get("reason");
   const reason = reasonParam && REJECT_REASONS[reasonParam] ? reasonParam : null;
   const skipFuture = url.searchParams.get("skip_future") === "1";
@@ -4720,7 +4721,7 @@ async function handlePendingEventsList(env) {
     `SELECT id, title, source, city, category, cost, age_min, age_max, day_of_week,
             event_date, start_time, display_time, note, source_url, dedup_key,
             approval_token, discovered_at, severity, validation_notes,
-            change_type, existing_event_id
+            change_type, existing_event_id, source_id
      FROM pending_events WHERE status = 'pending'
      ORDER BY CASE WHEN change_type IS NOT NULL THEN 0 ELSE 1 END,
               CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, discovered_at DESC`
