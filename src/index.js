@@ -413,6 +413,8 @@ async function fetchAndNormalizeICalFeed(icalUrl, city, { daysAhead = 60, trustS
 const ICAL_LIBRARIES = [
   {
     city: "Boulder",
+    // DEAD since ~2026-09-28 (library moved to Communico); boulder_ical now
+    // runs fetchBoulderCommunico instead. Kept for reference only.
     url: "https://calendar.boulderlibrary.org/ical_subscribe.php?src=p&cid=12892&aud=6405",
     // Confirmed this exact URL returns exactly the birth-5 programs
     // validated against the real PDF export, plus a few "Make & Create"
@@ -3390,10 +3392,102 @@ async function upsertEvent(env, ev) {
 // Boulder and Erie each get their own runner (rather than one runner
 // looping both) so they're tracked and error-isolated separately in
 // scrape_sources — one failing shouldn't obscure the other's last_run_at.
-SOURCE_RUNNERS.boulder_ical = async () => {
-  const lib = ICAL_LIBRARIES.find((l) => l.city === "Boulder");
-  return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
-};
+// Boulder Public Library moved off LibCal to Communico (~2026-09-28): the
+// old iCal feed and every calendar.boulderlibrary.org/event/<id> link now
+// 404/403. The Communico XML export works and has clean structured fields
+// (same platform as Anythink). It has no per-event link, so source_url is
+// the branch-filtered listing. Each request returns ~12 days from `start`,
+// so we fetch a few windows to cover ~5 weeks. Kept under the existing
+// boulder_ical source_key so no scrape_sources change is needed to run it.
+const BOULDER_COMMUNICO_URL = "https://api.communico.co/v2/boulderlibrary/events/export.xml";
+const BOULDER_WINDOW_STARTS = [0, 12, 24]; // days from today
+// Ages values seen in the export: "Birth to age 5", "Ages 5 to 8",
+// "Ages 9 to 11", "Ages 12 to 18", "Ages 18+", "All ages". The old feed was
+// birth-5 only; keep young kids and all-ages, drop 9+ and adult-only.
+function parseBoulderAges(raw) {
+  let min = 99, max = -1, kid = false;
+  for (const tag of String(raw || "").split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)) {
+    if (/all ages/.test(tag)) { kid = true; min = Math.min(min, 0); max = Math.max(max, 12); continue; }
+    if (/18\s*\+|adult/.test(tag)) continue;
+    const birth = /birth/.test(tag);
+    const nums = (tag.match(/\d+/g) || []).map(Number);
+    const lo = birth ? 0 : nums[0];
+    const hi = nums.length ? nums[nums.length - 1] : null;
+    if (lo === undefined || hi === null || lo >= 9) continue;
+    kid = true; min = Math.min(min, lo); max = Math.max(max, hi);
+  }
+  return kid ? { age_min: min, age_max: max } : null;
+}
+
+function boulderBranchUrl(location) {
+  return `https://calendar.boulderlibrary.org/events/?l=${encodeURIComponent(location || "Main Library").replace(/%20/g, "+")}`;
+}
+
+async function fetchBoulderCommunico() {
+  const now = new Date();
+  const today = toMountainDateStr(now);
+  const candidates = [], seen = new Set();
+  for (const offset of BOULDER_WINDOW_STARTS) {
+    const start = toMountainDateStr(new Date(now.getTime() + offset * 864e5));
+    const res = await fetch(`${BOULDER_COMMUNICO_URL}?start=${start}`, {
+      headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
+    });
+    if (!res.ok) throw new Error(`Boulder Communico export returned ${res.status} (start=${start})`);
+    const xml = await res.text();
+    const eventRe = /<event>([\s\S]*?)<\/event>/g;
+    let m;
+    while ((m = eventRe.exec(xml)) !== null) {
+      const block = m[1];
+      const field = (tag) => {
+        const fm = block.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`));
+        return fm ? decodeHtmlEntities(fm[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/, "$1")).trim() : "";
+      };
+      const location = field("Location");
+      if (!location || /virtual|online/i.test(location)) continue; // a place families can go
+      const ages = parseBoulderAges(field("Ages"));
+      if (!ages) continue;
+      const title = field("Title");
+      const monthDay = field("Date");
+      const weekday = field("Weekday");
+      const startLabel = field("StartTime");
+      const endLabel = field("EndTime");
+      const startTime = to24HourAnythink(startLabel);
+      if (!title || !monthDay || !weekday || !startTime) continue;
+      if (/^cancel/i.test(title)) continue;
+      const year = resolveAnythinkYear(monthDay, now);
+      if (!year) continue;
+      const eventDate = new Date(`${monthDay} ${year} 12:00:00`).toISOString().slice(0, 10);
+      if (eventDate < today) continue;
+      const room = field("RoomName");
+      const sig = `${title}|${eventDate}|${startTime}|${location}`;
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      const desc = field("ShortDescription").replace(/\s+/g, " ").trim();
+      candidates.push({
+        title,
+        // Same "Boulder Public Library — Room, Branch" shape the old iCal
+        // feed produced, so duplicate checks against live rows still match.
+        source: `Boulder Public Library — ${room ? `${room}, ` : ""}${location}`,
+        city: "Boulder",
+        category: "library",
+        cost: "free",
+        age_min: ages.age_min,
+        age_max: ages.age_max,
+        day_of_week: weekday,
+        start_time: startTime,
+        display_time: endLabel ? `${startLabel} - ${endLabel}` : startLabel,
+        recurrence: "dated",
+        event_date: eventDate,
+        note: desc ? desc.slice(0, 300) : null,
+        source_url: boulderBranchUrl(location)
+      });
+    }
+  }
+  if (candidates.length === 0) throw new Error("Boulder Communico export returned no kid events across all windows");
+  return candidates;
+}
+SOURCE_RUNNERS.boulder_ical = async () => fetchBoulderCommunico();
+SOURCE_RUNNERS.boulder_communico = async () => fetchBoulderCommunico();
 SOURCE_RUNNERS.erie_ical = async () => {
   const lib = ICAL_LIBRARIES.find((l) => l.city === "Erie");
   return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
