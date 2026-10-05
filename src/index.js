@@ -4993,7 +4993,7 @@ async function handlePendingEventsList(env) {
     `SELECT id, title, source, city, category, cost, age_min, age_max, day_of_week,
             event_date, start_time, display_time, note, source_url, dedup_key,
             approval_token, discovered_at, severity, validation_notes,
-            change_type, existing_event_id, source_id
+            change_type, existing_event_id, source_id, recurrence, season_start, season_end
      FROM pending_events WHERE status = 'pending'
      ORDER BY CASE WHEN change_type IS NOT NULL THEN 0 ELSE 1 END,
               CASE severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END, discovered_at DESC`
