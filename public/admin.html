@@ -947,6 +947,21 @@ async function loadPendingEvents(){
 let pendingGroups = {};
 function pendingTitleKey(t){ return String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
 function shortDate(d){ return d ? new Date(d+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}) : ''; }
+// Recurring candidates (weekly series, monthly) have no single event_date --
+// show the run instead of a misleading "no date". season_* are MM-DD.
+function seasonLabel(item){
+  const y = new Date().getFullYear();
+  const md = (m) => m ? new Date(`${y}-${m}T12:00:00`).toLocaleDateString(undefined,{month:'short',day:'numeric'}) : '';
+  const rec = item.recurrence === 'weekly' ? 'Weekly' : item.recurrence ? item.recurrence.replace(/-/g,' ') : 'Recurring';
+  if(item.season_start && item.season_end) return `${rec} · ${md(item.season_start)} – ${md(item.season_end)}`;
+  if(item.season_end) return `${rec} · through ${md(item.season_end)}`;
+  return rec;
+}
+function dateLabel(item){
+  if(item.event_date) return '· <strong>'+escapeHtml(item.event_date)+'</strong>';
+  if(item.recurrence && item.recurrence !== 'dated') return '· <strong>'+escapeHtml(seasonLabel(item))+'</strong>';
+  return '<strong style="color:#7a2a2a;"> · no date</strong>';
+}
 function groupCard(gid, g){
   const first = g[0];
   const dates = g.map(x => x.event_date).filter(Boolean).sort();
@@ -994,7 +1009,7 @@ function singleCard(item){
   return `
       <div class="pending-item" id="pending-${item.id}" ${item.change_type?`style="border-left:3px solid #B2555A;padding-left:11px;"`:''}>
         <div class="pending-title">${item.change_type?'<span style="color:#B2555A;">⚠ '+(item.change_type==='cancelled'?'POSSIBLE CANCELLATION':'TIME CHANGED')+'</span> — ':''}${escapeHtml(item.title)} &nbsp; ${severityBadge(item)}</div>
-        <div class="pending-meta">${escapeHtml(item.city||'')} ${item.source?'· '+escapeHtml(item.source):''} ${item.day_of_week?'· '+escapeHtml(item.day_of_week):''} ${item.display_time?'· '+escapeHtml(item.display_time):''} ${item.event_date?'· <strong>'+escapeHtml(item.event_date)+'</strong>':'<strong style="color:#7a2a2a;"> · no date</strong>'}</div>
+        <div class="pending-meta">${escapeHtml(item.city||'')} ${item.source?'· '+escapeHtml(item.source):''} ${item.day_of_week?'· '+escapeHtml(item.day_of_week):''} ${item.display_time?'· '+escapeHtml(item.display_time):''} ${dateLabel(item)}</div>
         ${item.note?`<div class="pending-note">${escapeHtml(item.note).slice(0,220)}</div>`:''}
         ${validationReasons(item)}
         ${item.source_url?`<div class="pending-meta"><a href="${item.source_url}" target="_blank" rel="noopener noreferrer">View source ↗</a></div>`:''}
