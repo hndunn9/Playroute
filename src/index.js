@@ -5441,6 +5441,146 @@ async function handlePartnerManagePage(env, token) {
   return new Response(partnerManagePageHtml(partner), { headers: { "Content-Type": "text/html;charset=UTF-8" } });
 }
 
+// ---------------------------------------------------------------------
+// PARTNER PREVIEW + APPROVAL — playroute.co/partners/preview/:token
+// Unlisted, noindex page a partner opens to check how their promotion will
+// look (feed card + newsletter) and to approve it before it goes live.
+// Reads and writes ONLY the partner_previews table (approval stamp); it
+// never touches events, pending_events or partners. Payment is due 24 hours
+// before the first go-live; go-live is 6:00 AM Mountain on go_live_date.
+// ---------------------------------------------------------------------
+function previewPaymentDue(goLiveDate) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(goLiveDate || "")) return null;
+  const d = new Date(goLiveDate + "T12:00:00Z");
+  const fmt = (x) => x.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
+  const due = new Date(d.getTime() - 864e5);
+  return { goLive: fmt(d), due: fmt(due) };
+}
+
+function partnerPreviewPageHtml(p) {
+  const e = escapeHtml;
+  const color = /^#[0-9A-Fa-f]{6}$/.test(p.brand_color || "") ? p.brand_color : "#46707E";
+  const dates = previewPaymentDue(p.go_live_date);
+  const price = e(p.price_label || "$75/month");
+  const logo = p.logo_url
+    ? `<img class="logo" src="${e(p.logo_url)}" alt="">`
+    : `<span class="logo ph">${e((p.business_name || "?").charAt(0).toUpperCase())}</span>`;
+  const approved = p.status === "approved";
+  const payBlock = dates
+    ? `<p><b>Payment is due by 6:00 AM Mountain on ${e(dates.due)}</b>, 24 hours before your promotion first goes live on <b>${e(dates.goLive)}</b>.</p>`
+    : `<p><b>Payment is due 24 hours before your promotion first goes live.</b> We'll confirm your go-live date in writing once you approve.</p>`;
+  const meta = [p.location, p.ages].filter(Boolean).map(e).join(" · ");
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow"><title>Preview: ${e(p.business_name)} on Playroute</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{--soil:#1B2B26;--bark:#3A4F45;--clay:#5B84A0;--cream:#F4F5F0;--parchment:#ECEEE8;--fog:#D7DBD3;--ink:#1E2622;--ink-soft:#5B6560;--sky:#46707E;--ember:#B2555A;--gold:#A88B3E;--pill-green-bg:#D4EBC9;--pill-green-text:#3A5C2A;--brand:${color};}
+@media (prefers-color-scheme: dark){:root{--cream:#1D231F;--parchment:#12100F;--fog:#63726A;--ink:#EDEFE9;--ink-soft:#A7B0A4;--pill-green-bg:#2B3B2B;--pill-green-text:#A8D9A0;}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--cream);font-family:'DM Sans',sans-serif;color:var(--ink);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.page{max-width:560px;margin:0 auto;padding:18px 20px 56px}
+.wordmark{font-family:'Playfair Display',serif;font-weight:700;font-size:19px;padding-bottom:14px;border-bottom:1px solid var(--fog)}
+.banner{margin:16px 0 0;padding:10px 12px;border-radius:8px;background:color-mix(in srgb,var(--gold) 16%,transparent);border:1px solid var(--gold);font-size:13px}
+h1{font-family:'Playfair Display',serif;font-weight:600;font-size:28px;line-height:1.2;margin:22px 0 10px}
+h2{font-family:'Playfair Display',serif;font-weight:600;font-size:19px;margin:30px 0 6px}
+.sub{color:var(--ink-soft);font-size:14px;margin-bottom:10px}
+.box{background:var(--parchment);border:1px solid var(--fog);border-radius:12px;padding:14px}
+.lbl{font-size:12px;color:var(--ink-soft);margin:0 0 8px}
+.sec{font-family:'Playfair Display',serif;font-weight:600;font-size:16px;margin-bottom:8px}
+.card{background:var(--cream);border:1px solid var(--brand);box-shadow:0 0 0 1px var(--brand),0 2px 8px rgba(20,24,22,.07);border-radius:12px;padding:11px 12px;display:flex;gap:10px;align-items:flex-start}
+.logo{width:36px;height:36px;border-radius:8px;object-fit:contain;flex-shrink:0;background:#fff}
+.logo.ph{background:var(--brand);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
+.t{font-weight:600;font-size:14px;line-height:1.3}.m{font-size:12px;color:var(--ink-soft);margin-top:2px}
+.tags{display:flex;flex-wrap:wrap;gap:4px 5px;margin-top:7px}
+.tag{font-size:11px;font-weight:500;padding:2px 8px;border-radius:6px;background:var(--pill-green-bg);color:var(--pill-green-text)}
+.tag.brand{background:var(--brand);color:#fff;font-weight:700}
+.news{background:#fff;color:#1E2622;border:1px solid var(--fog);border-radius:8px;padding:12px;font-family:Georgia,serif}
+.news-pick{border-left:3px solid var(--brand);padding-left:9px;font-size:13px;line-height:1.5;margin-top:8px}
+.news-lbl{display:block;font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#5B6560}
+ul.cmp{list-style:none}
+ul.cmp li{padding:8px 0;border-bottom:1px solid var(--fog);font-size:14px}
+ul.cmp li:last-child{border-bottom:0}
+.field{margin:14px 0}.field label{display:block;font-weight:600;font-size:14px;margin-bottom:6px}
+.field input[type=text]{width:100%;padding:11px 12px;border-radius:6px;border:1px solid var(--fog);background:var(--parchment);font:inherit;color:var(--ink)}
+.chk{display:flex;gap:10px;align-items:flex-start;font-size:14px;margin:12px 0}.chk input{margin-top:4px;width:18px;height:18px;accent-color:var(--sky)}
+.btn{padding:12px 22px;border-radius:6px;border:0;background:var(--sky);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.msg{font-size:14px;margin-top:10px}.msg.err{color:var(--ember)}.done{padding:14px;border-radius:12px;background:var(--pill-green-bg);color:var(--pill-green-text);font-weight:600}
+</style></head><body><div class="page">
+<div class="wordmark">Playroute</div>
+<div class="banner">Brand preview. This is not live yet and is only visible to people with this link.</div>
+<h1>${e(p.business_name)} on Playroute</h1>
+<p class="sub">Please check your name, logo, color and wording below. Nothing goes live until you approve it and payment is received.</p>
+
+<h2>In the app</h2>
+<p class="sub">Your promotion is a small tagged card in Playroute's Picks, shown to families planning their week.</p>
+<div class="box"><div class="sec">Playroute's Picks</div>
+<div class="card">${logo}<div><div class="t">${e(p.tagline || p.business_name)}</div><div class="m">${e(p.business_name)}${meta ? " · " + meta : ""}</div>
+<div class="tags"><span class="tag brand">${e(p.business_name)}</span><span class="tag">${e(p.cta_label || "Learn more")}</span></div></div></div></div>
+
+<h2>In the Sunday newsletter</h2>
+<div class="box"><div class="news"><b>This week on Playroute</b>
+<div class="news-pick"><span class="news-lbl">Playroute's Pick</span><b>${e(p.business_name)}</b> · ${e(p.tagline || "")}${p.description ? " " + e(p.description) : ""}</div></div></div>
+
+<h2>What Playroute is (and isn't)</h2>
+<p class="sub">Playroute is a text-first guide that parents check to plan the week, not a social feed. That is why it works differently from Meta ads.</p>
+<ul class="cmp">
+<li><b>Small, native format.</b> A short headline, one or two sentences, a small logo and your brand color. No large banners or full-bleed photos.</li>
+<li><b>Sits alongside real events.</b> Your card appears in the same feed families already use, labeled as a Pick.</li>
+<li><b>One clear link.</b> Tapping goes to ${p.link_url ? e(p.link_url) : "your destination page"}, tagged so you can see visits from Playroute in your own analytics.</li>
+<li><b>No targeting or bidding.</b> A flat price and a fixed placement for the month.</li>
+</ul>
+
+<h2>Terms</h2>
+<div class="box"><p><b>${price}</b>, for one month of Playroute's Picks (app and weekly newsletter).</p><br>
+${payBlock}<br>
+<p>Pay by Venmo to <b>@hnjames9</b>. If payment isn't received by then, the go-live moves back until it is.</p><br>
+<p>Content can be updated by request, up to once per week. Questions: <a href="mailto:partners@playroute.co">partners@playroute.co</a>.</p></div>
+
+<h2>Approve</h2>
+${approved
+  ? `<div class="done">Approved${p.approved_by ? " by " + e(p.approved_by) : ""}. Thank you! We'll confirm your go-live date by email.</div>`
+  : `<div class="field"><label for="nm">Your name</label><input type="text" id="nm" autocomplete="name"></div>
+<label class="chk"><input type="checkbox" id="ok"><span>I approve how ${e(p.business_name)} appears above and understand payment is due 24 hours before the first go-live.</span></label>
+<button class="btn" id="go">Approve preview</button><p class="msg" id="msg"></p>`}
+</div>
+<script>
+(function(){
+  var go=document.getElementById('go'); if(!go) return;
+  var msg=document.getElementById('msg');
+  go.addEventListener('click',function(){
+    var name=document.getElementById('nm').value.trim();
+    if(!name){msg.textContent='Please enter your name.';msg.className='msg err';return;}
+    if(!document.getElementById('ok').checked){msg.textContent='Please tick the box to approve.';msg.className='msg err';return;}
+    go.disabled=true;
+    fetch('/api/partners/preview/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:${JSON.stringify(p.token)},name:name})})
+      .then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'Failed');return j;});})
+      .then(function(){location.reload();})
+      .catch(function(err){go.disabled=false;msg.textContent=String(err.message||err);msg.className='msg err';});
+  });
+})();
+</script></body></html>`;
+}
+
+async function handlePartnerPreviewPage(env, token) {
+  const p = token ? await env.DB.prepare(`SELECT * FROM partner_previews WHERE token = ?`).bind(token).first() : null;
+  if (!p) return new Response("This preview link isn't valid. Email partners@playroute.co.", { status: 404, headers: { "Content-Type": "text/plain", "X-Robots-Tag": "noindex" } });
+  return new Response(partnerPreviewPageHtml(p), { headers: { "Content-Type": "text/html;charset=UTF-8", "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store" } });
+}
+
+async function handlePartnerPreviewApprove(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+  const name = String(body.name || "").trim().slice(0, 120);
+  if (!body.token || !name) return json({ error: "Name required" }, 400);
+  const res = await env.DB.prepare(
+    `UPDATE partner_previews SET status = 'approved', approved_at = CURRENT_TIMESTAMP, approved_by = ? WHERE token = ? AND status != 'approved'`
+  ).bind(name, String(body.token)).run();
+  if (!res.meta || !res.meta.changes) return json({ error: "Already approved or invalid link" }, 400);
+  return json({ ok: true });
+}
+
 // Body-carried token (not URL-path) -- consistent with handlePartnerSubmit
 // above, and avoids the token needing to round-trip through a URL param
 // for a same-origin fetch() call from the page it's already embedded in.
@@ -5887,6 +6027,13 @@ const worker = {
       }
       if (url.pathname === "/api/partners/manage/logo" && request.method === "POST") {
         return await handlePartnerLogoUpload(request, env);
+      }
+      if (url.pathname === "/api/partners/preview/approve" && request.method === "POST") {
+        return await handlePartnerPreviewApprove(request, env);
+      }
+      if (url.pathname.startsWith("/partners/preview/") && request.method === "GET") {
+        const token = decodeURIComponent(url.pathname.slice("/partners/preview/".length).replace(/\/+$/, ""));
+        return await handlePartnerPreviewPage(env, token);
       }
       if (url.pathname.startsWith("/partners/manage/") && request.method === "GET") {
         const token = decodeURIComponent(url.pathname.slice("/partners/manage/".length).replace(/\/+$/, ""));
