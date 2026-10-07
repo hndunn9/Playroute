@@ -5663,7 +5663,7 @@ ${p.description ? `<div class="d">${e(p.description)}</div>` : ""}
 <div class="box"><p><b>${price}</b> for Playroute's Picks in the app and the weekly newsletter.</p><br>
 ${payBlock}<br>
 <p>Pay by Venmo to <b>@hnjames9</b>. If payment hasn't arrived by then, go-live moves back until it does.</p><br>
-<p>Content can be updated by request, up to once per week. Any change needs your approval again here before it runs. Questions: <a href="mailto:partners@playroute.co">partners@playroute.co</a>.</p></div>
+<p>Content can be updated by request, once per month. Any change needs your approval again here before it runs. Questions: <a href="mailto:partners@playroute.co">partners@playroute.co</a>.</p></div>
 
 <h2>Approve</h2>
 ${approved
