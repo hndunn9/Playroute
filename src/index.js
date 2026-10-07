@@ -5583,8 +5583,7 @@ function partnerPreviewPageHtml(p) {
   const tok = encodeURIComponent(p.token);
   const goLive = fmtLongDate(p.go_live_date);
   const endsOn = fmtLongDate(pickEndsOn(p));
-  // Go-live is 12:00 AM MT on go_live_date, so 24h earlier is the end of the day two dates back.
-  const dueDay = p.go_live_date ? fmtLongDate(addDays(p.go_live_date, -2)) : null;
+  const dueDay = p.go_live_date ? fmtLongDate(addDays(p.go_live_date, -1)) : null;
   const price = e(p.price_label || "$75/month");
   const logo = pp.logo_url
     ? `<img class="logo" src="${e(pp.logo_url)}" alt="">`
@@ -5593,44 +5592,52 @@ function partnerPreviewPageHtml(p) {
   const meta = [p.business_name, p.location, p.ages].filter(Boolean).map(e).join(" · ");
   const host = pickHost(p);
   const payBlock = goLive
-    ? `<p>Runs <b>${e(goLive)}</b> through <b>${e(endsOn)}</b>.</p><br><p><b>Payment is due 24 hours before go-live: by 11:59 PM Mountain on ${e(dueDay)}.</b></p>`
-    : `<p><b>Payment is due 24 hours before your promotion first goes live.</b> We'll confirm your go-live date in writing.</p>`;
+    ? `<p>Desired start date: <b>${e(goLive)}</b>, running through <b>${e(endsOn)}</b>.</p><br><p><b>Payment is due 24 hours before your desired start date (by ${e(dueDay)}).</b></p>`
+    : `<p><b>Payment is due 24 hours before your desired start date.</b></p>`;
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex,nofollow"><title>Preview: ${e(p.business_name)} on Playroute</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap">
+<script>try{var t=localStorage.getItem('playroute-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 <style>
-:root{--bark:#3A4F45;--cream:#F4F5F0;--parchment:#ECEEE8;--fog:#D7DBD3;--ink:#1E2622;--ink-soft:#5B6560;--sky:#46707E;--ember:#B2555A;--gold:#A88B3E;--pill-green-bg:#D4EBC9;--pill-green-text:#3A5C2A;--brand:${color};}
-@media (prefers-color-scheme: dark){:root{--cream:#1D231F;--parchment:#12100F;--fog:#63726A;--ink:#EDEFE9;--ink-soft:#A7B0A4;--pill-green-bg:#2B3B2B;--pill-green-text:#A8D9A0;}}
+:root{--soil:#1B2B26;--bark:#3A4F45;--clay:#5B84A0;--cream:#F4F5F0;--parchment:#ECEEE8;--fog:#D7DBD3;--ink:#1E2622;--ink-soft:#5B6560;--sky:#46707E;--ember:#B2555A;--gold:#A88B3E;--radius-md:14px;--pill-green-bg:#D4EBC9;--pill-green-text:#3A5C2A;--brand:${color};}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--cream:#1D231F;--parchment:#12100F;--fog:#63726A;--ink:#EDEFE9;--ink-soft:#A7B0A4;--pill-green-bg:#2B3B2B;--pill-green-text:#A8D9A0;}}
+:root[data-theme="dark"]{--cream:#1D231F;--parchment:#12100F;--fog:#63726A;--ink:#EDEFE9;--ink-soft:#A7B0A4;--pill-green-bg:#2B3B2B;--pill-green-text:#A8D9A0;}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--cream);font-family:'DM Sans',sans-serif;color:var(--ink);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-wrap:anywhere}
 .page{max-width:560px;margin:0 auto;padding:18px 16px 56px}
-.wordmark{font-family:'Playfair Display',serif;font-weight:700;font-size:19px;padding-bottom:14px;border-bottom:1px solid var(--fog)}
-.banner{margin:16px 0 0;padding:10px 12px;border-radius:8px;background:color-mix(in srgb,var(--gold) 16%,transparent);border:1px solid var(--gold);font-size:13px}
+.wordmark{font-family:'Playfair Display',serif;font-weight:700;font-size:19px;color:var(--ink);padding-bottom:14px;border-bottom:1px solid var(--fog)}
+.banner{margin:16px 0 0;padding:10px 12px;border-radius:8px;background:color-mix(in srgb,var(--sky) 10%,transparent);border:1px solid color-mix(in srgb,var(--sky) 40%,transparent);font-size:13px}
 h1{font-family:'Playfair Display',serif;font-weight:600;font-size:28px;line-height:1.2;margin:22px 0 10px}
-h2{font-family:'Playfair Display',serif;font-weight:600;font-size:19px;margin:30px 0 6px}
+h2{font-family:'Playfair Display',serif;font-weight:600;font-size:20px;margin:30px 0 4px}
 .sub{color:var(--ink-soft);font-size:14px;margin-bottom:10px}
-.box{background:var(--parchment);border:1px solid var(--fog);border-radius:12px;padding:14px}
-.sec{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--bark);margin-bottom:8px}
-.card{background:var(--cream);border:1px solid var(--brand);box-shadow:0 0 0 1px var(--brand),0 2px 8px rgba(20,24,22,.07);border-radius:14px;padding:13px 14px;display:flex;gap:11px;align-items:flex-start}
+.box{background:var(--parchment);border:1px solid var(--fog);border-radius:10px;padding:14px}
+.app{border-radius:var(--radius-md);overflow:hidden;border:1px solid var(--fog);box-shadow:0 2px 8px rgba(20,24,22,.07)}
+.app-bar{background:var(--soil);color:#fff;font-family:'Playfair Display',serif;font-weight:700;font-size:17px;padding:12px 14px}
+.app-main{background:var(--cream);padding:12px 12px 4px}
+.sec{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--bark);margin:2px 0 10px}
+.card{background:var(--parchment);border:1px solid var(--brand);box-shadow:0 0 0 1px var(--brand),0 2px 8px rgba(20,24,22,.07);border-radius:var(--radius-md);padding:13px 14px;display:flex;gap:11px;align-items:flex-start;margin-bottom:10px}
 .logo{width:40px;height:40px;border-radius:8px;object-fit:contain;flex-shrink:0;background:#fff}
 .logo.ph{background:var(--brand);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
 .t{font-weight:600;font-size:14.5px;line-height:1.3}.m{font-size:12.5px;color:var(--ink-soft);margin-top:3px}
-.d{font-size:13px;margin-top:6px}
-.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+.d{font-size:13px;margin-top:5px;line-height:1.45}
+.tags{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:7px;align-items:center}
 .tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--brand);color:#fff}
-.cta{font-size:13px;font-weight:700;color:var(--brand);text-decoration:none}
+.cta{font-size:12.5px;font-weight:700;color:var(--brand);text-decoration:none}
+.sponsor{font-size:10.5px;color:var(--ink-soft);margin:-4px 0 8px 2px}
 .real{display:inline-block;margin-top:10px;font-size:14px;font-weight:600;color:var(--sky)}
-.mail{background:#FBF6EC;border-radius:8px;padding:2px 0 6px;overflow:hidden}
+.mail{background:#FBF6EC;border-radius:var(--radius-md);border:1px solid var(--fog);padding:2px 0 6px;overflow:hidden}
 ul.cmp{list-style:none}
 ul.cmp li{padding:8px 0;border-bottom:1px solid var(--fog);font-size:14px}
 ul.cmp li:last-child{border-bottom:0}
+a{color:var(--sky)}
 .field{margin:14px 0}.field label{display:block;font-weight:600;font-size:14px;margin-bottom:6px}
-.field input[type=text]{width:100%;padding:11px 12px;border-radius:6px;border:1px solid var(--fog);background:var(--parchment);font:inherit;color:var(--ink)}
+.field input[type=text]{width:100%;padding:11px 12px;border-radius:6px;border:1px solid var(--fog);background:var(--parchment);font:inherit;color:var(--ink);outline:none}
+.field input[type=text]:focus{border-color:var(--sky)}
 .chk{display:flex;gap:10px;align-items:flex-start;font-size:14px;margin:12px 0}.chk input{margin-top:4px;width:18px;height:18px;accent-color:var(--sky);flex-shrink:0}
 .btn{padding:12px 22px;border-radius:6px;border:0;background:var(--sky);color:#fff;font:inherit;font-weight:600;cursor:pointer;min-height:44px}
 .btn:disabled{opacity:.6;cursor:not-allowed}
-.msg{font-size:14px;margin-top:10px}.msg.err{color:var(--ember)}.done{padding:14px;border-radius:12px;background:var(--pill-green-bg);color:var(--pill-green-text);font-weight:600}
+.msg{font-size:14px;margin-top:10px}.msg.err{color:var(--ember)}.done{padding:14px;border-radius:10px;background:var(--pill-green-bg);color:var(--pill-green-text);font-weight:600}
 </style></head><body><div class="page">
 <div class="wordmark">Playroute</div>
 <div class="banner">Brand preview. Not live yet, and only visible to people with this link.</div>
@@ -5639,10 +5646,10 @@ ul.cmp li:last-child{border-bottom:0}
 
 <h2>In the app</h2>
 <p class="sub">A small tagged card at the top of the events feed, labeled as a Playroute's Pick.</p>
-<div class="box"><div class="sec">Playroute's Picks</div>
+<div class="app"><div class="app-bar">Playroute</div><div class="app-main"><div class="sec">Playroute's Picks</div>
 <div class="card">${logo}<div style="min-width:0"><div class="t">${e(p.tagline || p.business_name)}</div><div class="m">${meta}</div>
 ${p.description ? `<div class="d">${e(p.description)}</div>` : ""}
-<div class="tags"><span class="tag">${e(p.business_name)}</span>${pp.link_url ? `<a class="cta" href="${e(pp.link_url)}" target="_blank" rel="noopener">${e(pp.cta_label)} →</a>` : `<span class="cta">${e(pp.cta_label)} →</span>`}</div></div></div></div>
+<div class="tags"><span class="tag">${e(p.business_name)}</span>${pp.link_url ? `<a class="cta" href="${e(pp.link_url)}" target="_blank" rel="noopener">${e(pp.cta_label)} →</a>` : `<span class="cta">${e(pp.cta_label)} →</span>`}</div></div></div><div class="sponsor">Promoted by a local partner</div></div></div>
 <a class="real" href="/?ff_picks=${tok}" target="_blank" rel="noopener">See it in the real Playroute app →</a>
 
 <h2>In the Sunday newsletter</h2>
@@ -5662,14 +5669,14 @@ ${p.description ? `<div class="d">${e(p.description)}</div>` : ""}
 <h2>Terms</h2>
 <div class="box"><p><b>${price}</b> for Playroute's Picks in the app and the weekly newsletter.</p><br>
 ${payBlock}<br>
-<p>Pay by Venmo to <b>@hnjames9</b>. If payment hasn't arrived by then, go-live moves back until it does.</p><br>
-<p>Content can be updated by request, once per month. Any change needs your approval again here before it runs. Questions: <a href="mailto:partners@playroute.co">partners@playroute.co</a>.</p></div>
+<p>Pay by Venmo to <b>@hnjames9</b>. If payment hasn't arrived by then, your start date moves back until it does.</p><br>
+<p>Content can be updated by request, once per month. Any change needs your approval again here before it runs. Questions: <a href="mailto:hndunn9@gmail.com">hndunn9@gmail.com</a>.</p></div>
 
 <h2>Approve</h2>
 ${approved
-  ? `<div class="done">Approved${p.approved_by ? " by " + e(p.approved_by) : ""}. Thank you! We'll confirm go-live by email once payment is in.</div>`
+  ? `<div class="done">Approved${p.approved_by ? " by " + e(p.approved_by) : ""}. Thank you! We'll confirm your start date by email once payment is in.</div>`
   : `<div class="field"><label for="nm">Your name</label><input type="text" id="nm" autocomplete="name"></div>
-<label class="chk"><input type="checkbox" id="ok"><span>I approve how ${e(p.business_name)} appears above and understand payment is due 24 hours before the first go-live.</span></label>
+<label class="chk"><input type="checkbox" id="ok"><span>I approve how ${e(p.business_name)} appears above and understand payment is due 24 hours before my desired start date.</span></label>
 <button class="btn" id="go">Approve preview</button><p class="msg" id="msg"></p>`}
 </div>
 <script>
@@ -5694,7 +5701,7 @@ async function getPreviewRow(env, token) {
   return token ? await env.DB.prepare(`SELECT * FROM partner_previews WHERE token = ?`).bind(String(token)).first() : null;
 }
 const PREVIEW_HEADERS = { "Content-Type": "text/html;charset=UTF-8", "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store" };
-const PREVIEW_404 = () => new Response("This preview link isn't valid. Email partners@playroute.co.", { status: 404, headers: { "Content-Type": "text/plain", "X-Robots-Tag": "noindex" } });
+const PREVIEW_404 = () => new Response("This preview link isn't valid. Email hndunn9@gmail.com.", { status: 404, headers: { "Content-Type": "text/plain", "X-Robots-Tag": "noindex" } });
 
 async function handlePartnerPreviewPage(env, token) {
   const p = await getPreviewRow(env, token);
@@ -5709,7 +5716,7 @@ async function handlePartnerPreviewNewsletter(env, token) {
   const { byDay, spotlight, eventsDiscovered } = await getWeekAheadEvents(env);
   const body = buildDigestHtml(byDay, spotlight, eventsDiscovered, "#", [p]);
   const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="robots" content="noindex,nofollow"><title>Newsletter preview: ${escapeHtml(p.business_name)}</title></head>
-<body style="margin:0;background:#E9E4D8;"><div style="max-width:600px;margin:0 auto;padding:10px 0;"><div style="margin:0 12px 10px;padding:10px 12px;border-radius:8px;background:#F3E9C9;border:1px solid #A88B3E;font:13px/1.4 -apple-system,sans-serif;color:#1E2622;">Preview of this week's Playroute newsletter with your Pick added. This copy was not sent to anyone.</div>${body}</div></body></html>`;
+<body style="margin:0;background:#1B2B26;"><div style="max-width:600px;margin:0 auto;padding:10px 0;"><div style="margin:0 12px 10px;padding:10px 12px;border-radius:8px;background:#F4F5F0;border:1px solid #46707E;font:13px/1.4 -apple-system,sans-serif;color:#1E2622;">Preview of this week's Playroute newsletter with your Pick added. This copy was not sent to anyone.</div>${body}</div></body></html>`;
   return new Response(html, { headers: PREVIEW_HEADERS });
 }
 
