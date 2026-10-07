@@ -133,3 +133,8 @@ keep reads proportional to traffic:
 - Recommended-section A/B test: 50/50 random split. Read at **80% confidence**
   (p < 0.20) with 80% power. These are directional reads.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
+- **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
+  A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within
+  `go_live_date`..`ends_on`. It is **feature-flagged off**: `PICKS_PUBLIC` (src/index.js, app API + newsletter)
+  and `FEATURE_PICKS_ENABLED` (public/index.html). Flip both in one PR to launch. Previews work with the flag off:
+  `/?ff_picks=<token>` (app) and `/partners/preview/<token>/newsletter`. Editing content after approval resets it to draft.

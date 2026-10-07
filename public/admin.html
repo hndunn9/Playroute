@@ -286,6 +286,26 @@
     .rw-acts button{flex:1;}
     .card{padding:16px;}
   }
+  /* Partners view */
+  .pk-row{border-top:1px solid #E6DCC8;padding:12px 0;}
+  .pk-row:first-child{border-top:0;}
+  .pk-name{font-weight:700;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .pk-swatch{width:14px;height:14px;border-radius:4px;display:inline-block;border:1px solid rgba(0,0,0,.15);}
+  .pk-chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0;}
+  .pk-chip{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:#ECE4D4;color:#5C4A38;}
+  .pk-chip.good{background:#e8f0e0;color:#3a5a2a;}
+  .pk-chip.warn{background:#F6EBCB;color:#7A5B12;}
+  .pk-chip.bad{background:#f5e0e0;color:#7a2a2a;}
+  .pk-actions{display:flex;flex-wrap:wrap;gap:6px;}
+  .pk-actions button,.pk-actions a{width:auto;flex:none;margin:0;padding:7px 12px;font-size:12px;border-radius:7px;min-height:36px;}
+  .pk-actions a{display:inline-flex;align-items:center;background:#ECE4D4;color:#2C1F14;text-decoration:none;font-weight:600;}
+  .pk-form label{display:block;font-size:12.5px;font-weight:600;margin:10px 0 4px;}
+  .pk-form label span{font-weight:400;color:#7A6650;}
+  .pk-form input,.pk-form textarea{width:100%;padding:10px;border:1px solid #C8BA9E;border-radius:8px;font-size:14px;font-family:inherit;background:#fff;}
+  .pk-form textarea{min-height:70px;resize:vertical;}
+  .pk-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 10px;}
+  @media (max-width:520px){.pk-grid{grid-template-columns:1fr;}}
+  .pk-flag{font-size:12.5px;padding:10px;border-radius:8px;background:#F6EBCB;color:#5C4A12;margin-bottom:12px;line-height:1.5;}
 </style>
 </head>
 <body>
@@ -299,6 +319,7 @@
     <a href="#experiments" class="nav-link" data-view="experiments"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 002 3h10a2 2 0 002-3l-5-9V3"/></svg><span>Tests</span></a>
     <a href="#content" class="nav-link" data-view="content"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M21 17l-5-5-8 7"/></svg><span>Content</span></a>
     <a href="#newsletter" class="nav-link" data-view="newsletter"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg><span>Digest</span></a>
+    <a href="#partners" class="nav-link" data-view="partners"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.6 5.6 6 .7-4.5 4.1 1.2 6-5.3-3-5.3 3 1.2-6L3.4 9.3l6-.7z"/></svg><span>Partners</span></a>
     <div class="rail-foot">Unlisted page, no password.<br>Don't share this URL.</div>
   </nav>
 
@@ -487,6 +508,40 @@
       <button style="background:#7a2a2a;" onclick="sendRealDigest()">Send real digest to everyone</button>
       <div class="result" id="realDigestResult"></div>
     </div>
+  </div>
+    </div>
+  </section>
+
+  <section class="view" id="view-partners" data-view="partners">
+    <header class="view-head"><div><p class="eyebrow">Playroute's Picks</p><h1>Partners</h1></div></header>
+    <div class="pk-flag" id="pkFlag">Picks are behind a feature flag: users and subscribers see nothing yet. Previews work through each partner's link.</div>
+    <div class="cols">
+  <div class="card">
+    <div class="card-head"><h2>Placements</h2><button class="btn-sm secondary" onclick="pkNew()">+ New</button></div>
+    <p>A Pick runs when it is <b>approved</b> by the partner, <b>paid</b>, and inside its dates. Editing after approval sends it back for re-approval.</p>
+    <div id="pkList"><div class="pending-empty">Loading…</div></div>
+  </div>
+  <div class="card pk-form" id="pkFormCard">
+    <h2 id="pkFormTitle">New placement</h2>
+    <input type="hidden" id="pkToken">
+    <label for="pk_business_name">Business name</label><input type="text" id="pk_business_name">
+    <label for="pk_tagline">Headline <span>(about 60 characters)</span></label><input type="text" id="pk_tagline" maxlength="90">
+    <label for="pk_description">Description <span>(1–2 sentences)</span></label><textarea id="pk_description" maxlength="400"></textarea>
+    <div class="pk-grid">
+      <div><label for="pk_location">Town</label><input type="text" id="pk_location"></div>
+      <div><label for="pk_ages">Ages</label><input type="text" id="pk_ages"></div>
+      <div><label for="pk_cta_label">Button text</label><input type="text" id="pk_cta_label" placeholder="Learn more"></div>
+      <div><label for="pk_brand_color">Brand color <span>(hex)</span></label><input type="text" id="pk_brand_color" placeholder="#46707E"></div>
+      <div><label for="pk_go_live_date">Go-live date</label><input type="date" id="pk_go_live_date"></div>
+      <div><label for="pk_ends_on">End date <span>(default +30 days)</span></label><input type="date" id="pk_ends_on"></div>
+    </div>
+    <label for="pk_link_url">Destination link <span>(UTM tags added automatically)</span></label><input type="url" id="pk_link_url" placeholder="https://">
+    <label for="pk_price_label">Price</label><input type="text" id="pk_price_label" value="$75/month">
+    <button style="margin-top:14px;" onclick="pkSave()">Save</button>
+    <label for="pkLogo" style="margin-top:16px;">Logo <span>(PNG, JPEG or WebP; save first)</span></label>
+    <input type="file" id="pkLogo" accept="image/png,image/jpeg,image/webp">
+    <button class="secondary" onclick="pkUploadLogo()">Upload logo</button>
+    <div class="result" id="pkResult"></div>
   </div>
     </div>
   </section>
@@ -1403,7 +1458,7 @@ async function loadFreshness(){
 // Every original card and loader is unchanged; they now live in views. Views
 // load their cards the first time they're opened, so nothing needs a
 // "Load…" click (the buttons still work as refreshes).
-const VIEWS = ['today','review','pipeline','growth','experiments','content','newsletter'];
+const VIEWS = ['today','review','pipeline','growth','experiments','content','newsletter','partners'];
 const viewLoaded = {};
 // Each view loads its data the first time it's opened (2026-10-02): loading
 // every card at startup, plus a 5-minute Today auto-refresh, helped exhaust
@@ -1414,7 +1469,8 @@ const VIEW_LOADERS = {
   pipeline: () => { loadSummaryStrip(); loadSources(); loadFreshness(); },
   growth: () => { loadStats(); loadEngagement(); loadReferralsTrend(); loadSearchInsights(); loadWauTrend(); },
   experiments: () => loadRecExperiment(),
-  content: () => loadPlaygroundsForPhoto()
+  content: () => loadPlaygroundsForPhoto(),
+  partners: () => pkLoad()
 };
 function showView(v){
   if(!VIEWS.includes(v)) v = 'today';
@@ -1653,6 +1709,106 @@ async function loadToday(bypassCache){
 }
 showView(location.hash.slice(1) || 'today');
 loadToday();
+
+// ── Partners (Playroute's Picks) ──
+const PK_FIELDS = ['business_name','tagline','description','location','ages','cta_label','brand_color','go_live_date','ends_on','link_url','price_label'];
+let pkRows = [];
+function pkResult(text, ok){
+  const el = document.getElementById('pkResult');
+  el.textContent = text; el.className = 'result show ' + (ok ? 'ok' : 'err');
+}
+function pkPreviewUrl(r){ return location.origin + '/partners/preview/' + encodeURIComponent(r.token); }
+async function pkLoad(){
+  const list = document.getElementById('pkList');
+  try{
+    const res = await fetch('/api/admin/picks');
+    pkRows = await res.json();
+    if(!res.ok) throw new Error(pkRows.error || res.status);
+    const flagOn = pkRows.length && pkRows[0].picks_public;
+    document.getElementById('pkFlag').textContent = flagOn
+      ? 'Picks are LIVE for users and subscribers (flag on).'
+      : 'Picks are behind a feature flag: users and subscribers see nothing yet. Previews work through each partner\u2019s link.';
+    if(!pkRows.length){ list.innerHTML = '<div class="pending-empty">No placements yet.</div>'; return; }
+    list.innerHTML = '';
+    pkRows.forEach((r, i) => {
+      const row = document.createElement('div'); row.className = 'pk-row';
+      const chips = [];
+      chips.push(r.status === 'approved' ? ['good', 'Approved' + (r.approved_by ? ' by ' + r.approved_by : '')] : ['warn', 'Awaiting partner approval']);
+      chips.push(r.paid_at ? ['good', 'Paid'] : ['bad', 'Unpaid']);
+      const run = {unscheduled:['warn','No go-live date'], scheduled:['', 'Starts ' + r.go_live_date], 'in-window':['', 'In run window'], ended:['', 'Ended ' + r.ends_on_effective]}[r.run_state] || ['', r.run_state];
+      chips.push(run);
+      if(r.live) chips.push(['good', flagOn ? 'LIVE' : 'Would be live (flag off)']);
+      row.innerHTML = `<div class="pk-name"><span class="pk-swatch" style="background:${escapeHtml(r.brand_color || '#46707E')}"></span>${escapeHtml(r.business_name)}</div>
+        <div class="fine">${escapeHtml(r.tagline || '')}${r.go_live_date ? ' · ' + escapeHtml(r.go_live_date) + ' → ' + escapeHtml(r.ends_on_effective || '') : ''}</div>
+        <div class="pk-chips">${chips.map(c => `<span class="pk-chip ${c[0]}">${escapeHtml(c[1])}</span>`).join('')}</div>
+        <div class="pk-actions">
+          <button class="secondary" data-act="edit">Edit</button>
+          <a href="${escapeHtml(pkPreviewUrl(r))}" target="_blank" rel="noopener">Preview page</a>
+          <a href="/?ff_picks=${encodeURIComponent(r.token)}" target="_blank" rel="noopener">In app</a>
+          <a href="/partners/preview/${encodeURIComponent(r.token)}/newsletter" target="_blank" rel="noopener">Newsletter</a>
+          <button class="secondary" data-act="copy">Copy link</button>
+          <button data-act="paid">${r.paid_at ? 'Mark unpaid' : 'Mark paid'}</button>
+        </div>`;
+      row.querySelector('[data-act=edit]').addEventListener('click', () => pkEdit(i));
+      row.querySelector('[data-act=copy]').addEventListener('click', async (e) => {
+        try{ await navigator.clipboard.writeText(pkPreviewUrl(r)); e.target.textContent = 'Copied'; }
+        catch(err){ prompt('Copy this link:', pkPreviewUrl(r)); }
+      });
+      row.querySelector('[data-act=paid]').addEventListener('click', () => pkSetPaid(r.token, !r.paid_at));
+      list.appendChild(row);
+    });
+  }catch(err){
+    list.innerHTML = '<div class="pending-empty">Couldn\u2019t load: ' + escapeHtml(String(err.message || err)) + '</div>';
+  }
+}
+function pkNew(){
+  document.getElementById('pkToken').value = '';
+  PK_FIELDS.forEach(f => { document.getElementById('pk_' + f).value = f === 'price_label' ? '$75/month' : ''; });
+  document.getElementById('pkFormTitle').textContent = 'New placement';
+  document.getElementById('pkFormCard').scrollIntoView({behavior:'smooth'});
+}
+function pkEdit(i){
+  const r = pkRows[i];
+  document.getElementById('pkToken').value = r.token;
+  PK_FIELDS.forEach(f => { document.getElementById('pk_' + f).value = r[f] || ''; });
+  document.getElementById('pkFormTitle').textContent = 'Edit: ' + r.business_name;
+  document.getElementById('pkFormCard').scrollIntoView({behavior:'smooth'});
+}
+async function pkSave(){
+  const body = { token: document.getElementById('pkToken').value || null };
+  PK_FIELDS.forEach(f => { body[f] = document.getElementById('pk_' + f).value; });
+  try{
+    const res = await fetch('/api/admin/picks/save', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await res.json();
+    if(!res.ok) throw new Error(j.error || res.status);
+    document.getElementById('pkToken').value = j.token;
+    pkResult(j.reset ? 'Saved. Content changed after approval, so the partner needs to approve again.' : 'Saved.', true);
+    pkLoad();
+  }catch(err){ pkResult('Error: ' + (err.message || err), false); }
+}
+async function pkUploadLogo(){
+  const token = document.getElementById('pkToken').value;
+  const file = document.getElementById('pkLogo').files[0];
+  if(!token){ pkResult('Save the placement first.', false); return; }
+  if(!file){ pkResult('Choose a logo file.', false); return; }
+  const fd = new FormData(); fd.append('token', token); fd.append('file', file);
+  try{
+    const res = await fetch('/api/admin/picks/logo', {method:'POST', body: fd});
+    const j = await res.json();
+    if(!res.ok) throw new Error(j.error || res.status);
+    pkResult(j.reset ? 'Logo uploaded. Partner needs to approve again.' : 'Logo uploaded.', true);
+    pkLoad();
+  }catch(err){ pkResult('Error: ' + (err.message || err), false); }
+}
+async function pkSetPaid(token, paid){
+  if(paid && !confirm('Confirm you received payment?')) return;
+  try{
+    const res = await fetch('/api/admin/picks/paid', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token, paid})});
+    const j = await res.json();
+    if(!res.ok) throw new Error(j.error || res.status);
+    pkLoad();
+  }catch(err){ alert('Error: ' + (err.message || err)); }
+}
 </script>
 </body>
 </html>

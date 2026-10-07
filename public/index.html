@@ -543,6 +543,19 @@ main{
   letter-spacing:0.01em;order:-1;
 }
 
+/* ── PLAYROUTE'S PICKS (partner placements) — behind FEATURE_PICKS_ENABLED ── */
+.picks-section{margin-bottom:8px;}
+.picks-heading{font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);margin:4px 0 10px;display:flex;justify-content:space-between;gap:8px;}
+.picks-heading .picks-preview-note{color:var(--gold);letter-spacing:0.04em;}
+.pick-card{display:flex;gap:11px;align-items:flex-start;padding:13px 14px;margin-bottom:10px;background:var(--parchment);border:1px solid var(--pick-color,var(--sky));box-shadow:0 0 0 1px var(--pick-color,var(--sky)),0 2px 8px rgba(20,24,22,0.07);border-radius:var(--radius-md);text-decoration:none;color:inherit;-webkit-tap-highlight-color:transparent;}
+.pick-logo{width:40px;height:40px;border-radius:8px;flex-shrink:0;object-fit:contain;background:#fff;}
+.pick-logo.ph{background:var(--pick-color,var(--sky));color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;}
+.pick-main{flex:1;min-width:0;}
+.pick-desc{font-size:13px;color:var(--ink);margin-top:5px;line-height:1.45;}
+.pick-cta{font-size:12.5px;font-weight:700;color:var(--pick-color,var(--sky));}
+.tag.pick-brand{background:var(--pick-color,var(--sky));color:#fff;font-weight:700;}
+.pick-sponsor{font-size:10.5px;color:var(--ink-soft);margin:-6px 0 12px 2px;}
+
 /* Level 2 — inline expanded detail */
 .card-detail{
   max-height:0;overflow:hidden;
@@ -1146,6 +1159,7 @@ const ICONS = {
 };
 
 async function loadData(){
+  const picksLoad = loadPicks();
   try{
     const [eventsRes, pgRes, hikesRes] = await Promise.all([
       fetch(`${API_BASE}/api/events`),
@@ -1161,6 +1175,7 @@ async function loadData(){
     console.error("Failed to load live data:", err);
     dataLoadFailed = true;
   }
+  await picksLoad;
   renderAll();
   handleEventDeepLink();
   // Pageview beacon moved here (was fired eagerly at bootstrap, before
@@ -1729,6 +1744,7 @@ function renderFeed(){
   // showDate:true on each card since these are pulled out of their normal
   // day-heading grouping -- without it the date context that grouping
   // would have provided for free is just gone.
+  if(!activeSearch){ const picksEl = buildPicksSection(); if(picksEl) feed.appendChild(picksEl); }
   const recommended = getRecommendedEvents(upcoming);
   lastSawRecommended = recommended.length > 0;
   if(recommended.length) sendExpExposureOnce(); // strip can first appear mid-visit, after the pageview beacon
@@ -2004,6 +2020,66 @@ function recordAffinity(meta){
 // until then, only visible via ?ff_recommended=1, so you can preview it
 // live on the real site without editing code each time, and without any
 // regular visitor seeing it while it's still being evaluated.
+// Playroute's Picks (paid partner placements). OFF for everyone until this
+// is true; the server has a matching PICKS_PUBLIC flag for /api/picks and
+// the newsletter. ?ff_picks=<preview token> shows only that partner's Pick
+// to whoever opens the link (used to show partners before launch). With
+// the flag off and no param, nothing is fetched at all.
+const FEATURE_PICKS_ENABLED = false;
+let picks = [];
+function picksPreviewToken(){
+  try{ return new URLSearchParams(location.search).get('ff_picks') || null; }catch(e){ return null; }
+}
+async function loadPicks(){
+  const tok = picksPreviewToken();
+  if(!tok && !FEATURE_PICKS_ENABLED) return;
+  try{
+    const r = await fetch(tok ? `${API_BASE}/api/picks/preview?token=${encodeURIComponent(tok)}` : `${API_BASE}/api/picks`);
+    if(r.ok){ const j = await r.json(); picks = Array.isArray(j) ? j : []; }
+  }catch(e){ picks = []; }
+}
+function buildPicksSection(){
+  if(!picks.length) return null;
+  const isPreview = picks.some(p=>p.preview);
+  const section = document.createElement("div");
+  section.className = "picks-section";
+  const head = document.createElement("div");
+  head.className = "picks-heading";
+  const label = document.createElement("span"); label.textContent = "Playroute's Picks";
+  head.appendChild(label);
+  if(isPreview){ const n = document.createElement("span"); n.className = "picks-preview-note"; n.textContent = "Preview"; head.appendChild(n); }
+  section.appendChild(head);
+  picks.forEach(p=>{
+    const color = /^#[0-9A-Fa-f]{6}$/.test(p.brand_color||"") ? p.brand_color : "";
+    const card = document.createElement(p.link_url ? "a" : "div");
+    card.className = "pick-card";
+    if(color) card.style.setProperty("--pick-color", color);
+    if(p.link_url){
+      card.href = p.link_url; card.target = "_blank"; card.rel = "noopener sponsored";
+      if(!p.preview) card.addEventListener("click", ()=>{
+        try{ fetch(`${API_BASE}/api/track-click`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:p.link_url,event_title:p.business_name,category:"partner",action:"pick_click"})}).catch(()=>{}); }catch(e){}
+      });
+    }
+    let logo;
+    if(p.logo_url){ logo = document.createElement("img"); logo.src = p.logo_url; logo.alt = ""; logo.className = "pick-logo"; }
+    else { logo = document.createElement("span"); logo.className = "pick-logo ph"; logo.textContent = (p.business_name||"?").charAt(0).toUpperCase(); }
+    card.appendChild(logo);
+    const main = document.createElement("div"); main.className = "pick-main";
+    const t = document.createElement("div"); t.className = "event-title"; t.textContent = p.tagline || p.business_name; main.appendChild(t);
+    const m = document.createElement("div"); m.className = "event-meta"; m.textContent = [p.business_name, p.location, p.ages].filter(Boolean).join(" · "); main.appendChild(m);
+    if(p.description){ const d = document.createElement("div"); d.className = "pick-desc"; d.textContent = p.description; main.appendChild(d); }
+    const tags = document.createElement("div"); tags.className = "tag-row"; tags.style.alignItems = "center";
+    const b = document.createElement("span"); b.className = "tag pick-brand"; b.textContent = p.business_name; tags.appendChild(b);
+    const c = document.createElement("span"); c.className = "pick-cta"; c.textContent = (p.cta_label || "Learn more") + " →"; tags.appendChild(c);
+    main.appendChild(tags);
+    card.appendChild(main);
+    section.appendChild(card);
+  });
+  const s = document.createElement("div"); s.className = "pick-sponsor"; s.textContent = "Promoted by a local partner";
+  section.appendChild(s);
+  return section;
+}
+
 const FEATURE_RECOMMENDED_ENABLED = false;
 
 // ── A/B EXPERIMENT (2026-09) ── each browser is assigned once, 50/50, to

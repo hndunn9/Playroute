@@ -3889,7 +3889,7 @@ async function handleSources(env) {
 // clicked — that made cross-event engagement analysis unreliable. action_type
 // is now the dedicated field for that; category (when sent) stays the real
 // event category throughout.
-const KNOWN_ACTION_TYPES = new Set(["view_details", "add_to_calendar", "share", "support_click", "source_click"]);
+const KNOWN_ACTION_TYPES = new Set(["view_details", "add_to_calendar", "share", "support_click", "source_click", "pick_click"]);
 
 async function handleTrackClick(request, env) {
   let body;
@@ -4243,7 +4243,7 @@ function digestBadgeHtml(badge) {
   return "";
 }
 
-function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl) {
+function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, picks = []) {
   const days = [...byDay.entries()];
   const ctaButton = (label) => `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:14px 0;">
@@ -4330,6 +4330,7 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl) {
     </div>
     <div style="padding:0 24px;">${ctaButton("Open Playroute")}</div>
 
+    ${digestPicksHtml(picks)}
     ${spotlightHtml}
     <p style="padding:18px 24px 4px;margin:0;font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:#3C5548;font-family:-apple-system,sans-serif;">This week, day by day</p>
     ${bodyContent}
@@ -4354,8 +4355,9 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl) {
   </div>`;
 }
 
-function buildDigestText(byDay, spotlight, eventsDiscovered) {
+function buildDigestText(byDay, spotlight, eventsDiscovered, picks = []) {
   const lines = ["This week on Playroute", "", `Open Playroute: ${DIGEST_SITE_URL}/?src=newsletter`, ""];
+  lines.push(...digestPicksText(picks));
 
   if (spotlight.length) {
     lines.push("DON'T MISS THESE");
@@ -4726,6 +4728,8 @@ async function runWeeklyEngagementDigest(env) {
 
 async function runWeeklyDigest(env, testEmail = null) {
   const { byDay, spotlight, eventsDiscovered, weekLabel } = await getWeekAheadEvents(env);
+  // Flagged: no subscriber sees a Pick until PICKS_PUBLIC is true.
+  const picks = PICKS_PUBLIC ? await getLivePicks(env) : [];
   const subject = `This week on Playroute \uD83C\uDF33 \u2014 ${weekLabel}`;
 
   if (testEmail) {
@@ -4736,8 +4740,8 @@ async function runWeeklyDigest(env, testEmail = null) {
     // debugging -- without it, Gmail would still thread those together.
     const timeMarker = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
     const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(testEmail)}`;
-    const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl);
-    const text = buildDigestText(byDay, spotlight, eventsDiscovered);
+    const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, picks);
+    const text = buildDigestText(byDay, spotlight, eventsDiscovered, picks);
     try {
       await sendDigestEmail(env, testEmail, html, text, `[TEST ${timeMarker}] ${subject}`);
       return [{ email: testEmail, status: "sent (test)" }];
@@ -4752,8 +4756,8 @@ async function runWeeklyDigest(env, testEmail = null) {
   const results = [];
   for (const { email } of subs) {
     const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}`;
-    const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl);
-    const text = buildDigestText(byDay, spotlight, eventsDiscovered);
+    const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, picks);
+    const text = buildDigestText(byDay, spotlight, eventsDiscovered, picks);
     try {
       await sendDigestEmail(env, email, html, text, subject);
       results.push({ email, status: "sent" });
@@ -5442,105 +5446,228 @@ async function handlePartnerManagePage(env, token) {
 }
 
 // ---------------------------------------------------------------------
-// PARTNER PREVIEW + APPROVAL — playroute.co/partners/preview/:token
-// Unlisted, noindex page a partner opens to check how their promotion will
-// look (feed card + newsletter) and to approve it before it goes live.
-// Reads and writes ONLY the partner_previews table (approval stamp); it
-// never touches events, pending_events or partners. Payment is due 24 hours
-// before the first go-live; go-live is 6:00 AM Mountain on go_live_date.
+// PLAYROUTE'S PICKS — partner previews, approval, and (flagged) placement
+//
+// One row in partner_previews = one Picks placement. Lifecycle:
+//   draft -> partner approves on /partners/preview/:token -> approved
+//   you mark it paid in admin (Partners view) -> paid_at set
+//   live in app + newsletter when approved AND paid AND today is within
+//   go_live_date..ends_on, AND the PICKS_PUBLIC flag is on.
+// Editing content in admin after approval resets it to draft so the
+// partner re-approves what will actually run.
+//
+// FEATURE FLAG: while PICKS_PUBLIC is false, no visitor or subscriber sees
+// any Pick. Previews still work: the app shows one Pick only when opened
+// with ?ff_picks=<token>, and /partners/preview/:token/newsletter renders
+// this week's real digest with that Pick added (never sent).
+// Writes here touch ONLY partner_previews (and R2 logos), never events,
+// pending_events or partners.
 // ---------------------------------------------------------------------
-function previewPaymentDue(goLiveDate) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(goLiveDate || "")) return null;
-  const d = new Date(goLiveDate + "T12:00:00Z");
-  const fmt = (x) => x.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
-  const due = new Date(d.getTime() - 864e5);
-  return { goLive: fmt(d), due: fmt(due) };
+const PICKS_PUBLIC = false;
+const PICK_CONTENT_FIELDS = ["business_name", "tagline", "description", "location", "ages", "cta_label", "link_url", "brand_color", "price_label", "go_live_date", "ends_on"];
+
+function pickColor(p) {
+  return /^#[0-9A-Fa-f]{6}$/.test(p.brand_color || "") ? p.brand_color : "#46707E";
+}
+function pickSlug(p) {
+  return String(p.business_name || "partner").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "partner";
+}
+// Adds UTM tags unless the partner's link already carries its own.
+function pickLinkUrl(p) {
+  if (!p.link_url) return null;
+  try {
+    const u = new URL(p.link_url);
+    if (!/^https?:$/.test(u.protocol)) return null;
+    if (!u.searchParams.has("utm_source")) {
+      u.searchParams.set("utm_source", "playroute");
+      u.searchParams.set("utm_medium", "picks");
+      u.searchParams.set("utm_campaign", pickSlug(p));
+    }
+    return u.toString();
+  } catch { return null; }
+}
+function pickHost(p) {
+  try { return new URL(p.link_url).hostname.replace(/^www\./, ""); } catch { return ""; }
+}
+function absSiteUrl(u) {
+  return u && u.startsWith("/") ? DIGEST_SITE_URL + u : u;
+}
+function publicPick(p) {
+  return {
+    business_name: p.business_name, tagline: p.tagline, description: p.description,
+    location: p.location, ages: p.ages, cta_label: p.cta_label || "Learn more",
+    link_url: pickLinkUrl(p), brand_color: pickColor(p), logo_url: p.logo_url || null
+  };
+}
+function todayMT() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: TZ });
+}
+function addDays(ymd, n) {
+  const d = new Date(ymd + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function pickEndsOn(p) {
+  if (p.ends_on) return p.ends_on;
+  return /^\d{4}-\d{2}-\d{2}$/.test(p.go_live_date || "") ? addDays(p.go_live_date, 30) : null;
+}
+function pickRunState(p, today = todayMT()) {
+  if (!p.go_live_date) return "unscheduled";
+  if (today < p.go_live_date) return "scheduled";
+  const end = pickEndsOn(p);
+  if (end && today > end) return "ended";
+  return "in-window";
+}
+function pickIsLive(p, today = todayMT()) {
+  return p.status === "approved" && !!p.paid_at && pickRunState(p, today) === "in-window";
+}
+async function getLivePicks(env) {
+  const today = todayMT();
+  const { results } = await env.DB.prepare(
+    `SELECT * FROM partner_previews WHERE status = 'approved' AND paid_at IS NOT NULL AND go_live_date <= ? ORDER BY go_live_date LIMIT 10`
+  ).bind(today).all();
+  return (results || []).filter((p) => pickIsLive(p, today)).slice(0, 3);
+}
+
+// Email-safe block used by the real digest AND the preview pages, so the
+// partner sees exactly what subscribers will get.
+function digestPicksHtml(picks) {
+  if (!picks || !picks.length) return "";
+  return `
+    <p style="padding:22px 24px 8px;margin:0;font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:#3C5548;font-family:-apple-system,sans-serif;">Playroute's Picks</p>
+    ${picks.map((raw) => {
+      const p = publicPick(raw);
+      const color = p.brand_color;
+      const logo = p.logo_url
+        ? `<img src="${escapeHtml(absSiteUrl(p.logo_url))}" width="40" height="40" alt="" style="display:block;width:40px;height:40px;border-radius:8px;object-fit:contain;background:#ffffff;">`
+        : `<div style="width:40px;height:40px;border-radius:8px;background:${color};color:#ffffff;font:700 17px/40px -apple-system,sans-serif;text-align:center;">${escapeHtml((p.business_name || "?").charAt(0).toUpperCase())}</div>`;
+      const meta = [p.business_name, p.location, p.ages].filter(Boolean).map(escapeHtml).join(" · ");
+      const inner = `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:#ffffff;border:1px solid #D3D8C8;border-left:4px solid ${color};border-radius:14px;">
+        <tr>
+          <td width="54" style="padding:14px 0 14px 14px;vertical-align:top;">${logo}</td>
+          <td style="padding:14px 14px 14px 10px;font-family:-apple-system,sans-serif;">
+            <div style="font-weight:700;font-size:15px;color:#1F2A22;line-height:1.3;">${escapeHtml(p.tagline || p.business_name)}</div>
+            <div style="font-size:12px;color:#6B7268;margin-top:3px;">${meta}</div>
+            ${p.description ? `<div style="font-size:13px;color:#3A4F45;margin-top:6px;line-height:1.45;">${escapeHtml(p.description)}</div>` : ""}
+            <div style="font-size:13px;font-weight:700;color:${color};margin-top:8px;">${escapeHtml(p.cta_label)} →</div>
+          </td>
+        </tr>
+      </table>
+      <div style="font-size:10.5px;color:#9AA096;margin-top:4px;font-family:-apple-system,sans-serif;">Promoted by a local partner</div>`;
+      return p.link_url
+        ? `<a href="${escapeHtml(p.link_url)}" style="display:block;text-decoration:none;color:inherit;margin:0 24px 12px;">${inner}</a>`
+        : `<div style="margin:0 24px 12px;">${inner}</div>`;
+    }).join("")}`;
+}
+function digestPicksText(picks) {
+  if (!picks || !picks.length) return [];
+  const lines = ["PLAYROUTE'S PICKS"];
+  for (const raw of picks) {
+    const p = publicPick(raw);
+    lines.push(`- ${p.business_name}: ${p.tagline || ""}${p.link_url ? " " + p.link_url : ""} (promoted by a local partner)`);
+  }
+  lines.push("");
+  return lines;
+}
+
+function fmtLongDate(ymd) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd || "")) return null;
+  return new Date(ymd + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
 }
 
 function partnerPreviewPageHtml(p) {
   const e = escapeHtml;
-  const color = /^#[0-9A-Fa-f]{6}$/.test(p.brand_color || "") ? p.brand_color : "#46707E";
-  const dates = previewPaymentDue(p.go_live_date);
+  const pp = publicPick(p);
+  const color = pp.brand_color;
+  const tok = encodeURIComponent(p.token);
+  const goLive = fmtLongDate(p.go_live_date);
+  const endsOn = fmtLongDate(pickEndsOn(p));
+  // Go-live is 12:00 AM MT on go_live_date, so 24h earlier is the end of the day two dates back.
+  const dueDay = p.go_live_date ? fmtLongDate(addDays(p.go_live_date, -2)) : null;
   const price = e(p.price_label || "$75/month");
-  const logo = p.logo_url
-    ? `<img class="logo" src="${e(p.logo_url)}" alt="">`
+  const logo = pp.logo_url
+    ? `<img class="logo" src="${e(pp.logo_url)}" alt="">`
     : `<span class="logo ph">${e((p.business_name || "?").charAt(0).toUpperCase())}</span>`;
   const approved = p.status === "approved";
-  const payBlock = dates
-    ? `<p><b>Payment is due by 6:00 AM Mountain on ${e(dates.due)}</b>, 24 hours before your promotion first goes live on <b>${e(dates.goLive)}</b>.</p>`
-    : `<p><b>Payment is due 24 hours before your promotion first goes live.</b> We'll confirm your go-live date in writing once you approve.</p>`;
-  const meta = [p.location, p.ages].filter(Boolean).map(e).join(" · ");
+  const meta = [p.business_name, p.location, p.ages].filter(Boolean).map(e).join(" · ");
+  const host = pickHost(p);
+  const payBlock = goLive
+    ? `<p>Runs <b>${e(goLive)}</b> through <b>${e(endsOn)}</b>.</p><br><p><b>Payment is due 24 hours before go-live: by 11:59 PM Mountain on ${e(dueDay)}.</b></p>`
+    : `<p><b>Payment is due 24 hours before your promotion first goes live.</b> We'll confirm your go-live date in writing.</p>`;
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex,nofollow"><title>Preview: ${e(p.business_name)} on Playroute</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap">
 <style>
-:root{--soil:#1B2B26;--bark:#3A4F45;--clay:#5B84A0;--cream:#F4F5F0;--parchment:#ECEEE8;--fog:#D7DBD3;--ink:#1E2622;--ink-soft:#5B6560;--sky:#46707E;--ember:#B2555A;--gold:#A88B3E;--pill-green-bg:#D4EBC9;--pill-green-text:#3A5C2A;--brand:${color};}
+:root{--bark:#3A4F45;--cream:#F4F5F0;--parchment:#ECEEE8;--fog:#D7DBD3;--ink:#1E2622;--ink-soft:#5B6560;--sky:#46707E;--ember:#B2555A;--gold:#A88B3E;--pill-green-bg:#D4EBC9;--pill-green-text:#3A5C2A;--brand:${color};}
 @media (prefers-color-scheme: dark){:root{--cream:#1D231F;--parchment:#12100F;--fog:#63726A;--ink:#EDEFE9;--ink-soft:#A7B0A4;--pill-green-bg:#2B3B2B;--pill-green-text:#A8D9A0;}}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--cream);font-family:'DM Sans',sans-serif;color:var(--ink);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
-.page{max-width:560px;margin:0 auto;padding:18px 20px 56px}
+body{background:var(--cream);font-family:'DM Sans',sans-serif;color:var(--ink);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-wrap:anywhere}
+.page{max-width:560px;margin:0 auto;padding:18px 16px 56px}
 .wordmark{font-family:'Playfair Display',serif;font-weight:700;font-size:19px;padding-bottom:14px;border-bottom:1px solid var(--fog)}
 .banner{margin:16px 0 0;padding:10px 12px;border-radius:8px;background:color-mix(in srgb,var(--gold) 16%,transparent);border:1px solid var(--gold);font-size:13px}
 h1{font-family:'Playfair Display',serif;font-weight:600;font-size:28px;line-height:1.2;margin:22px 0 10px}
 h2{font-family:'Playfair Display',serif;font-weight:600;font-size:19px;margin:30px 0 6px}
 .sub{color:var(--ink-soft);font-size:14px;margin-bottom:10px}
 .box{background:var(--parchment);border:1px solid var(--fog);border-radius:12px;padding:14px}
-.lbl{font-size:12px;color:var(--ink-soft);margin:0 0 8px}
-.sec{font-family:'Playfair Display',serif;font-weight:600;font-size:16px;margin-bottom:8px}
-.card{background:var(--cream);border:1px solid var(--brand);box-shadow:0 0 0 1px var(--brand),0 2px 8px rgba(20,24,22,.07);border-radius:12px;padding:11px 12px;display:flex;gap:10px;align-items:flex-start}
-.logo{width:36px;height:36px;border-radius:8px;object-fit:contain;flex-shrink:0;background:#fff}
+.sec{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--bark);margin-bottom:8px}
+.card{background:var(--cream);border:1px solid var(--brand);box-shadow:0 0 0 1px var(--brand),0 2px 8px rgba(20,24,22,.07);border-radius:14px;padding:13px 14px;display:flex;gap:11px;align-items:flex-start}
+.logo{width:40px;height:40px;border-radius:8px;object-fit:contain;flex-shrink:0;background:#fff}
 .logo.ph{background:var(--brand);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
-.t{font-weight:600;font-size:14px;line-height:1.3}.m{font-size:12px;color:var(--ink-soft);margin-top:2px}
-.tags{display:flex;flex-wrap:wrap;gap:4px 5px;margin-top:7px}
-.tag{font-size:11px;font-weight:500;padding:2px 8px;border-radius:6px;background:var(--pill-green-bg);color:var(--pill-green-text)}
-.tag.brand{background:var(--brand);color:#fff;font-weight:700}
-.news{background:#fff;color:#1E2622;border:1px solid var(--fog);border-radius:8px;padding:12px;font-family:Georgia,serif}
-.news-pick{border-left:3px solid var(--brand);padding-left:9px;font-size:13px;line-height:1.5;margin-top:8px}
-.news-lbl{display:block;font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#5B6560}
+.t{font-weight:600;font-size:14.5px;line-height:1.3}.m{font-size:12.5px;color:var(--ink-soft);margin-top:3px}
+.d{font-size:13px;margin-top:6px}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+.tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--brand);color:#fff}
+.cta{font-size:13px;font-weight:700;color:var(--brand);text-decoration:none}
+.real{display:inline-block;margin-top:10px;font-size:14px;font-weight:600;color:var(--sky)}
+.mail{background:#FBF6EC;border-radius:8px;padding:2px 0 6px;overflow:hidden}
 ul.cmp{list-style:none}
 ul.cmp li{padding:8px 0;border-bottom:1px solid var(--fog);font-size:14px}
 ul.cmp li:last-child{border-bottom:0}
 .field{margin:14px 0}.field label{display:block;font-weight:600;font-size:14px;margin-bottom:6px}
 .field input[type=text]{width:100%;padding:11px 12px;border-radius:6px;border:1px solid var(--fog);background:var(--parchment);font:inherit;color:var(--ink)}
-.chk{display:flex;gap:10px;align-items:flex-start;font-size:14px;margin:12px 0}.chk input{margin-top:4px;width:18px;height:18px;accent-color:var(--sky)}
-.btn{padding:12px 22px;border-radius:6px;border:0;background:var(--sky);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.chk{display:flex;gap:10px;align-items:flex-start;font-size:14px;margin:12px 0}.chk input{margin-top:4px;width:18px;height:18px;accent-color:var(--sky);flex-shrink:0}
+.btn{padding:12px 22px;border-radius:6px;border:0;background:var(--sky);color:#fff;font:inherit;font-weight:600;cursor:pointer;min-height:44px}
 .btn:disabled{opacity:.6;cursor:not-allowed}
 .msg{font-size:14px;margin-top:10px}.msg.err{color:var(--ember)}.done{padding:14px;border-radius:12px;background:var(--pill-green-bg);color:var(--pill-green-text);font-weight:600}
 </style></head><body><div class="page">
 <div class="wordmark">Playroute</div>
-<div class="banner">Brand preview. This is not live yet and is only visible to people with this link.</div>
+<div class="banner">Brand preview. Not live yet, and only visible to people with this link.</div>
 <h1>${e(p.business_name)} on Playroute</h1>
-<p class="sub">Please check your name, logo, color and wording below. Nothing goes live until you approve it and payment is received.</p>
+<p class="sub">Check your name, logo, color, wording and link below. Nothing goes live until you approve it here and payment is received.</p>
 
 <h2>In the app</h2>
-<p class="sub">Your promotion is a small tagged card in Playroute's Picks, shown to families planning their week.</p>
+<p class="sub">A small tagged card at the top of the events feed, labeled as a Playroute's Pick.</p>
 <div class="box"><div class="sec">Playroute's Picks</div>
-<div class="card">${logo}<div><div class="t">${e(p.tagline || p.business_name)}</div><div class="m">${e(p.business_name)}${meta ? " · " + meta : ""}</div>
-<div class="tags"><span class="tag brand">${e(p.business_name)}</span><span class="tag">${e(p.cta_label || "Learn more")}</span></div></div></div></div>
+<div class="card">${logo}<div style="min-width:0"><div class="t">${e(p.tagline || p.business_name)}</div><div class="m">${meta}</div>
+${p.description ? `<div class="d">${e(p.description)}</div>` : ""}
+<div class="tags"><span class="tag">${e(p.business_name)}</span>${pp.link_url ? `<a class="cta" href="${e(pp.link_url)}" target="_blank" rel="noopener">${e(pp.cta_label)} →</a>` : `<span class="cta">${e(pp.cta_label)} →</span>`}</div></div></div></div>
+<a class="real" href="/?ff_picks=${tok}" target="_blank" rel="noopener">See it in the real Playroute app →</a>
 
 <h2>In the Sunday newsletter</h2>
-<div class="box"><div class="news"><b>This week on Playroute</b>
-<div class="news-pick"><span class="news-lbl">Playroute's Pick</span><b>${e(p.business_name)}</b> · ${e(p.tagline || "")}${p.description ? " " + e(p.description) : ""}</div></div></div>
+<p class="sub">Featured in each weekly email while your promotion runs.</p>
+<div class="mail">${digestPicksHtml([p])}</div>
+<a class="real" href="/partners/preview/${tok}/newsletter" target="_blank" rel="noopener">See it in this week's full newsletter →</a>
 
 <h2>What Playroute is (and isn't)</h2>
-<p class="sub">Playroute is a text-first guide that parents check to plan the week, not a social feed. That is why it works differently from Meta ads.</p>
+<p class="sub">Playroute is a text-first guide parents check to plan the week, not a social feed, so it works differently from Meta ads.</p>
 <ul class="cmp">
 <li><b>Small, native format.</b> A short headline, one or two sentences, a small logo and your brand color. No large banners or full-bleed photos.</li>
-<li><b>Sits alongside real events.</b> Your card appears in the same feed families already use, labeled as a Pick.</li>
-<li><b>One clear link.</b> Tapping goes to ${p.link_url ? e(p.link_url) : "your destination page"}, tagged so you can see visits from Playroute in your own analytics.</li>
-<li><b>No targeting or bidding.</b> A flat price and a fixed placement for the month.</li>
+<li><b>Sits alongside real events.</b> Families see your card in the same feed they already use, labeled as a Pick.</li>
+<li><b>One clear link.</b> Taps go to ${host ? `<b>${e(host)}</b>` : "your page"}, tagged with utm_source=playroute so visits show up in your own analytics.</li>
+<li><b>No targeting or bidding.</b> A flat price and a fixed placement for the run.</li>
 </ul>
 
 <h2>Terms</h2>
-<div class="box"><p><b>${price}</b>, for one month of Playroute's Picks (app and weekly newsletter).</p><br>
+<div class="box"><p><b>${price}</b> for Playroute's Picks in the app and the weekly newsletter.</p><br>
 ${payBlock}<br>
-<p>Pay by Venmo to <b>@hnjames9</b>. If payment isn't received by then, the go-live moves back until it is.</p><br>
-<p>Content can be updated by request, up to once per week. Questions: <a href="mailto:partners@playroute.co">partners@playroute.co</a>.</p></div>
+<p>Pay by Venmo to <b>@hnjames9</b>. If payment hasn't arrived by then, go-live moves back until it does.</p><br>
+<p>Content can be updated by request, up to once per week. Any change needs your approval again here before it runs. Questions: <a href="mailto:partners@playroute.co">partners@playroute.co</a>.</p></div>
 
 <h2>Approve</h2>
 ${approved
-  ? `<div class="done">Approved${p.approved_by ? " by " + e(p.approved_by) : ""}. Thank you! We'll confirm your go-live date by email.</div>`
+  ? `<div class="done">Approved${p.approved_by ? " by " + e(p.approved_by) : ""}. Thank you! We'll confirm go-live by email once payment is in.</div>`
   : `<div class="field"><label for="nm">Your name</label><input type="text" id="nm" autocomplete="name"></div>
 <label class="chk"><input type="checkbox" id="ok"><span>I approve how ${e(p.business_name)} appears above and understand payment is due 24 hours before the first go-live.</span></label>
 <button class="btn" id="go">Approve preview</button><p class="msg" id="msg"></p>`}
@@ -5554,7 +5681,7 @@ ${approved
     if(!name){msg.textContent='Please enter your name.';msg.className='msg err';return;}
     if(!document.getElementById('ok').checked){msg.textContent='Please tick the box to approve.';msg.className='msg err';return;}
     go.disabled=true;
-    fetch('/api/partners/preview/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:${JSON.stringify(p.token)},name:name})})
+    fetch('/api/partners/preview/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:${JSON.stringify(p.token).replace(/</g, "\\u003c")},name:name})})
       .then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||'Failed');return j;});})
       .then(function(){location.reload();})
       .catch(function(err){go.disabled=false;msg.textContent=String(err.message||err);msg.className='msg err';});
@@ -5563,13 +5690,43 @@ ${approved
 </script></body></html>`;
 }
 
+async function getPreviewRow(env, token) {
+  return token ? await env.DB.prepare(`SELECT * FROM partner_previews WHERE token = ?`).bind(String(token)).first() : null;
+}
+const PREVIEW_HEADERS = { "Content-Type": "text/html;charset=UTF-8", "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store" };
+const PREVIEW_404 = () => new Response("This preview link isn't valid. Email partners@playroute.co.", { status: 404, headers: { "Content-Type": "text/plain", "X-Robots-Tag": "noindex" } });
+
 async function handlePartnerPreviewPage(env, token) {
-  const p = token ? await env.DB.prepare(`SELECT * FROM partner_previews WHERE token = ?`).bind(token).first() : null;
-  if (!p) return new Response("This preview link isn't valid. Email partners@playroute.co.", { status: 404, headers: { "Content-Type": "text/plain", "X-Robots-Tag": "noindex" } });
-  return new Response(partnerPreviewPageHtml(p), { headers: { "Content-Type": "text/html;charset=UTF-8", "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store" } });
+  const p = await getPreviewRow(env, token);
+  if (!p) return PREVIEW_404();
+  return new Response(partnerPreviewPageHtml(p), { headers: PREVIEW_HEADERS });
 }
 
-async function handlePartnerPreviewApprove(request, env) {
+// This week's real digest with the partner's Pick added. Rendered only, never sent.
+async function handlePartnerPreviewNewsletter(env, token) {
+  const p = await getPreviewRow(env, token);
+  if (!p) return PREVIEW_404();
+  const { byDay, spotlight, eventsDiscovered } = await getWeekAheadEvents(env);
+  const body = buildDigestHtml(byDay, spotlight, eventsDiscovered, "#", [p]);
+  const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="robots" content="noindex,nofollow"><title>Newsletter preview: ${escapeHtml(p.business_name)}</title></head>
+<body style="margin:0;background:#E9E4D8;"><div style="max-width:600px;margin:0 auto;padding:10px 0;"><div style="margin:0 12px 10px;padding:10px 12px;border-radius:8px;background:#F3E9C9;border:1px solid #A88B3E;font:13px/1.4 -apple-system,sans-serif;color:#1E2622;">Preview of this week's Playroute newsletter with your Pick added. This copy was not sent to anyone.</div>${body}</div></body></html>`;
+  return new Response(html, { headers: PREVIEW_HEADERS });
+}
+
+async function notifyPickApproved(env, p) {
+  const subject = `Pick approved: ${p.business_name}`;
+  const text = `${p.business_name} approved their Playroute's Pick preview (signed: ${p.approved_by}).\n\nNext: confirm payment, then mark it paid in admin > Partners.\nPreview: ${DIGEST_SITE_URL}/partners/preview/${p.token}\nAdmin: ${DIGEST_SITE_URL}/admin#partners`;
+  try {
+    await sendDigestEmail(env, PARTNER_NOTIFY_EMAIL, `<pre style="font-family:-apple-system,sans-serif;white-space:pre-wrap;">${escapeHtml(text)}</pre>`, text, subject, p.contact_email || null);
+  } catch (err) {
+    try {
+      await env.DB.prepare(`INSERT INTO job_runs (job_name, status, details) VALUES ('partner_email', 'error', ?)`)
+        .bind(JSON.stringify({ kind: "pick_approved", token: p.token, error: String(err) }).slice(0, 1000)).run();
+    } catch {}
+  }
+}
+
+async function handlePartnerPreviewApprove(request, env, ctx) {
   let body;
   try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
   const name = String(body.name || "").trim().slice(0, 120);
@@ -5578,7 +5735,96 @@ async function handlePartnerPreviewApprove(request, env) {
     `UPDATE partner_previews SET status = 'approved', approved_at = CURRENT_TIMESTAMP, approved_by = ? WHERE token = ? AND status != 'approved'`
   ).bind(name, String(body.token)).run();
   if (!res.meta || !res.meta.changes) return json({ error: "Already approved or invalid link" }, 400);
+  const p = await getPreviewRow(env, body.token);
+  const send = notifyPickApproved(env, p);
+  if (ctx && ctx.waitUntil) ctx.waitUntil(send); else await send;
   return json({ ok: true });
+}
+
+// App feed: live Picks only when the flag is on (edge-cached, see EDGE_CACHE_TTLS).
+async function handlePicksLive(env) {
+  if (!PICKS_PUBLIC) return json([]);
+  return json((await getLivePicks(env)).map(publicPick));
+}
+// App preview (?ff_picks=<token>): that one Pick, whatever its status. Uncached.
+async function handlePicksPreview(env, url) {
+  const p = await getPreviewRow(env, url.searchParams.get("token"));
+  if (!p) return json([]);
+  return json([{ ...publicPick(p), preview: true }]);
+}
+
+// ── Admin (Partners view in admin.html). Same unlisted-URL model as the
+// rest of the admin endpoints.
+async function handleAdminPicksList(env) {
+  const { results } = await env.DB.prepare(`SELECT * FROM partner_previews ORDER BY created_at DESC LIMIT 100`).all();
+  const today = todayMT();
+  return json((results || []).map((p) => ({ ...p, ends_on_effective: pickEndsOn(p), run_state: pickRunState(p, today), live: pickIsLive(p, today), picks_public: PICKS_PUBLIC })));
+}
+
+async function handleAdminPicksSave(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+  const clean = {};
+  for (const f of PICK_CONTENT_FIELDS) {
+    const v = body[f] === undefined || body[f] === null ? "" : String(body[f]).trim();
+    clean[f] = v ? v.slice(0, f === "description" ? 400 : 200) : null;
+  }
+  if (!clean.business_name) return json({ error: "Business name is required" }, 400);
+  if (clean.brand_color && !/^#[0-9A-Fa-f]{6}$/.test(clean.brand_color)) return json({ error: "Brand color must be a hex like #D9622B" }, 400);
+  for (const f of ["go_live_date", "ends_on"]) {
+    if (clean[f] && !/^\d{4}-\d{2}-\d{2}$/.test(clean[f])) return json({ error: `${f} must be YYYY-MM-DD` }, 400);
+  }
+  if (clean.link_url && !pickLinkUrl({ link_url: clean.link_url, business_name: clean.business_name })) return json({ error: "Link must start with https://" }, 400);
+  if (clean.go_live_date && clean.ends_on && clean.ends_on < clean.go_live_date) return json({ error: "End date is before go-live" }, 400);
+
+  if (!body.token) {
+    const token = crypto.randomUUID().replace(/-/g, "");
+    const cols = ["token", ...PICK_CONTENT_FIELDS];
+    await env.DB.prepare(`INSERT INTO partner_previews (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`)
+      .bind(token, ...PICK_CONTENT_FIELDS.map((f) => clean[f])).run();
+    return json({ ok: true, token, reset: false });
+  }
+  const existing = await getPreviewRow(env, body.token);
+  if (!existing) return json({ error: "Not found" }, 404);
+  const changed = PICK_CONTENT_FIELDS.some((f) => (existing[f] || null) !== clean[f]);
+  const reset = changed && existing.status === "approved";
+  await env.DB.prepare(
+    `UPDATE partner_previews SET ${PICK_CONTENT_FIELDS.map((f) => `${f} = ?`).join(", ")}${reset ? ", status = 'draft', approved_at = NULL, approved_by = NULL" : ""} WHERE token = ?`
+  ).bind(...PICK_CONTENT_FIELDS.map((f) => clean[f]), existing.token).run();
+  return json({ ok: true, token: existing.token, reset });
+}
+
+async function handleAdminPicksPaid(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+  const res = await env.DB.prepare(
+    `UPDATE partner_previews SET paid_at = ${body.paid ? "CURRENT_TIMESTAMP" : "NULL"} WHERE token = ?`
+  ).bind(String(body.token || "")).run();
+  if (!res.meta || !res.meta.changes) return json({ error: "Not found" }, 404);
+  return json({ ok: true });
+}
+
+async function handleAdminPicksLogo(request, env) {
+  let form;
+  try { form = await request.formData(); } catch { return json({ error: "Expected multipart/form-data body" }, 400); }
+  const file = form.get("file");
+  const p = await getPreviewRow(env, form.get("token"));
+  if (!p) return json({ error: "Not found" }, 404);
+  if (!(file instanceof File)) return json({ error: "file is required" }, 400);
+  const ALLOWED_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
+  const ext = ALLOWED_TYPES[file.type];
+  if (!ext) return json({ error: `Unsupported file type: ${file.type || "unknown"}. Use PNG, JPEG or WebP (export SVGs to PNG).` }, 400);
+  if (file.size > 4 * 1024 * 1024) return json({ error: "File too large (4MB max)" }, 400);
+  const key = `partner-logos/pick-${p.token}-${Date.now()}.${ext}`;
+  await env.PHOTOS.put(key, file, { httpMetadata: { contentType: file.type } });
+  const oldKey = p.logo_url ? decodeURIComponent(p.logo_url.replace(/^\/api\/photos\//, "")) : null;
+  if (oldKey && oldKey !== key && oldKey.startsWith("partner-logos/")) await env.PHOTOS.delete(oldKey).catch(() => {});
+  const logoUrl = `/api/photos/${encodeURIComponent(key)}`;
+  const reset = p.status === "approved";
+  await env.DB.prepare(
+    `UPDATE partner_previews SET logo_url = ?${reset ? ", status = 'draft', approved_at = NULL, approved_by = NULL" : ""} WHERE token = ?`
+  ).bind(logoUrl, p.token).run();
+  return json({ ok: true, logo_url: logoUrl, reset });
 }
 
 // Body-carried token (not URL-path) -- consistent with handlePartnerSubmit
@@ -5811,7 +6057,8 @@ const EDGE_CACHE_TTLS = {
   "/api/coverage-alerts": 300,
   "/api/manual-source-gaps": 900,
   "/api/recommended-experiment": 300,
-  "/api/sources": 120
+  "/api/sources": 120,
+  "/api/picks": 300
 };
 
 const worker = {
@@ -6029,11 +6276,32 @@ const worker = {
         return await handlePartnerLogoUpload(request, env);
       }
       if (url.pathname === "/api/partners/preview/approve" && request.method === "POST") {
-        return await handlePartnerPreviewApprove(request, env);
+        return await handlePartnerPreviewApprove(request, env, ctx);
       }
       if (url.pathname.startsWith("/partners/preview/") && request.method === "GET") {
-        const token = decodeURIComponent(url.pathname.slice("/partners/preview/".length).replace(/\/+$/, ""));
-        return await handlePartnerPreviewPage(env, token);
+        const rest = url.pathname.slice("/partners/preview/".length).replace(/\/+$/, "");
+        if (rest.endsWith("/newsletter")) {
+          return await handlePartnerPreviewNewsletter(env, decodeURIComponent(rest.slice(0, -"/newsletter".length)));
+        }
+        return await handlePartnerPreviewPage(env, decodeURIComponent(rest));
+      }
+      if (url.pathname === "/api/picks" && request.method === "GET") {
+        return await handlePicksLive(env);
+      }
+      if (url.pathname === "/api/picks/preview" && request.method === "GET") {
+        return await handlePicksPreview(env, url);
+      }
+      if (url.pathname === "/api/admin/picks" && request.method === "GET") {
+        return await handleAdminPicksList(env);
+      }
+      if (url.pathname === "/api/admin/picks/save" && request.method === "POST") {
+        return await handleAdminPicksSave(request, env);
+      }
+      if (url.pathname === "/api/admin/picks/paid" && request.method === "POST") {
+        return await handleAdminPicksPaid(request, env);
+      }
+      if (url.pathname === "/api/admin/picks/logo" && request.method === "POST") {
+        return await handleAdminPicksLogo(request, env);
       }
       if (url.pathname.startsWith("/partners/manage/") && request.method === "GET") {
         const token = decodeURIComponent(url.pathname.slice("/partners/manage/".length).replace(/\/+$/, ""));
