@@ -121,7 +121,12 @@ keep reads proportional to traffic:
   `skip_contains` (key substring). Learned skips count only rejections after the latest approval.
   The admin review queue groups repeats (same source, title, start time) into one card.
 - Verification flags "possibly cancelled" and "time changed". It skips sources
-  that return 0 events and matches titles loosely (`sameEventTitle`).
+  that return 0 events and matches titles loosely (`sameEventTitle`). It prefers a fresh
+  session at the same time (programs can run twice a day, e.g. TinkerTots 10:00 and 2:00),
+  flags a time change only when there's exactly one fresh session for that slot, and
+  approving a time change whose new slot already exists closes it as a false alarm.
+- Communico dates come from `communicoEventDate`: DateString/Date, snapped to the row's
+  Weekday if they disagree (Boulder rows were landing a day early).
 
 ## Product notes
 - Coverage area: Boulder County towns plus Broomfield, Westminster, Arvada, Thornton
