@@ -1479,6 +1479,33 @@ function resolveAnythinkYear(monthDayStr, now) {
   return thisYear;
 }
 
+// Communico rows carry both a <Date> ("Oct 8") and a <Weekday> ("Thursday").
+// Some Boulder rows were stored a day early (2026-10-02..05: "Nature
+// Storytime" Thursday dated Oct 7, "Storytime at Meadows" Monday dated
+// Oct 4) while the weekday matched the library's real calendar. Build the
+// date from DateString/Date, then make sure it lands on the stated weekday,
+// snapping to the nearest matching day (within 3) if it doesn't.
+const COMMUNICO_WEEKDAY_INDEX = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+function communicoEventDate(fieldFn, now) {
+  const weekday = String(fieldFn("Weekday") || "").trim();
+  const fromString = String(fieldFn("DateString") || "").replace(/^[A-Za-z]+,\s*/, "").trim();
+  const monthDay = fromString || String(fieldFn("Date") || "").trim();
+  if (!monthDay) return null;
+  const year = resolveAnythinkYear(monthDay, now);
+  if (!year) return null;
+  const base = new Date(`${monthDay} ${year} 12:00:00 UTC`);
+  if (isNaN(base.getTime())) return null;
+  const want = COMMUNICO_WEEKDAY_INDEX[weekday.toLowerCase()];
+  let d = base, snapped = false;
+  if (want !== undefined && base.getUTCDay() !== want) {
+    for (const off of [-1, 1, -2, 2, -3, 3]) {
+      const c = new Date(base.getTime() + off * 864e5);
+      if (c.getUTCDay() === want) { d = c; snapped = true; break; }
+    }
+  }
+  return { date: d.toISOString().slice(0, 10), weekday, snapped };
+}
+
 function to24HourAnythink(label) {
   const m = label.trim().match(/(\d{1,2}):(\d{2})\s*([ap])m/i);
   if (!m) return null;
@@ -1527,9 +1554,9 @@ async function fetchAndScanAnythinkThornton() {
     const startTime = to24HourAnythink(startLabel);
     if (!startTime || !monthDay || !weekday) continue; // can't build a usable event without these
 
-    const year = resolveAnythinkYear(monthDay, now);
-    if (!year) continue;
-    const eventDate = new Date(`${monthDay} ${year} 12:00:00`).toISOString().slice(0, 10);
+    const resolved = communicoEventDate(field, now);
+    if (!resolved) continue;
+    const eventDate = resolved.date;
 
     const dedupSig = `${title}|${eventDate}|${startTime}|${location}`;
     if (seen.has(dedupSig)) continue;
@@ -2183,6 +2210,57 @@ function wlSnippet(markdown) {
   return String(markdown || "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\s+/g, " ").trim().slice(0, 280) || "(empty page)";
 }
 
+// Fallback extractor (Cloudflare's model). A single call over five weeks of
+// widget text returned one session with no time (2026-10-02), so read one
+// week at a time: smaller input, one date range per call. Uses the Workers AI
+// binding when present (no Browser Run rate limit); otherwise /json per week.
+const WL_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+function wlWeekSections(markdown) {
+  const parts = String(markdown).split(/(?==== WEEK \d+:)/).filter((p) => /=== WEEK \d+:/.test(p));
+  if (parts.length) return parts.slice(0, 6);
+  const out = [];
+  for (let i = 0; i < markdown.length && out.length < 6; i += 12000) out.push(markdown.slice(i, i + 12000));
+  return out;
+}
+async function wlExtractWithCloudflareAI(env, markdown, today) {
+  const prompt = (section) => `Today is ${today}. Below is ONE week of a family studio's class schedule (US Mountain Time). ` +
+    `List every session in the schedule itself, ignoring filter lists and menus. Each session shows a start and end time next to its name: copy them as 24-hour HH:MM. ` +
+    `Use the week's date range to turn each day heading into a full YYYY-MM-DD date. Set last_date equal to first_date.\n\n${section.slice(0, 14000)}`;
+  const all = [];
+  for (const section of wlWeekSections(markdown)) {
+    let events = [];
+    if (env.AI && typeof env.AI.run === "function") {
+      const res = await env.AI.run(WL_FALLBACK_MODEL, {
+        messages: [
+          { role: "system", content: "You extract schedule sessions into JSON. Never invent dates or times." },
+          { role: "user", content: prompt(section) }
+        ],
+        response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA },
+        max_tokens: 3000
+      });
+      let body = res && res.response;
+      if (typeof body === "string") { try { body = JSON.parse(body); } catch (e) { body = null; } }
+      events = body && Array.isArray(body.events) ? body.events : [];
+    } else {
+      const result = await browserRun(env, "json", {
+        html: `<pre>${section.slice(0, 14000).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`,
+        prompt: prompt(""),
+        response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA }
+      });
+      events = result && Array.isArray(result.events) ? result.events : [];
+    }
+    all.push(...events);
+  }
+  // Same session seen in two week captures -> keep one.
+  const seen = new Set();
+  return all.filter((e) => {
+    const k = `${String(e.title || "").toLowerCase()}|${e.first_date}|${e.start_time}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 async function scrapeWellnessLivingStudio(env, key) {
   const cfg = WELLNESSLIVING_STUDIOS[key];
   if (!env) throw new Error("env required for Browser Run");
@@ -2228,14 +2306,8 @@ async function scrapeWellnessLivingStudio(env, key) {
     }
   }
   if (!items) {
-    const result = await browserRun(env, "json", {
-      // The default model has a smaller context window than Claude; keep the
-      // rendered text to the first ~45k characters (several weeks of sessions).
-      html: `<pre>${markdown.slice(0, 45000).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`,
-      prompt: `Today is ${today}. List every upcoming session in this schedule (not filter lists or menus). The text may contain several "=== WEEK n: <date range> ===" sections; use each section's date range to resolve its day headings to full YYYY-MM-DD dates, and list a session once even if it appears twice. Use only times actually shown, as 24-hour HH:MM. Times are US Mountain Time.`,
-      response_format: { type: "json_schema", json_schema: WL_EVENT_SCHEMA }
-    });
-    items = (result && Array.isArray(result.events)) ? result.events : [];
+    items = await wlExtractWithCloudflareAI(env, markdown, today);
+    extractNote += ` Cloudflare AI read ${items.length} session(s).`;
   }
   if (items.length === 0) {
     throw new Error(`Schedule rendered at ${target.slice(0, 120)} but no sessions were extracted. ${extractNote} ${pagerNote} Browser saw: ${wlSnippet(markdown)}`);
@@ -2286,7 +2358,7 @@ async function scrapeWellnessLivingStudio(env, key) {
   }
   if (out.length === 0) {
     const why = Object.entries(dropped).filter(([, n]) => n).map(([k, n]) => `${k}: ${n}`).join(", ");
-    throw new Error(`Browser saw ${items.length} events but none were usable (${why || "no titles"}). First: ${JSON.stringify(items[0]).slice(0, 200)}`);
+    throw new Error(`Browser saw ${items.length} events but none were usable (${why || "no titles"}). ${extractNote} ${pagerNote} First: ${JSON.stringify(items[0]).slice(0, 200)}`);
   }
   return out;
 }
@@ -3554,6 +3626,10 @@ async function upsertEvent(env, ev) {
 // boulder_ical source_key so no scrape_sources change is needed to run it.
 const BOULDER_COMMUNICO_URL = "https://api.communico.co/v2/boulderlibrary/events/export.xml";
 const BOULDER_WINDOW_STARTS = [0, 12, 24]; // days from today
+// Hard horizon: the export can return far more than ~12 days per request (a
+// 2026-10-02 run queued events through Aug 2027), so cap what we keep and
+// skip later windows once the horizon is already covered.
+const BOULDER_HORIZON_DAYS = 35;
 // Ages values seen in the export: "Birth to age 5", "Ages 5 to 8",
 // "Ages 9 to 11", "Ages 12 to 18", "Ages 18+", "All ages". The old feed was
 // birth-5 only; keep young kids and all-ages, drop 9+ and adult-only.
@@ -3584,8 +3660,11 @@ function boulderBranchUrl(location) {
 async function fetchBoulderCommunico() {
   const now = new Date();
   const today = toMountainDateStr(now);
+  const horizon = toMountainDateStr(new Date(now.getTime() + BOULDER_HORIZON_DAYS * 864e5));
   const candidates = [], seen = new Set();
+  let furthestSeen = today;
   for (const offset of BOULDER_WINDOW_STARTS) {
+    if (furthestSeen >= horizon) break; // earlier window already reached the horizon
     const start = toMountainDateStr(new Date(now.getTime() + offset * 864e5));
     const res = await fetch(`${BOULDER_COMMUNICO_URL}?start=${start}`, {
       headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
@@ -3614,10 +3693,12 @@ async function fetchBoulderCommunico() {
       if (!title || !monthDay || !weekday || !startTime) continue;
       if (/^cancel/i.test(title) || BOULDER_SKIP_TITLE_RE.test(title)) continue;
       if (ages.allAgesOnly && !BOULDER_KID_TITLE_RE.test(title)) continue;
-      const year = resolveAnythinkYear(monthDay, now);
-      if (!year) continue;
-      const eventDate = new Date(`${monthDay} ${year} 12:00:00`).toISOString().slice(0, 10);
-      if (eventDate < today) continue;
+      const resolved = communicoEventDate(field, now);
+      if (!resolved) continue;
+      const eventDate = resolved.date;
+      if (resolved.snapped) console.warn(`[boulder] date snapped to ${resolved.weekday}: "${title}" ${monthDay} -> ${eventDate}`);
+      if (eventDate > furthestSeen) furthestSeen = eventDate;
+      if (eventDate < today || eventDate > horizon) continue;
       const room = field("RoomName");
       const sig = `${title}|${eventDate}|${startTime}|${location}`;
       if (seen.has(sig)) continue;
@@ -4541,10 +4622,16 @@ async function runSourceVerification(env, cadence = null, sourceKey = null) {
     }
 
     for (const existing of toCheck) {
-      const match = freshCandidates.find((c) =>
+      // A program can run more than once on the same day (TinkerTots at 10:00
+      // AND 2:00). Prefer the fresh session at the SAME time; only call it a
+      // time change when there's exactly one fresh session for that slot and
+      // its time differs. Several at other times = ambiguous, don't flag.
+      const sameSlot = freshCandidates.filter((c) =>
         sameEventTitle(c.title, existing.title) &&
         (existing.recurrence === "dated" ? c.event_date === existing.event_date : c.day_of_week === existing.day_of_week)
       );
+      const match = sameSlot.find((c) => c.start_time === existing.start_time) || (sameSlot.length === 1 ? sameSlot[0] : null);
+      if (!match && sameSlot.length > 1) continue;
 
       if (!match) {
         // Skip if there's already an unresolved flag for this exact event
@@ -4848,9 +4935,18 @@ async function handleApprovePending(env, url) {
     if (!row.existing_event_id) {
       return new Response("This time-change flag is missing its target event id -- can't act on it safely. Reject it instead.", { status: 422, headers: { "Content-Type": "text/plain" } });
     }
-    await env.DB.prepare(
-      `UPDATE events SET start_time = ?, day_of_week = ?, event_date = ?, display_time = ?, last_scraped_at = CURRENT_TIMESTAMP WHERE id = ?`
-    ).bind(row.start_time, row.day_of_week, row.event_date, row.display_time, row.existing_event_id).run();
+    try {
+      await env.DB.prepare(
+        `UPDATE events SET start_time = ?, day_of_week = ?, event_date = ?, display_time = ?, last_scraped_at = CURRENT_TIMESTAMP WHERE id = ?`
+      ).bind(row.start_time, row.day_of_week, row.event_date, row.display_time, row.existing_event_id).run();
+    } catch (err) {
+      // idx_events_dedup: a live row already exists at the "new" time, so this
+      // was two sessions of the same program, not a time change. Leave both
+      // live rows alone and close the flag as a false alarm.
+      if (!/UNIQUE constraint failed/i.test(String(err))) throw err;
+      await env.DB.prepare(`UPDATE pending_events SET status = 'rejected', reject_reason = 'wrong_details', decided_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
+      return new Response(`"${row.title.replace(/^\u26A0\uFE0F Time changed: /, "")}" already has a session at ${row.display_time || row.start_time} that day, so this looks like two sessions, not a time change. Nothing changed; the flag is closed as a false alarm.`, { headers: { "Content-Type": "text/plain" } });
+    }
     await env.DB.prepare(`UPDATE pending_events SET status = 'approved', decided_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
     return new Response(`Updated "${row.title.replace(/^\u26A0\uFE0F Time changed: /, "")}" to its new time on Playroute.`, { headers: { "Content-Type": "text/plain" } });
   }
