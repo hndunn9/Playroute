@@ -76,8 +76,9 @@ keep reads proportional to traffic:
   except the trusted iCal/JSON feeds.
 - **Boulder Public Library is on Communico** (since ~2026-09-28; the LibCal iCal feed and
   `/event/<id>` links are dead). `boulder_ical` runs `fetchBoulderCommunico` on the
-  `api.communico.co/v2/boulderlibrary/events/export.xml?start=YYYY-MM-DD` export (~12 days per
-  window, 3 windows). No per-event links exist, so `source_url` is the branch listing
+  `api.communico.co/v2/boulderlibrary/events/export.xml?start=YYYY-MM-DD` export, capped at a
+  35-day horizon (`BOULDER_HORIZON_DAYS`; the export can return months ahead, which once queued
+  ~530 far-future items). Later windows are skipped once the horizon is covered. No per-event links exist, so `source_url` is the branch listing
   `calendar.boulderlibrary.org/events/?l=<Branch>`.
 - Boulder library dedup keys include the room/source string. If the library
   renames a room, old and new rows can duplicate. Clean up by keeping the newer spelling.
@@ -101,8 +102,10 @@ keep reads proportional to traffic:
   in the same call and capture each, reporting problems on a `PAGER:` line),
   then Claude (`WL_EXTRACT_MODEL`, needs `ANTHROPIC_API_KEY`) extracts sessions with today's
   date, because the widget's week headings omit the year. If the key is missing or the Claude
-  call fails (e.g. low credit balance), it falls back to `/json` (Cloudflare's model) on the
-  rendered text, capped at ~45k chars; the reason is logged and included in any error. If no clock times render, the error quotes what the browser saw.
+  call fails (e.g. low credit balance), it falls back to Cloudflare's model
+  (`wlExtractWithCloudflareAI`, `env.AI` binding, else Browser Run `/json`), one week section per
+  call; one call over all weeks returned a single session with no time. The reason is logged
+  and included in any error. If no clock times render, the error quotes what the browser saw.
 - **Subrequest budget:** `runSources` preloads seen dedup keys and a live-events index once per
   run (`preloadIngestIndex`) and checks duplicates in memory, so a run costs ~1 D1 call per NEW
   item instead of ~5 per candidate. Verification only judges live events up to the feed's
