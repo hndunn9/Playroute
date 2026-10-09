@@ -27,7 +27,45 @@ import { WorkflowEntrypoint } from "cloudflare:workers";
 import { ingestCandidate, validateCandidate, loadReviewContext, REJECT_REASONS } from "./pipeline.js";
 import { CATEGORIES, DISCOVERY_SYSTEM_PROMPT, passesQueueBar } from "./discovery-rules.js";
 
-const DISCOVERY_MODEL = "claude-opus-5"; // upgraded from Sonnet 5 (2026-09) -- low call volume (weekly, one city/run) makes the cost delta negligible, and stronger judgment directly targets this pipeline's real failure mode (fabricated/unconfirmed candidates)
+// Sonnet 5.5 (2026-10): ~60% cheaper per token than Opus 5 now that each run
+// reads full pages via web_fetch, which multiplies input tokens.
+const DISCOVERY_MODEL = "claude-sonnet-5-5";
+// Per-million-token USD prices for DISCOVERY_MODEL, plus the web search fee.
+// Used only to log an estimated cost per run; update if the model changes.
+const PRICE_IN_PER_MTOK = 2;
+const PRICE_OUT_PER_MTOK = 10;
+const PRICE_PER_SEARCH = 0.01;
+const MAX_PAUSE_CONTINUATIONS = 4;
+const DISCOVERY_TOOLS = [
+  { type: "web_search_20250305", name: "web_search", max_uses: 15 },
+  // Search snippets rarely carry both day and time; reading the actual page
+  // is what lets a candidate clear the strict bar. Capped so one huge page
+  // can't blow up the run's input tokens.
+  { type: "web_fetch_20250910", name: "web_fetch", max_uses: 10, max_content_tokens: 8000 }
+];
+
+// Today in Mountain Time, so the model can resolve "next Tuesday" and skip
+// past dates. Previously the prompt said "relative to today" without ever
+// saying what today was.
+function todayInDenver() {
+  const now = new Date();
+  const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver" }).format(now);
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "America/Denver", weekday: "long" }).format(now);
+  return { ymd, weekday };
+}
+
+// Events already listed for this city in the next 60 days, so the model can
+// find NEW events from known providers without re-suggesting what's there.
+// Small table, one query per weekly run.
+async function fetchUpcomingTitles(env, city) {
+  const { results } = await env.DB.prepare(
+    `SELECT DISTINCT title FROM events
+     WHERE city = ? AND event_date IS NOT NULL
+       AND event_date >= date('now') AND event_date <= date('now', '+60 days')
+     ORDER BY event_date LIMIT 120`
+  ).bind(city).all();
+  return results.map((r) => r.title).filter(Boolean);
+}
 
 // Picks whichever registered city has gone longest without a discovery run
 // (or has never run at all -- NULL last_run_at sorts first). Verified
@@ -114,39 +152,70 @@ async function fetchRejectedCandidates(env, city) {
 // this sandbox has no ANTHROPIC_API_KEY available to call the real API
 // with. Treat the first few real runs as a trial, not a fire-and-forget --
 // check the pending_events results by hand before trusting the cadence.
-async function discoverEvents(env, city, existingSources, rejectedCandidates) {
+async function discoverEvents(env, city, existingSources, rejectedCandidates, upcomingTitles) {
   const rejectedSection = rejectedCandidates && rejectedCandidates.length
     ? `\n\nItems a human has already reviewed and REJECTED for this city -- do NOT suggest these again, even if your search finds them independently. This is a firm no, not a duplicate to merge:\n${rejectedCandidates.map((r) => `- "${r.title}"${r.source ? ` (${r.source})` : ""}${r.reject_reason && REJECT_REASONS[r.reject_reason] ? ` -- rejected because: ${REJECT_REASONS[r.reject_reason].label.toLowerCase()}` : ""}`).join("\n")}\n\nWhere a reason is given, treat it as guidance about what this reviewer does NOT want in general -- avoid other items with the same problem, not just these exact titles.`
     : "";
 
-  const userMessage = `City: ${city}, Colorado
+  const today = todayInDenver();
+  const upcomingSection = upcomingTitles && upcomingTitles.length
+    ? `\n\nEvents already listed for this city in the next 60 days (do not suggest these again):\n${upcomingTitles.map((t) => `- ${t}`).join("\n")}`
+    : "";
 
-Providers Playroute already has for this city (do not rediscover these):
-${existingSources.length ? existingSources.map((s) => `- ${s}`).join("\n") : "(none yet)"}${rejectedSection}
+  const userMessage = `Today is ${today.weekday}, ${today.ymd} (Mountain Time).
 
-Find genuinely new family/kids activity providers or events for this city.`;
+City: ${city}, Colorado
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: DISCOVERY_MODEL,
-      max_tokens: 4096,
-      system: DISCOVERY_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userMessage }],
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }]
-    })
-  });
+Providers Playroute already lists for this city. Their regular programs are already covered, but NEW upcoming events from them (seasonal, holiday, one-off) are welcome, especially city recreation departments, libraries and museums:
+${existingSources.length ? existingSources.map((s) => `- ${s}`).join("\n") : "(none yet)"}${upcomingSection}${rejectedSection}
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${body.slice(0, 500)}`);
+Find family/kids events and programs in this city that are not already listed, focusing on the next 6 weeks. Seasonal and holiday events matter most. Use web_fetch to open the specific event page and confirm the date, time and cost before including anything.`;
+
+  const userMsg = { role: "user", content: userMessage };
+  const usage = { input_tokens: 0, output_tokens: 0, searches: 0, fetches: 0, continuations: 0 };
+  const callApi = async (messages) => {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: DISCOVERY_MODEL,
+        max_tokens: 8000,
+        system: DISCOVERY_SYSTEM_PROMPT,
+        messages,
+        tools: DISCOVERY_TOOLS
+      })
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Anthropic API error ${res.status}: ${body.slice(0, 500)}`);
+    }
+    const d = await res.json();
+    const u = d.usage || {};
+    usage.input_tokens += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    usage.output_tokens += u.output_tokens || 0;
+    usage.searches += (u.server_tool_use && u.server_tool_use.web_search_requests) || 0;
+    usage.fetches += (u.server_tool_use && u.server_tool_use.web_fetch_requests) || 0;
+    return d;
+  };
+
+  // Long search/fetch loops can pause mid-turn (stop_reason "pause_turn").
+  // Continue by sending the paused content back as the assistant turn, with
+  // the same tools, until it finishes -- previously a pause ended the run
+  // with "No JSON code block found".
+  let data = await callApi([userMsg]);
+  while (data.stop_reason === "pause_turn" && usage.continuations < MAX_PAUSE_CONTINUATIONS) {
+    usage.continuations++;
+    data = await callApi([userMsg, { role: "assistant", content: data.content }]);
   }
-  const data = await res.json();
+  usage.est_cost_usd = Math.round((
+    usage.input_tokens / 1e6 * PRICE_IN_PER_MTOK +
+    usage.output_tokens / 1e6 * PRICE_OUT_PER_MTOK +
+    usage.searches * PRICE_PER_SEARCH
+  ) * 100) / 100;
 
   // Concatenate all text blocks in the final response -- with web search,
   // the response can interleave text and tool_use/tool_result blocks, but
@@ -170,7 +239,7 @@ Find genuinely new family/kids activity providers or events for this city.`;
   if (!Array.isArray(candidates)) {
     throw new Error(`Expected a JSON array, got: ${typeof candidates}`);
   }
-  return candidates;
+  return { candidates, usage };
 }
 
 export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
@@ -197,11 +266,15 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
       return await fetchRejectedCandidates(this.env, target.city);
     });
 
-    const candidates = await step.do(
+    const upcomingTitles = await step.do("fetch-upcoming-titles", async () => {
+      return await fetchUpcomingTitles(this.env, target.city);
+    });
+
+    const { candidates, usage } = await step.do(
       "discover-via-llm",
       { retries: { limit: 2, delay: "30 seconds", backoff: "exponential" }, timeout: "5 minutes" },
       async () => {
-        return await discoverEvents(this.env, target.city, existingSources, rejectedCandidates);
+        return await discoverEvents(this.env, target.city, existingSources, rejectedCandidates, upcomingTitles);
       }
     );
 
@@ -220,6 +293,15 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
         try {
           const ev = { ...raw };
           delete ev.confidence; // not a real events-table column, just an LLM self-assessment signal
+
+          // Flyers often skip ages. Default to the broad 0-12 range instead of
+          // dropping the event; _ageGuessed shows a "fallback guess" warning
+          // on the review card so a human can correct it.
+          if (typeof ev.age_min !== "number" || typeof ev.age_max !== "number") {
+            ev.age_min = 0;
+            ev.age_max = 12;
+            ev._ageGuessed = true;
+          }
 
           const bar = passesQueueBar(raw); // check against the ORIGINAL raw candidate, before confidence is stripped
           if (!bar.passes) {
@@ -240,7 +322,13 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
           // "needs more info before I can approve it" clutter this is
           // meant to keep out of the review queue entirely, not flag with
           // a badge for later.
-          const { severity, issues } = validateCandidate(ev, sourceRow);
+          //
+          // Judged WITHOUT sourceRow and without the age fallback: sourceRow
+          // has confidence "review", which adds a source-level warning to
+          // EVERY item, so passing it here dropped every candidate (nothing
+          // queued from this pipeline since this check was added). Those
+          // two warnings still show on the review card via ingestCandidate.
+          const { severity, issues } = validateCandidate({ ...ev, _ageGuessed: false }, null);
           if (severity !== "clean") {
             droppedNeedsInfo++;
             dropped.push({ title: raw.title, reasons: issues.map((i) => i.reason) });
@@ -255,14 +343,15 @@ export class EventDiscoveryWorkflow extends WorkflowEntrypoint {
         }
       }
       await this.env.DB.prepare(
-        `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = ?, last_error = ?, last_found = ? WHERE id = ?`
+        `UPDATE scrape_sources SET last_run_at = CURRENT_TIMESTAMP, last_run_status = ?, last_error = ?, last_found = ?, notes = ? WHERE id = ?`
       ).bind(
         errors.length ? "partial_error" : "ok",
         errors.length ? JSON.stringify(errors).slice(0, 1000) : null,
         candidates.length,
+        `Weekly Workflow-triggered discovery run. See EventDiscoveryWorkflow. Last run: ${usage.searches} searches, ${usage.fetches} page reads, ${usage.input_tokens} in / ${usage.output_tokens} out tokens, ~$${usage.est_cost_usd.toFixed(2)} (${DISCOVERY_MODEL}). Found ${candidates.length}, queued ${queued}.`,
         target.id
       ).run();
-      return { city: target.city, found: candidates.length, queued, skippedDuplicate, droppedLowBar, droppedNeedsInfo, dropped, errors };
+      return { city: target.city, found: candidates.length, queued, skippedDuplicate, droppedLowBar, droppedNeedsInfo, dropped, errors, usage };
     });
 
     return result;

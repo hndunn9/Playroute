@@ -125,6 +125,11 @@ keep reads proportional to traffic:
   session at the same time (programs can run twice a day, e.g. TinkerTots 10:00 and 2:00),
   flags a time change only when there's exactly one fresh session for that slot, and
   approving a time change whose new slot already exists closes it as a false alarm.
+- **LLM discovery** (`discovery-workflow.js`): Sonnet 5.5 with web_search (15) + web_fetch (10, 8k
+  tokens/page). Gets today's date, the city's providers and its next-60-day event titles, so it can add new
+  events from known providers. Missing ages default to 0–12 with a review warning. Its pre-queue check runs
+  `validateCandidate` WITHOUT sourceRow (the source's `review` confidence would otherwise drop every item).
+  Each run writes searches/tokens/est. cost into the source's `notes`.
 - Communico dates come from `communicoEventDate`: DateString/Date, snapped to the row's
   Weekday if they disagree (Boulder rows were landing a day early).
 
