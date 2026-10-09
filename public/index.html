@@ -1087,13 +1087,19 @@ const blazes = {
   // -- keyword-matched icons below, first draft: simple shapes only
   // (circles/rects/triangles) since these can't be visually previewed
   // before shipping -- eyeball in-browser and refine as needed.
+  pumpkin: `<ellipse cx="7.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="14.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="11" cy="13" rx="4.2" ry="6" fill="#D08546"/><path d="M11 7.5 C11 5.5 11.5 3.8 13 2.8" stroke="#6B7A45" stroke-width="1.8" fill="none" stroke-linecap="round"/>`,
+  leaf: `<path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#A8582E"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/>`,
   flower: `<circle cx="16" cy="11" r="3" fill="#A3852F"/><circle cx="13.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="8.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="6" cy="11" r="3" fill="#A3852F"/><circle cx="8.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="13.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="11" cy="11" r="2.8" fill="#6B5A38"/>`,
   music: `<ellipse cx="7" cy="17" rx="3" ry="2.3" fill="#8A6A9E"/><rect x="9.6" y="3" width="1.8" height="14" fill="#8A6A9E"/><polygon points="9.6,3 15,5 15,8 9.6,6" fill="#8A6A9E"/>`,
   splash: `<path d="M11 3 C8 8 4 12.5 4 16 A7 7 0 0 0 18 16 C18 12.5 14 8 11 3 Z" fill="#5B84A0"/>`,
   sparkleNight: `<polygon points="11,1.5 13.8,8.2 21,10 13.8,11.8 11,18.5 8.2,11.8 1,10 8.2,8.2" fill="var(--icon-sparkle)"/>`
 };
+// Seasonal icons only change the card art -- filtering still uses ev.category.
+// Regexes use word boundaries so "waterfall" or "switch" don't match.
 const SMART_ICON_KEYWORDS = {
-  flower: ["sunflower","u-pick","pumpkin patch","tulip","flower field"],
+  pumpkin: ["halloween","pumpkin","jack-o","trick-or-treat","trick or treat","trunk-or-treat","trunk or treat","spooky","haunted","boo bash","monster mash",/\bcostume/,/\bwitch/],
+  leaf: ["autumn","harvest","fall festival","fall fest","oktoberfest","leaf","leaves",/\bfall\b/],
+  flower: ["sunflower","u-pick","tulip","flower field"],
   music: ["concert","philharmonic","symphony","orchestra"],
   splash: ["splash pad","splash park","water park","waterpark","pool party"],
   sparkleNight: ["planetarium","stargaz","star party","night sky"]
@@ -1101,7 +1107,7 @@ const SMART_ICON_KEYWORDS = {
 function matchEventIcon(ev){
   const title = (ev.title||"").toLowerCase();
   for(const [key, words] of Object.entries(SMART_ICON_KEYWORDS)){
-    if(words.some(w => title.includes(w))) return key;
+    if(words.some(w => w instanceof RegExp ? w.test(title) : title.includes(w))) return key;
   }
   return ev.category;
 }
