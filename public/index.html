@@ -20,6 +20,12 @@
     var t = localStorage.getItem('playroute-theme');
     if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
   } catch (e) {}
+  // Seasonal header: fall theme runs Sep 1 – Nov 30. Preview with ?season=fall or ?season=off.
+  try {
+    var sp = new URLSearchParams(location.search).get('season');
+    var mo = new Date().getMonth();
+    if (sp === 'fall' || (sp !== 'off' && mo >= 8 && mo <= 10)) document.documentElement.classList.add('season-fall');
+  } catch (e) {}
 </script>
 <title>Playroute — Things to Do with Kids in Boulder, Lafayette, Erie, Louisville, Longmont & More</title>
 <meta name="description" content="Find family-friendly activities, storytimes, playgrounds, hikes, and events for kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado — updated daily.">
@@ -818,6 +824,66 @@ footer{
   font-size:11px;color:var(--ink-soft);
   font-family:'DM Sans',sans-serif;
 }
+
+/* ── SEASONAL: FALL (Sep–Nov, html.season-fall) ── */
+.fall-only{display:none;}
+.season-fall .fall-only{display:block;}
+.season-fall .fall-hide{display:none;}
+.season-fall{
+  --fall-accent:#D08546;
+  --fall-deep:#A4521F;
+  --fall-tab-bg:#F3ECE0;
+  --fall-filter-bg:#FBF7F0;
+  --fall-line:#E2D6C3;
+  --fall-ink-soft:#5E574C;
+}
+@media (prefers-color-scheme: dark) {
+  :root.season-fall:not([data-theme="light"]) {
+    --fall-deep:#E39A62;
+    --fall-tab-bg:var(--parchment);
+    --fall-filter-bg:var(--cream);
+    --fall-line:var(--fog);
+    --fall-ink-soft:var(--ink-soft);
+  }
+}
+:root.season-fall[data-theme="dark"] {
+  --fall-deep:#E39A62;
+  --fall-tab-bg:var(--parchment);
+  --fall-filter-bg:var(--cream);
+  --fall-line:var(--fog);
+  --fall-ink-soft:var(--ink-soft);
+}
+.season-fall .hero::after{
+  background:linear-gradient(120deg,rgba(38,18,8,0.80) 0%,rgba(58,26,10,0.42) 40%,rgba(120,58,18,0.14) 65%,rgba(196,108,40,0.22) 100%);
+}
+.season-fall .hero-wordmark{background:#211510;border-left-color:var(--fall-accent);overflow:visible;}
+.season-fall .hero-beta{color:#F4E6CF;border-color:rgba(244,230,207,0.55);}
+.fall-pumpkin{
+  position:absolute;top:-11px;right:-9px;width:26px;height:26px;
+  filter:drop-shadow(0 2px 3px rgba(0,0,0,0.45));
+  transform-origin:50% 100%;animation:fallBob 3.2s ease-in-out infinite;
+}
+.fall-leaves{position:absolute;inset:0;z-index:1;pointer-events:none;}
+.fall-leaf{position:absolute;top:0;opacity:0;animation:fallLeaf linear infinite;}
+.season-fall .hero-wordmark{z-index:2;}
+@keyframes fallLeaf{
+  0%{transform:translate(0,-24px) rotate(0deg);opacity:0}
+  10%{opacity:1}
+  50%{transform:translate(-14px,60px) rotate(140deg)}
+  90%{opacity:1}
+  100%{transform:translate(10px,150px) rotate(300deg);opacity:0}
+}
+@keyframes fallBob{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(4deg)}}
+@media (prefers-reduced-motion: reduce){
+  .fall-leaf,.fall-pumpkin{animation:none;}
+  .fall-leaf{opacity:.85;}
+}
+.season-fall .section-tabs{background:var(--fall-tab-bg);border-bottom-color:var(--fall-line);}
+.season-fall .section-tab .tab-icon,.season-fall .section-tab .tab-label{color:var(--fall-ink-soft);}
+.season-fall .section-tab.active .tab-icon,.season-fall .section-tab.active .tab-label{color:var(--fall-deep);}
+.season-fall .tab-active-dot{background:var(--fall-deep);}
+.season-fall .about-btn{background:#A4521F;}
+.season-fall .filters{background:var(--fall-filter-bg);border-bottom-color:var(--fall-line);}
 </style>
 </head>
 <body>
@@ -825,7 +891,15 @@ footer{
 <!-- ── HEADER ── -->
 <header>
   <div class="hero">
-    <h1 class="hero-wordmark">Playroute <span class="hero-beta">Beta</span></h1>
+    <div class="fall-leaves fall-only" aria-hidden="true">
+      <svg class="fall-leaf" style="left:56%;width:16px;height:16px;animation-duration:7s;animation-delay:-1s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#C2763A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+      <svg class="fall-leaf" style="left:67%;width:12px;height:12px;animation-duration:9s;animation-delay:-4s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#A8582E"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+      <svg class="fall-leaf" style="left:77%;width:18px;height:18px;animation-duration:8s;animation-delay:-2.5s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#D4A04A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+      <svg class="fall-leaf" style="left:87%;width:13px;height:13px;animation-duration:10s;animation-delay:-6s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#B2555A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+      <svg class="fall-leaf" style="left:46%;width:11px;height:11px;animation-duration:8.5s;animation-delay:-5s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#D4A04A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+      <svg class="fall-leaf" style="left:94%;width:15px;height:15px;animation-duration:7.5s;animation-delay:-3s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#C2763A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
+    </div>
+    <h1 class="hero-wordmark">Playroute <span class="hero-beta">Beta</span><svg class="fall-pumpkin fall-only" viewBox="0 0 22 22" aria-hidden="true"><ellipse cx="7.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="14.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="11" cy="13" rx="4.2" ry="6" fill="#D08546"/><path d="M11 7.5 C11 5.5 11.5 3.8 13 2.8" stroke="#6B7A45" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></h1>
     <p class="sr-only">Find things to do with kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado — storytimes, playgrounds, hikes, farmers markets, and family events updated daily.</p>
   </div>
 
@@ -844,7 +918,7 @@ footer{
       <div class="tab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M6 3v8l-3 4v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1c0-2-1.5-3-4-3.5L11 13.5V3"/><line x1="6" y1="6" x2="9" y2="6"/><line x1="6" y1="9" x2="9" y2="9"/></svg></div>
       <div class="tab-label">Hikes</div>
     </div>
-    <div class="about-btn" onclick="openAboutDrawer()" aria-label="About and feedback"><svg viewBox="0 0 24 24" fill="currentColor" width="19" height="19"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg></div>
+    <div class="about-btn" onclick="openAboutDrawer()" aria-label="About and feedback"><svg class="fall-only" viewBox="0 0 22 22" fill="currentColor" width="18" height="18" aria-hidden="true"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z"/></svg><svg class="fall-hide" viewBox="0 0 24 24" fill="currentColor" width="19" height="19"><path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7z"/></svg></div>
   </div>
 
   <!-- Filters -->
