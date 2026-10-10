@@ -5,6 +5,7 @@ import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SO
 // point) exports -- a class sitting in discovery-workflow.js alone,
 // without this re-export, would be invisible to the platform.
 export { EventDiscoveryWorkflow } from "./discovery-workflow.js";
+import { cleanSourceForDisplay, selectDigestDays } from "./digest-rules.js";
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
 const TZ = "America/Denver";
@@ -4070,27 +4071,7 @@ function escapeHtml(s) {
   return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// Some older scraped `source` values have the full street address baked
-// right in (e.g. "...— Steinbaugh Pavilion, 824 Front St"), while newer
-// entries keep source to just the org/venue name and put the address in
-// `note` instead. Left as-is, the digest shows an address on some events
-// and not others with no visible pattern. This strips any address-shaped
-// fragment (a street number, a "1300 block" reference, a trailing state+
-// zip) so the digest is consistent regardless of how the source data was
-// originally entered -- doesn't touch the underlying DB field, just the
-// email's display copy.
-function cleanSourceForDisplay(source) {
-  if (!source) return "";
-  let s = source.replace(/,?\s*\b[A-Z]{2}\s+\d{5}\b/g, "");
-  s = s
-    .split(",")
-    .map((seg) =>
-      seg.split("—").map((part) => part.trim()).filter((part) => part && !/^\d/.test(part)).join(" — ")
-    )
-    .filter(Boolean)
-    .join(", ");
-  return s.replace(/\s*—\s*$/, "").trim();
-}
+// cleanSourceForDisplay lives in digest-rules.js (shared with the eval).
 
 async function getWeekAheadEvents(env) {
   const { results } = await env.DB.prepare("SELECT * FROM events").all();
@@ -4175,40 +4156,11 @@ async function getWeekAheadEvents(env) {
     byDayAll.set(ev.occurrence_label, list);
   }
 
-  // Group by day, capping how many show per day so the email stays
-  // skimmable. `total` tracks how many actually occur that day (before the
-  // cap) so the render step can show a "+N more" prompt back to Playroute
-  // instead of silently dropping them with no indication more exist.
-  const byDay = new Map();
-  for (const [label, dayEvents] of byDayAll) {
-    const total = dayEvents.length;
-    const ranked = dayEvents.slice().sort((a, b) => {
-      const scoreDiff = interestScore(b) - interestScore(a);
-      if (scoreDiff !== 0) return scoreDiff;
-      return a.occurrence - b.occurrence;
-    });
-    let shown = ranked.slice(0, DIGEST_MAX_PER_DAY);
-
-    // Balance backstop: if the top picks came out all one cost tier but
-    // the day actually has an event from the other tier, swap in the
-    // single best-scored one -- guarantees a real mix instead of, say, six
-    // free storytimes crowding out the one great paid class that day.
-    const tiers = new Set(shown.map((e) => e.cost));
-    if (tiers.size === 1 && shown.length === DIGEST_MAX_PER_DAY) {
-      const missingTier = shown[0].cost === "free" ? "paid" : "free";
-      const bestOfMissing = ranked.find((e) => e.cost === missingTier);
-      if (bestOfMissing) {
-        const worstIdx = shown.length - 1; // lowest-ranked of the overrepresented tier
-        shown = [...shown.slice(0, worstIdx), bestOfMissing];
-      }
-    }
-
-    // Display order is chronological within the day regardless of how
-    // picks were selected -- ranking by "interest" is for choosing which
-    // events make the cut, not for the order a reader sees them in.
-    shown.sort((a, b) => a.occurrence - b.occurrence);
-    byDay.set(label, { shown, total });
-  }
+  // Day-by-day picks: same-day sessions merged, one entry per venue per
+  // day, each series once per week ("also Thu, Fri"), and a venue on at
+  // most 3 days. Rules + reasoning in digest-rules.js. `total` still drives
+  // the "+N more" link back to the app.
+  const { byDay, firstAppearances } = selectDigestDays([...byDayAll], interestScore, { maxPerDay: DIGEST_MAX_PER_DAY, tz: TZ });
 
   // Spotlight picks for the top-of-email highlight section: the most
   // genuinely notable events of the week, reusing the same interest score
@@ -4236,7 +4188,9 @@ async function getWeekAheadEvents(env) {
   // for both category AND source diversity first, only relax source
   // diversity in the last-resort fill pass if there genuinely aren't
   // enough distinct sources to reach 3 picks.
-  const spotlightCandidates = withOccurrence
+  // Built from the day picks' entries so merged times and "also" notes
+  // carry over, and a multi-session class counts once.
+  const spotlightCandidates = firstAppearances
     .filter((ev) => interestScore(ev) > 0)
     .sort((a, b) => {
       const scoreDiff = interestScore(b) - interestScore(a);

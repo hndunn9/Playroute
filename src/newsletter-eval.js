@@ -28,8 +28,12 @@
 // track "did this win last week too" without persisting state between
 // runs, which is a bigger change than this eval's current scope.
 //
+//   5. DAY-PICK DEDUPE (real code, digest-rules.js) -- regression for
+//      Longmont Museum Discovery Days (2026-10): 3 sessions/day x Tue-Sat
+//      filled half the digest. See digest-rules.js for the rules.
+//
 // RUN IT:
-//   node evals/newsletter-eval.js
+//   node src/newsletter-eval.js
 
 // Tunable threshold for check #4 -- flag if a single source appears in
 // more than this many distinct days' picks within one week's digest.
@@ -258,13 +262,75 @@ function runWeekRepetitionEvals() {
   return { pass, total: WEEK_REPETITION_CASES.length };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// CHECK 5: day-pick dedupe, against the REAL selectDigestDays
+// ─────────────────────────────────────────────────────────────────────────
+import { selectDigestDays, seriesKey, sourceKey, MAX_SOURCE_DAYS_PER_WEEK as PROD_SOURCE_CAP } from "./digest-rules.js";
+
+function mt(date, hhmm) { return new Date(`${date}T${hhmm}:00-06:00`); }
+function ev(id, title, source, date, hhmm, extra = {}) {
+  return { id, title, source, city: "Longmont", category: "museum", cost: "free", is_special: 1, start_time: hhmm, display_time: hhmm, occurrence: mt(date, hhmm), ...extra };
+}
+function longmontWeek() {
+  const days = [];
+  const sessions = ["09:15", "10:45", "13:00"];
+  const plan = [
+    ["2026-10-13", "Discovery Days Music & Movement: Unicorns & Dragons"],
+    ["2026-10-14", "Discovery Days Art: Unicorns & Dragons"],
+    ["2026-10-15", "Discovery Days Art: Unicorns & Dragons"],
+    ["2026-10-16", "Discovery Days Art: Unicorns & Dragons"],
+    ["2026-10-17", "Discovery Days Art: Unicorns & Dragons"],
+  ];
+  let id = 1;
+  for (const [date, title] of plan) {
+    const list = sessions.map((t) => ev(id++, title, "Longmont Museum", date, t));
+    if (date === "2026-10-13") list.push(ev(id++, "Kids' Film Series", "Longmont Museum", date, "10:00", { is_special: 0 }));
+    // Ordinary competition: 5 routine events from other venues each day.
+    for (let k = 0; k < 5; k++) list.push(ev(id++, `${date} Storytime ${k}`, `Library ${date} ${k}`, date, `1${k}:30`, { is_special: 0, category: "library" }));
+    days.push([date, list]);
+  }
+  return days;
+}
+const score = (e) => (e.is_special ? 1 : 0);
+
+function runDayPickEvals() {
+  console.log("\n── Day-pick dedupe evals (real digest-rules.js) ──");
+  const { byDay } = selectDigestDays(longmontWeek(), score, { maxPerDay: 6 });
+  const checks = [];
+  const all = [...byDay.values()].flatMap((d) => d.shown);
+  const museum = all.filter((e) => e.source === "Longmont Museum");
+  const perDayMax = Math.max(...[...byDay.values()].map((d) => d.shown.filter((e) => e.source === "Longmont Museum").length));
+  const seriesCounts = new Map();
+  for (const e of all) seriesCounts.set(seriesKey(e), (seriesCounts.get(seriesKey(e)) || 0) + 1);
+  const museumDays = [...byDay.values()].filter((d) => d.shown.some((e) => e.source === "Longmont Museum")).length;
+  const art = museum.find((e) => e.title.startsWith("Discovery Days Art"));
+  checks.push(["one Longmont Museum entry per day max", perDayMax <= 1, `max per day = ${perDayMax}`]);
+  checks.push(["each series shows once per week", [...seriesCounts.values()].every((n) => n === 1), JSON.stringify([...seriesCounts].filter(([, n]) => n > 1))]);
+  checks.push([`museum on <= ${PROD_SOURCE_CAP} days`, museumDays <= PROD_SOURCE_CAP, `days = ${museumDays}`]);
+  checks.push(["same-day sessions merged into one time line", !!art && art.display_time.startsWith("9:15 AM, 10:45 AM & 1:00 PM"), art && art.display_time]);
+  checks.push(["repeat days shown as 'also'", !!art && /also Thu, Fri, Sat$/.test(art.display_time), art && art.display_time]);
+  checks.push(["other venues fill the freed slots", [...byDay.values()].every((d) => d.shown.length === Math.min(6, d.total)), [...byDay.values()].map((d) => d.shown.length).join(",")]);
+  // Thin week: one venue running the same daily program and nothing else.
+  const thin = ["2026-10-13", "2026-10-14", "2026-10-15"].map((d, i) => [d, [ev(100 + i, "Open Play", "Play Street Museum", d, "09:00", { is_special: 0 })]]);
+  const thinRes = selectDigestDays(thin, score, { maxPerDay: 6 });
+  checks.push(["a thin day still shows a repeat rather than nothing", [...thinRes.byDay.values()].every((d) => d.shown.length === 1), [...thinRes.byDay.values()].map((d) => d.shown.length).join(",")]);
+  let pass = 0;
+  for (const [name, ok, detail] of checks) {
+    pass += ok ? 1 : 0;
+    console.log(`${ok ? "✅" : "❌"} ${name}${ok ? "" : ` -- ${detail}`}`);
+  }
+  console.log(`Day-pick dedupe: ${pass}/${checks.length} passed`);
+  return { pass, total: checks.length };
+}
+
 function main() {
   console.log("Playroute newsletter digest -- quality eval suite");
   const spotlightDiv = runSpotlightDiversityEvals();
   const freePick = runFreePickEvals();
   const weekRep = runWeekRepetitionEvals();
-  const totalPass = spotlightDiv.pass + freePick.pass + weekRep.pass;
-  const totalCases = spotlightDiv.total + freePick.total + weekRep.total;
+  const dayPick = runDayPickEvals();
+  const totalPass = spotlightDiv.pass + freePick.pass + weekRep.pass + dayPick.pass;
+  const totalCases = spotlightDiv.total + freePick.total + weekRep.total + dayPick.total;
   console.log(`\n=== OVERALL: ${totalPass}/${totalCases} passed ===`);
   console.log("Run this again after any change to the spotlight selection logic in index.js.");
 }
