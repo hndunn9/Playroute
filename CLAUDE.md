@@ -145,6 +145,10 @@ keep reads proportional to traffic:
   so `/api/stats` compares against the same elapsed time last week, not the full week.
 - Recommended-section A/B test: 50/50 random split. Read at **80% confidence**
   (p < 0.20) with 80% power. These are directional reads.
+- **Newsletter day picks** follow `src/digest-rules.js`: same title + venue on one day merges into one
+  entry with all times; one entry per venue per day; each series once per week (later days become
+  "also Thu, Fri"); a venue on at most 3 days. Thin days (<3 picks) relax the last two. Run
+  `node src/newsletter-eval.js` after changing digest selection.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
 - **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
   A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within
