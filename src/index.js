@@ -1182,13 +1182,46 @@ function ageFromLongmontTitle(title) {
   return { age_min: 0, age_max: 18 }; // "all ages", "family", or unlabeled -- broad default, gated by review
 }
 
+// Start of the next listing's day header: optional "November 2026" month
+// divider, then "Fri 16".
+const LONGMONT_NEXT_HEADER_RE = /\s(?:(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\s+)?(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}(?:\s|$)/;
+const LONGMONT_EVENT_PATH_RE = /^\/event\/[\w-]+\/\d{4}-\d{2}-\d{2}\/$/;
+const LONGMONT_LINK_LABEL_RE = /^(read more|find out more|more info|details|view (event|details)|learn more)\b/i;
+
+function longmontPath(href) {
+  const h = String(href || "").replace(/&amp;|&#0?38;/g, "&").replace(/^https?:\/\/(www\.)?longmontcolorado\.gov/i, "");
+  return h.split(/[?#]/)[0].replace(/\/?$/, "/");
+}
+
+// Every anchor's visible text, keyed by its normalized /event/slug/date/ path.
+function longmontTitlesByPath(html) {
+  const map = new Map();
+  const anchorRe = /<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = anchorRe.exec(html)) !== null) {
+    const path = longmontPath(m[1]);
+    if (!LONGMONT_EVENT_PATH_RE.test(path)) continue;
+    const text = decodeHtmlEntities(stripTags(m[2])).replace(/\s+/g, " ").trim();
+    if (!text || LONGMONT_LINK_LABEL_RE.test(text)) continue;
+    if (!map.has(path)) map.set(path, text);
+  }
+  return map;
+}
+
 function parseLongmontEventChunk(rawChunk, permalink, eventDate, opts = {}) {
-  const text = decodeHtmlEntities(stripTags(rawChunk)).replace(/\s+/g, " ").trim();
+  // Drop a tag cut off at the chunk's end, and keep a space where tags were
+  // so "craft.</p><div>Fri 16" reads as two words.
+  const cleaned = rawChunk.replace(/<[^>]*$/, "").replace(/>/g, "> ").replace(/</g, " <");
+  const text = decodeHtmlEntities(stripTags(cleaned)).replace(/\s+/g, " ").trim();
   if (LONGMONT_ADULT_DENYLIST_RE.test(text)) return null;
 
-  const titleMatch = rawChunk.match(/<a[^>]+href="[^"]*\/event\/[^"]+"[^>]*>([^<]+)<\/a>/i);
-  if (!titleMatch) return null;
-  const title = decodeHtmlEntities(titleMatch[1]).trim();
+  // Title comes from the caller (looked up by this event's own link). The
+  // chunk starts at the event's date link, which sits AFTER its title on
+  // the city's page, so the first title inside the chunk belongs to the
+  // NEXT event -- that's how "Storytime with Author Lynn Becker" ended up on
+  // Craft Storytime's date/time/description (fixed 2026-10-12).
+  const title = (opts.knownTitle || "").trim();
+  if (!title) return null;
   if (LONGMONT_ADULT_DENYLIST_RE.test(title)) return null;
   // The museum category mixes family programs with adult concerts/lectures;
   // keep only listings whose title or text signals kids/families.
@@ -1196,6 +1229,10 @@ function parseLongmontEventChunk(rawChunk, permalink, eventDate, opts = {}) {
 
   const timeMatch = text.match(/(\d{1,2}(?::\d{2})?\s*[ap]m)\s*[-\u2013\u2014]\s*(\d{1,2}(?::\d{2})?\s*[ap]m)/i);
   if (!timeMatch) return null; // no time range -- likely a multi-day banner (e.g. Summer Reading), skip
+  // The next event's day header ("Fri 16", "November 2026 Sun 1") marks the
+  // end of this event. A time found after it belongs to the next event.
+  const nextHeader = LONGMONT_NEXT_HEADER_RE.exec(text);
+  if (nextHeader && nextHeader.index < timeMatch.index) return null;
   const [, startLabel, endLabel] = timeMatch;
 
   // Everything after the matched time range, in order: an optional
@@ -1213,6 +1250,8 @@ function parseLongmontEventChunk(rawChunk, permalink, eventDate, opts = {}) {
     location = locationMatch[0].trim();
     tail = tail.slice(locationMatch[0].length).trim();
   }
+  const tailHeader = LONGMONT_NEXT_HEADER_RE.exec(" " + tail);
+  if (tailHeader) tail = tail.slice(0, Math.max(0, tailHeader.index - 1)).trim();
   const description = tail ? tail.slice(0, 350) : null;
 
   const d = new Date(eventDate + "T12:00:00Z");
@@ -1282,11 +1321,14 @@ function scanLongmontListHtml(html, opts, seen, out, maxDate = null) {
     const path = m[1].replace(/^https?:\/\/longmontcolorado\.gov/, "");
     hrefPositions.push({ href: path, eventDate: m[2], index: m.index });
   }
+  const titles = longmontTitlesByPath(noScript);
   for (let i = 0; i < hrefPositions.length; i++) {
     if (maxDate && hrefPositions[i].eventDate > maxDate) continue;
     const start = hrefPositions[i].index;
     const end = i + 1 < hrefPositions.length ? hrefPositions[i + 1].index : start + 2500;
-    const parsed = parseLongmontEventChunk(noScript.slice(start, end), hrefPositions[i].href, hrefPositions[i].eventDate, opts);
+    // No guessing: if this event's own link has no title text, skip it.
+    const knownTitle = titles.get(longmontPath(hrefPositions[i].href));
+    const parsed = parseLongmontEventChunk(noScript.slice(start, end), hrefPositions[i].href, hrefPositions[i].eventDate, { ...opts, knownTitle });
     if (!parsed) continue;
     const dedupSig = `${parsed.title}|${parsed.event_date}|${parsed.start_time}`;
     if (seen.has(dedupSig)) continue;
