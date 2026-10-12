@@ -1544,6 +1544,7 @@ const ANYTHINK_THORNTON_URL = "https://api.communico.co/v2/anythinklibraries/eve
 // structured age field; this one DOES have a structured field, so this is
 // simpler and more reliable than most.
 const ANYTHINK_ADULT_ONLY_AGES = new Set(["adults", "seniors"]);
+const ANYTHINK_YOUNG_KID_AGES = new Set(["babies", "toddlers", "children", "elementary", "families"]);
 const ANYTHINK_AGE_RANGES = {
   babies: [0, 1], toddlers: [1, 3], children: [3, 10], elementary: [5, 11],
   tweens: [9, 13], teens: [13, 18], families: [0, 18]
@@ -1552,8 +1553,11 @@ const ANYTHINK_AGE_RANGES = {
 function parseAnythinkAges(agesRaw) {
   const tags = agesRaw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   if (tags.length === 0) return null; // no age info at all -- can't safely classify, skip
-  const hasKidTag = tags.some((t) => !ANYTHINK_ADULT_ONLY_AGES.has(t));
-  if (!hasKidTag) return null; // adults/seniors only -- not for this app
+  // Needs at least one young-kid tag. Teens/tweens alone used to count, so
+  // "Teens, Adults" hobby classes (sewing, Cricut, crochet, D&D, birding,
+  // Master Gardener...) got through -- ~60 rejections by Oct 2026.
+  const hasKidTag = tags.some((t) => ANYTHINK_YOUNG_KID_AGES.has(t));
+  if (!hasKidTag) return null; // adults/seniors/teens only -- not for this app
   // "families" is a modifier ("appropriate to attend together"), not a
   // real age constraint -- a real bug caught in testing: "Toddlers,
   // Families" was collapsing to a blanket 0-18 because Families' own

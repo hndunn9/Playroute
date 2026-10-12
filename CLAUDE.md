@@ -123,6 +123,10 @@ keep reads proportional to traffic:
 - **Review learning** (`pipeline.js`): before queuing, `contentFilter` drops placeholder titles
   (DRAFT/TBD), "…Buddies – Register" series, ages 9+ or teen/tween titles (unless the title says
   family/all ages), and adult topics without a kid signal. Titles are HTML-entity-decoded.
+  Also dropped (Oct 2026, from rejection history): placeholders ("?", "???", "test event"), titles naming a
+  later year than the event's date ("Yoga en español 2027"), and not-public/not-kids programs
+  (`NOT_PUBLIC_KIDS_RE`: outreach, school/class visits, kinder class, prenatal). Anythink needs a
+  young-kid age tag (babies/toddlers/children/elementary/families); teens/tweens/adults alone are skipped.
   Dated items matching a live event's title (any case), city, date and time are duplicates
   regardless of source string. A dated item is also a duplicate when a live weekly or
   `monthly-<ordinal>-<weekday>` row covers that date with the same city, start time and source

@@ -495,7 +495,10 @@ function applyReviewHistory(ctx, ev) {
 const KID_SIGNAL_RE = /\b(kids?|child|children|famil(y|ies)|toddlers?|bab(y|ies)|preschool(ers)?|story ?time|storytime|tots?|little ones?|caregivers?|parents?|all ages)\b/i;
 const FAMILY_SIGNAL_RE = /\b(famil(y|ies)|all ages|caregivers?|parents? (and|&) (kids?|child))\b/i;
 const TEEN_TITLE_RE = /\b(teens?|tweens?|grades? (6|7|8|9|1[0-2])|middle school|high school)\b/i;
-const PLACEHOLDER_TITLE_RE = /\b(draft|tbd|tba)\b/i;
+const PLACEHOLDER_TITLE_RE = /\b(draft|tbd|tba|test event)\b|(^|[\s:])\?+\s*$|^[^A-Za-z0-9]*$/i;
+// Not open to the public, or not for kids even with a kid word in the title
+// (school outreach visits, class visits, prenatal programs for parents).
+const NOT_PUBLIC_KIDS_RE = /\b(outreach|school visit|class visit|kinder class|prenatal)\b/i;
 const REGISTRATION_SERIES_RE = /\bbuddies\b.*\bregister\b|[-–—:]\s*register\s*$/i;
 const ADULT_TOPIC_RE = /\b(tech tuesday|orientation|book group|board meeting|genealogy|virtual training|book club|brew(ing|ery)|pints?|wine|beer|cocktails?|an evening with|lecture|ballots?|voters?|elections?|seed swap|tea of the month|grow your business|small business|resumes?|job search|medicare|retirement|estate planning|taxes)\b/i;
 
@@ -512,6 +515,11 @@ function decodeEntities(str) {
 function contentFilter(ev) {
   const title = String(ev.title || "");
   if (PLACEHOLDER_TITLE_RE.test(title)) return "placeholder-title";
+  // Next year's template copied onto this year's date ("Yoga en español 2027"
+  // on an Oct 2026 event, "2027 Crafternoon: ?").
+  const years = title.match(/\b20\d{2}\b/g);
+  if (years && ev.event_date && years.some((y) => +y > +String(ev.event_date).slice(0, 4))) return "placeholder-title";
+  if (NOT_PUBLIC_KIDS_RE.test(title)) return "not-public-or-not-kids";
   if (REGISTRATION_SERIES_RE.test(title)) return "registration-series";
   const familySignal = FAMILY_SIGNAL_RE.test(title);
   if (!familySignal && typeof ev.age_min === "number" && ev.age_min >= 9) return "teen-tween-ages";
