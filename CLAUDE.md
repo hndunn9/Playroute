@@ -94,6 +94,10 @@ keep reads proportional to traffic:
   time with a 10 s page timeout and 45 s total budget; run one after another they timed out the admin Run. Every-other-week series
   (Craft/Yoga Storytime) were being missed before. Add a term there if a kids series goes missing.
   The museum runner doesn't use searches.
+  On the city's list pages each event's **title link comes before its date link**. The parser chunks
+  from date link to date link, so it looks the title up by the event's own URL (`longmontTitlesByPath`)
+  and cuts the description at the next day header ("Fri 16"). Taking the first title inside the chunk
+  gave every card the NEXT event's title (Aug–Oct 2026; mislabeled history was cleared).
 - **JS-rendered platforms** (WellnessLiving, Arketa, iClassPro) can't be read with
   `fetch()`. WellnessLiving's API needs a per-request signature, so use the
   Browser Run binding (`env.BROWSER`) via `browserRun()` and read the
