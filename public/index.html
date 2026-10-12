@@ -20,6 +20,8 @@
     var t = localStorage.getItem('playroute-theme');
     if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
   } catch (e) {}
+  // Recommended for you + its A/B test were removed (2026-10); clear their keys.
+  try { ['playroute-exp-recommended','playroute-affinity-v1','playroute-recommended-collapsed','playroute-recommended-feedback-given'].forEach(function (k) { localStorage.removeItem(k); }); } catch (e) {}
   // Seasonal header: fall theme runs Sep 1 – Nov 30. Preview with ?season=fall or ?season=off.
   try {
     var sp = new URLSearchParams(location.search).get('season');
@@ -458,35 +460,6 @@ main{
   position:sticky;top:0;z-index:5;
   background:var(--cream);padding:10px 0 8px;
 }
-/* ── RECOMMENDED SECTION ── feature-gated (see isRecommendedFeatureOn),
-   sits above the day-by-day list. Distinct clay accent (not the plain
-   day-heading style) so it visually reads as "different kind of thing,"
-   not just another day group. Collapsible -- state persisted via
-   RECOMMENDED_COLLAPSED_KEY so a closed section stays closed next visit. */
-.recommended-section{margin-bottom:6px;}
-.recommended-heading{
-  display:flex;align-items:center;justify-content:space-between;gap:8px;
-  font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;
-  text-transform:uppercase;letter-spacing:0.1em;color:var(--clay);
-  margin:4px 0 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;
-}
-.recommended-cards{
-  background:var(--cream);border-radius:var(--radius-md);
-  padding:12px 12px 2px;margin-bottom:14px;
-}
-.recommended-cards .event-card{box-shadow:none;} /* the outer cream container already provides visual separation from the rest of the feed -- each card's own shadow on top of that read as doubled-up/heavier than the normal feed, part of what made this feel cramped rather than airy */
-.recommended-cards.collapsed{display:none;}
-.recommended-feedback{
-  display:flex;align-items:center;justify-content:center;gap:10px;
-  padding:8px 0 10px;font-size:12px;color:var(--ink-soft);
-}
-.feedback-vote-btn{
-  background:var(--parchment);border:1px solid var(--fog);border-radius:100px;
-  width:30px;height:30px;font-size:14px;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;
-  -webkit-tap-highlight-color:transparent;transition:transform .1s ease;
-}
-.feedback-vote-btn:active{transform:scale(0.88);}
 /* Date context restated on each card here, since these are pulled out of
    their normal day-heading grouping (see buildEventCard's showDate param)
    -- without this the date the day-heading would've provided is just gone. */
@@ -1217,11 +1190,6 @@ function elevationSpark(count){
 
 const API_BASE = "";
 let events = [], playgrounds = [], hikes = [], dataLoadFailed = false;
-// Set inside renderFeed() itself, right where the recommended section is
-// built -- read by the pageview beacon in loadData() to report whether
-// this visitor actually saw the section this load, not just whether they
-// theoretically could have.
-let lastSawRecommended = false;
 
 // Shared inline-SVG icons (replacing emoji) used across dynamically-rendered
 // cards/drawers. Same stroke weight/style as the static nav icons above.
@@ -1258,13 +1226,9 @@ async function loadData(){
   await picksLoad;
   renderAll();
   handleEventDeepLink();
-  // Pageview beacon moved here (was fired eagerly at bootstrap, before
-  // any data had loaded) so it can report saw_recommended accurately --
-  // that can only be known once renderFeed() has actually run and decided
-  // whether the recommended section had anything to show. lastSawRecommended
-  // is set inside renderFeed() itself, right where the section is built.
+  // Pageview beacon fires after the first render.
   const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
-  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, ...expPayload()})}).catch(()=>{});
+  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc})}).catch(()=>{});
 }
 
 let activeCities = new Set(), activeAges = new Set(), activeCats = new Set();
@@ -1591,12 +1555,12 @@ function passesFilters(ev){
 }
 
 /* ── PROGRESSIVE DISCLOSURE ── */
-function toggleCard(card, ev, fromRecommended){
+function toggleCard(card, ev){
   document.querySelectorAll('.event-card.expanded').forEach(c=>{ if(c!==card) c.classList.remove('expanded'); });
   const willExpand = !card.classList.contains('expanded');
   card.classList.toggle('expanded');
   if(willExpand && ev){
-    trackClick(ev.source_url||'', {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'view_details', fromRecommended:!!fromRecommended});
+    trackClick(ev.source_url||'', {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'view_details'});
   }
 }
 
@@ -1746,21 +1710,14 @@ function renderAffiliateCloserCard(){
 }
 
 /* ── RENDER FEED ── */
-// Extracted from renderFeed's day-loop so the same card markup can be
-// reused by the "Recommended for you" strip below without duplicating the
-// whole template -- lifted as-is, not rewritten, to avoid touching
-// working render logic while adding the new feature.
-// showDate: the normal day-grouped feed gets date context for free from
-// the day-heading above each group; the recommended strip pulls cards out
-// of that grouping entirely, so it needs the date restated on the card
-// itself or it reads as missing context, not just "no date."
+// One event card. opts.showDate restates the date on the card, for any
+// list shown outside the day-heading groups.
 function buildEventCard(ev, opts){
   const showDate = opts && opts.showDate;
-  const fromRecommended = !!(opts && opts.fromRecommended);
   const card=document.createElement("div");
   card.className="event-card";
   card.dataset.eventId=ev.id;
-  card.onclick=function(){ toggleCard(this, ev, fromRecommended); };
+  card.onclick=function(){ toggleCard(this, ev); };
   card.innerHTML=`
     <div class="card-summary">
       <div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>
@@ -1782,9 +1739,9 @@ function buildEventCard(ev, opts){
       <div class="card-detail-inner">
         <div class="card-detail-note">${ev.note||""}</div>
         <div class="card-detail-actions">
-          <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}',action:'source_click',fromRecommended:${fromRecommended}})">View source ↗</a>
+          <a class="detail-btn-source" href="${ev.source_url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();trackClick('${ev.source_url}',{id:${ev.id||'null'},title:'${(ev.title||'').replace(/'/g,"\\'")}',city:'${ev.city}',category:'${ev.category}',action:'source_click'})">View source ↗</a>
           <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();" title="Add to calendar" aria-label="Add to calendar">${ICONS.calendarAdd}</a>
-          <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}',${fromRecommended})" title="Share" aria-label="Share">${ICONS.share}</a>
+          <a class="detail-btn-cal" href="#" onclick="event.stopPropagation();shareEvent('${ev.id}')" title="Share" aria-label="Share">${ICONS.share}</a>
         </div>
       </div>
     </div>
@@ -1817,34 +1774,7 @@ function renderFeed(){
     // too, it should be a badge/label, not a reordering that breaks
     // chronological scanning.
 
-  // "Recommended for you" -- feature-gated, see isRecommendedFeatureOn().
-  // Rendered from the SAME already-filtered/already-loaded `upcoming` pool,
-  // not a separate fetch -- no new network cost. Sits above the day-by-day
-  // list, its own labeled section, not mixed into the chronological feed.
-  // showDate:true on each card since these are pulled out of their normal
-  // day-heading grouping -- without it the date context that grouping
-  // would have provided for free is just gone.
   if(!activeSearch){ const picksEl = buildPicksSection(); if(picksEl) feed.appendChild(picksEl); }
-  const recommended = getRecommendedEvents(upcoming);
-  lastSawRecommended = recommended.length > 0;
-  if(recommended.length) sendExpExposureOnce(); // strip can first appear mid-visit, after the pageview beacon
-  if(recommended.length){
-    const section = document.createElement("div");
-    section.className = "recommended-section";
-    const collapsed = getRecommendedCollapsedPref();
-    section.innerHTML = `
-      <div class="recommended-heading" id="recommendedHeading" onclick="toggleRecommendedSection()">
-        <span>✨ Recommended for you</span>
-        <span class="chevron${collapsed?'':' open'}" id="recommendedChevron">▾</span>
-      </div>
-      <div class="recommended-cards${collapsed?' collapsed':''}" id="recommendedCards"></div>
-    `;
-    const cardsEl = section.querySelector("#recommendedCards");
-    recommended.forEach(ev=>{ cardsEl.appendChild(buildEventCard(ev, {showDate:true, fromRecommended:true})); });
-    renderRecommendedFeedback(cardsEl);
-    feed.appendChild(section);
-  }
-
   let shown=0, lastHeading=null, affiliateInserted=false;
   const dayCounts={};
   upcoming.forEach(ev=>{ dayCounts[ev.occurrence_label]=(dayCounts[ev.occurrence_label]||0)+1; });
@@ -2015,7 +1945,7 @@ function updateActiveCount(){
   const badge=document.getElementById("activeCount");
   if(count>0){ badge.textContent=count; badge.classList.add("show"); } else { badge.classList.remove("show"); }
 }
-function shareEvent(id, fromRecommended){
+function shareEvent(id){
   const ev = events.find(e=>String(e.id)===String(id));
   if(!ev) return;
   const shareUrl = `${location.origin}/?event=${ev.id}`;
@@ -2026,7 +1956,7 @@ function shareEvent(id, fromRecommended){
     ev.cost==='free' ? 'Free' : 'Paid'
   ];
   const shareBody = bodyLines.filter(Boolean).join('\n');
-  trackClick(shareUrl, {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'share', fromRecommended:!!fromRecommended});
+  trackClick(shareUrl, {id:ev.id, title:ev.title, city:ev.city, category:ev.category, action:'share'});
 
   if(navigator.share){
     // IMPORTANT: text must NOT also contain shareUrl. Many Android share
@@ -2078,28 +2008,6 @@ function handleEventDeepLink(){
 // the event's real category. Older code sent action-type strings through
 // `category` alone; that's fixed at each call site below, but the server
 // still tolerates the old shape from any stale cached page.
-const AFFINITY_KEY = "playroute-affinity-v1";
-// Tier 1 of the "relevant to me" feature: pure client-side, never leaves
-// the device, no new backend/infra. Tallies category/city on every real
-// click trackClick() already logs (source-click, calendar-add, share --
-// meta.category/meta.city are already passed at every real call site, so
-// this needed zero new instrumentation, just a hook into the existing one).
-function recordAffinity(meta){
-  if(!meta || (!meta.category && !meta.city)) return;
-  try{
-    const raw = localStorage.getItem(AFFINITY_KEY);
-    const aff = raw ? JSON.parse(raw) : {categories:{}, cities:{}, totalClicks:0};
-    if(meta.category) aff.categories[meta.category] = (aff.categories[meta.category]||0) + 1;
-    if(meta.city) aff.cities[meta.city] = (aff.cities[meta.city]||0) + 1;
-    aff.totalClicks = (aff.totalClicks||0) + 1;
-    localStorage.setItem(AFFINITY_KEY, JSON.stringify(aff));
-  }catch(e){}
-}
-
-// Feature gate -- OFF by default. Flip to true to launch for everyone;
-// until then, only visible via ?ff_recommended=1, so you can preview it
-// live on the real site without editing code each time, and without any
-// regular visitor seeing it while it's still being evaluated.
 // Playroute's Picks (paid partner placements). OFF for everyone until this
 // is true; the server has a matching PICKS_PUBLIC flag for /api/picks and
 // the newsletter. ?ff_picks=<preview token> shows only that partner's Pick
@@ -2160,125 +2068,10 @@ function buildPicksSection(){
   return section;
 }
 
-const FEATURE_RECOMMENDED_ENABLED = false;
-
-// ── A/B EXPERIMENT (2026-09) ── each browser is assigned once, 50/50, to
-// "treatment" (Recommended for you is on) or "control" (never shown), and
-// keeps that arm on later visits. A session = one visit (per tab). Arm +
-// session ride along on the pageview and every click beacon; results are
-// on the admin page ("Recommended for you A/B test"). Set
-// FEATURE_RECOMMENDED_ENABLED = true to end the test and show it to all.
-// ?ff_recommended=1 / =0 force it on/off for previewing (still logged
-// under your real arm, so keep previews to a minimum).
-const EXP_ARM_KEY = "playroute-exp-recommended";
-let _expArm = null, _expSessionId = null, _expExposureSent = false;
-function getExpArm(){
-  if(_expArm) return _expArm;
-  try{ _expArm = localStorage.getItem(EXP_ARM_KEY); }catch(e){}
-  if(_expArm!=="treatment" && _expArm!=="control"){
-    _expArm = Math.random() < 0.5 ? "treatment" : "control";
-    try{ localStorage.setItem(EXP_ARM_KEY, _expArm); }catch(e){}
-  }
-  return _expArm;
-}
-function getExpSessionId(){
-  if(_expSessionId) return _expSessionId;
-  const fresh = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
-  try{
-    _expSessionId = sessionStorage.getItem("playroute-exp-session");
-    if(!_expSessionId){ _expSessionId = fresh(); sessionStorage.setItem("playroute-exp-session", _expSessionId); }
-  }catch(e){ _expSessionId = fresh(); }
-  return _expSessionId;
-}
-function expPayload(){
-  if(FEATURE_RECOMMENDED_ENABLED) return {}; // test over, stop logging
-  return { experimentArm: getExpArm(), experimentSessionId: getExpSessionId() };
-}
-function sendExpExposureOnce(){
-  if(_expExposureSent || FEATURE_RECOMMENDED_ENABLED) return;
-  _expExposureSent = true;
-  try{
-    fetch(`${API_BASE}/api/experiment-exposure`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify(expPayload())}).catch(()=>{});
-  }catch(e){}
-}
-function isRecommendedFeatureOn(){
-  try{
-    const ff = new URLSearchParams(location.search).get('ff_recommended');
-    if(ff==='1') return true;
-    if(ff==='0') return false;
-  }catch(e){}
-  return FEATURE_RECOMMENDED_ENABLED || getExpArm()==="treatment";
-}
-
-// Don't show anything until there's real signal -- an empty or
-// single-click-based "recommended" section reads as broken, not helpful.
-// Category weighted 2x city on purpose: two clicks in "library" says more
-// about intent than one library + one city coincidence would.
-const RECOMMENDED_MIN_SIGNAL = 3;
-const RECOMMENDED_MAX_ITEMS = 4;
-function getRecommendedEvents(pool){
-  if(!isRecommendedFeatureOn()) return [];
-  let aff;
-  try{
-    const raw = localStorage.getItem(AFFINITY_KEY);
-    aff = raw ? JSON.parse(raw) : null;
-  }catch(e){ aff = null; }
-  if(!aff || (aff.totalClicks||0) < RECOMMENDED_MIN_SIGNAL) return [];
-  const scored = pool
-    .map(ev=>({ ev, score: (aff.categories[ev.category]||0)*2 + (aff.cities[ev.city]||0) }))
-    .filter(s=>s.score>0);
-  scored.sort((a,b)=> b.score-a.score || new Date(a.ev.occurrence)-new Date(b.ev.occurrence));
-  return scored.slice(0, RECOMMENDED_MAX_ITEMS).map(s=>s.ev);
-}
-
 function trackClick(url,meta){
-  recordAffinity(meta);
   try{
-    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action,fromRecommended:!!meta?.fromRecommended,...expPayload()}),keepalive:true}).catch(()=>{});
+    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action}),keepalive:true}).catch(()=>{});
   }catch(err){}
-}
-
-const RECOMMENDED_COLLAPSED_KEY = "playroute-recommended-collapsed";
-function getRecommendedCollapsedPref(){
-  try{ return localStorage.getItem(RECOMMENDED_COLLAPSED_KEY) === "true"; }catch(e){ return false; }
-}
-function toggleRecommendedSection(){
-  const cardsEl = document.getElementById("recommendedCards");
-  const chevronEl = document.getElementById("recommendedChevron");
-  if(!cardsEl || !chevronEl) return;
-  const nowCollapsed = !cardsEl.classList.contains("collapsed");
-  cardsEl.classList.toggle("collapsed", nowCollapsed);
-  chevronEl.classList.toggle("open", !nowCollapsed);
-  try{ localStorage.setItem(RECOMMENDED_COLLAPSED_KEY, String(nowCollapsed)); }catch(e){}
-}
-
-// Tiny feedback loop, bottom of the recommended cards -- shown once ever
-// per person (not once per session), same "ask lightly, don't nag" spirit
-// as the search/theme coachmarks elsewhere in this file. Once voted, the
-// prompt is gone for good on this device; there's no un-voting or
-// changing your answer, deliberately kept this simple.
-const RECOMMENDED_FEEDBACK_GIVEN_KEY = "playroute-recommended-feedback-given";
-function renderRecommendedFeedback(cardsEl){
-  try{
-    if(localStorage.getItem(RECOMMENDED_FEEDBACK_GIVEN_KEY)) return;
-  }catch(e){ return; }
-  const row = document.createElement("div");
-  row.className = "recommended-feedback";
-  row.id = "recommendedFeedback";
-  row.innerHTML = `
-    <span>Was this helpful?</span>
-    <button type="button" class="feedback-vote-btn" onclick="submitRecommendedFeedback('up')" aria-label="Yes, helpful">👍</button>
-    <button type="button" class="feedback-vote-btn" onclick="submitRecommendedFeedback('down')" aria-label="Not helpful">👎</button>
-  `;
-  cardsEl.appendChild(row);
-}
-function submitRecommendedFeedback(vote){
-  const row = document.getElementById("recommendedFeedback");
-  if(row) row.innerHTML = `<span>Thanks for the feedback! 🙏</span>`;
-  try{ localStorage.setItem(RECOMMENDED_FEEDBACK_GIVEN_KEY, "true"); }catch(e){}
-  try{
-    fetch(`${API_BASE}/api/recommended-feedback`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({vote, experimentArm:getExpArm(), experimentSessionId:getExpSessionId()}),keepalive:true}).catch(()=>{});
-  }catch(e){}
 }
 
 function showLinkPopover(anchorEl,url){
