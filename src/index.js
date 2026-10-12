@@ -508,147 +508,6 @@ function wowAgeFromTitle(title) {
   return { age_min: 0, age_max: 10 };
 }
 
-// Parses one WOW calendar month page. WOW's Firespring template renders
-// every event twice: once as a short link in the calendar grid, and again
-// in a fuller day-by-day agenda list further down the page (used here for
-// accessibility/SEO). Both link to the same event URL, ending in a stable
-// numeric event ID — e.g. .../littlest-learners/419833 — which we use as
-// the dedup key. The agenda-list copy appears later in the raw HTML and
-// has richer text (full start–end time range, or "(Day X of Y) Starts/
-// All Day/Until" for multi-day camps), so by scanning matches in document
-// order and keying a Map by event ID, the agenda version naturally wins
-// over the terser grid version for any event that appears in both.
-const WOW_EVENT_LINK_RE = /<a\s+[^>]*href="([^"]*\/event\/(\d{4})\/(\d{2})\/(\d{2})\/[^"]*\/(\d+))"[^>]*>(.*?)<\/a>/gis;
-
-// WOW's list/calendar page only gives title + time in each link — the real
-// program description lives on each event's own detail page. These are the
-// site's repeated sidebar/CTA strings that show up on every detail page
-// (membership pitch, donation ask, rental blurb, registration-capacity
-// note) — stripped out so what's left is the actual program description.
-const WOW_BOILERPLATE = [
-  "The Museum is available for private playtime and private party rentals. Contact us for availability and options!",
-  "Support the Museum by purchasing an annual family membership. Memberships include unlimited admission for a year and other great benefits!",
-  "Make a donation!",
-  "If the registration link is inactive, that means our event is at full capacity and we cannot accept new registrations."
-];
-
-// Fetches one WOW event's detail page and extracts its real description,
-// stripping the sidebar boilerplate above and de-duping the description
-// text (WOW's template renders it twice on most detail pages).
-async function fetchWowEventDescription(url) {
-  try {
-    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.app)" } });
-    if (!res.ok) return null;
-    const html = await res.text();
-    let text = decodeHtmlEntities(
-      stripTags(html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " "))
-    );
-    for (const bp of WOW_BOILERPLATE) text = text.split(bp).join(" ");
-    const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-    const seen = new Set();
-    const unique = sentences.filter((s) => {
-      const key = s.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    const desc = unique.join(" ").trim();
-    return desc.length > 20 ? truncateAtBoundary(desc, 400) : null;
-  } catch {
-    // A single event's description fetch failing shouldn't break the whole
-    // scrape run — the caller falls back to the generic placeholder note.
-    return null;
-  }
-}
-
-async function parseWowCalendarHtml(html, city) {
-  const byId = new Map();
-  let m;
-  while ((m = WOW_EVENT_LINK_RE.exec(html)) !== null) {
-    const [, href, year, month, day, id, innerHtml] = m;
-    const text = decodeHtmlEntities(stripTags(innerHtml));
-    if (!text) continue;
-    byId.set(id, { href, year, month, day, id, text });
-  }
-
-  const events = [];
-  for (const { href, year, month, day, id, text } of byId.values()) {
-    let title = text;
-    let startTime = null; // "HH:MM" 24h, or null if unknown (e.g. "All Day")
-    let allDay = false;
-
-    // Agenda style with explicit end time: "Title 9:30 am - 10:00 am"
-    let mm = text.match(/^(.*?)\s+(\d{1,2}:\d{2}\s*[ap]m)\s*[-\u2013]\s*(\d{1,2}:\d{2}\s*[ap]m)\s*$/i);
-    if (mm) {
-      title = mm[1].trim();
-      startTime = to24HourFromLabel(mm[2]);
-    } else {
-      // Multi-day camp style: "Title ($) (Day 2 of 5 ) All Day" / "... Starts 9:00 am" / "... Until 12:00 pm"
-      mm = text.match(/^(.*?)\s*\(Day \d+ of \d+\s*\)\s*(Starts|Until|All Day)\s*(\d{1,2}:\d{2}\s*[ap]m)?\s*$/i);
-      if (mm) {
-        title = mm[1].trim();
-        if (mm[2].toLowerCase() === "all day") {
-          allDay = true;
-        } else if (mm[3]) {
-          startTime = to24HourFromLabel(mm[3]);
-        }
-      } else {
-        // Grid style, no end time: "9:30 am Title"
-        mm = text.match(/^(\d{1,2}:\d{2}\s*[ap]m)\s+(.*)$/i);
-        if (mm) {
-          startTime = to24HourFromLabel(mm[1]);
-          title = mm[2].trim();
-        }
-      }
-    }
-
-    const isPaid = /\(\$\)\s*$/.test(title);
-    title = title.replace(/\(\$\)\s*$/, "").trim();
-    if (!title) continue;
-
-    const { age_min, age_max } = wowAgeFromTitle(title);
-    const eventDate = `${year}-${month}-${day}`;
-    const finalStartTime = startTime || "09:00"; // fallback to museum open time
-    const displayTime = allDay
-      ? "All day \u2014 see source for schedule"
-      : startTime
-      ? new Date(`2000-01-01T${finalStartTime}:00`).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-      : "See source for time";
-
-    const sourceUrl = href.startsWith("http") ? href : `https://wowchildrensmuseum.org${href}`;
-    const realDescription = allDay ? null : await fetchWowEventDescription(sourceUrl);
-
-    events.push({
-      title,
-      source: `${city} \u2014 WOW! Children's Museum`,
-      city,
-      category: "museum",
-      cost: isPaid ? "paid" : "free",
-      age_min,
-      age_max,
-      // FIX (2026-07-14): this was `undefined`, which crashed at approval
-      // time with "NOT NULL constraint failed: events.day_of_week" — the
-      // real table requires day_of_week on every row, even dated ones (used
-      // for display, e.g. "Saturday, July 11"). Anchored at noon UTC, same
-      // safe pattern used elsewhere in this file, since eventDate here is
-      // already the museum's own local calendar date, not a UTC instant
-      // needing conversion.
-      day_of_week: DAY_NAMES[new Date(`${eventDate}T12:00:00Z`).getUTCDay()],
-      start_time: finalStartTime,
-      display_time: displayTime,
-      recurrence: "dated",
-      event_date: eventDate,
-      note: allDay
-        ? "Multi-day program \u2014 check the museum's event page for the full daily schedule."
-        : (realDescription || "Pulled from WOW! Children's Museum's public calendar."),
-      source_url: sourceUrl,
-      verified: 1,
-      libcal_event_id: `wow:${id}`
-    });
-  }
-  return events;
-}
-
 function to24HourFromLabel(label) {
   const m = label.match(/(\d{1,2}):(\d{2})\s*([ap])m/i);
   if (!m) return null;
@@ -659,53 +518,154 @@ function to24HourFromLabel(label) {
   return `${String(h).padStart(2, "0")}:${min}`;
 }
 
-// Returns the current-month calendar URL plus `monthsAhead` following
-// months' URLs, following WOW's /calendar.html/calendar/{year}/{month} pattern.
-function getWowMonthUrls(baseUrl, monthsAhead, now) {
-  const nowMT = new Date(now.toLocaleString("en-US", { timeZone: TZ }));
-  const urls = [baseUrl];
-  let year = nowMT.getFullYear();
-  let month = nowMT.getMonth() + 1; // 1-indexed
-  for (let i = 0; i < monthsAhead; i++) {
-    month++;
-    if (month > 12) {
-      month = 1;
-      year++;
-    }
-    urls.push(`${baseUrl}/calendar/${year}/${month}`);
-  }
-  return urls;
+// WOW! Children's Museum (Lafayette). 2026-10: the museum moved from its
+// old Firespring calendar (links like /calendar.html/event/2026/10/29/...)
+// to WordPress, with event pages at /events/<slug>/<YYYY-MM-DD>/, so the old
+// parser matched nothing after Sept 1. That URL shape is The Events
+// Calendar plugin, so read its REST API first; if that's blocked, fall
+// back to the calendar page's event links and each event page.
+// Sidebar/CTA strings repeated on every WOW page, stripped from descriptions.
+const WOW_BOILERPLATE = [
+  "The Museum is available for private playtime and private party rentals. Contact us for availability and options!",
+  "Support the Museum by purchasing an annual family membership. Memberships include unlimited admission for a year and other great benefits!",
+  "Make a donation!",
+  "If the registration link is inactive, that means our event is at full capacity and we cannot accept new registrations."
+];
+const WOW_SITE = "https://wowchildrensmuseum.org";
+const WOW_HORIZON_DAYS = 45;
+const WOW_SOURCE = "Lafayette — WOW! Children's Museum";
+const WOW_HEADERS = { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" };
+
+// Programs are "Included with Museum Admission" unless marked free.
+function wowCost(text) {
+  return /free admission|\bfree\b/i.test(text || "") ? "free" : "paid";
 }
 
-const WOW_MUSEUM = {
-  city: "Lafayette",
-  baseUrl: "https://wowchildrensmuseum.org/news-events/calendar.html",
-  monthsAhead: 2 // current month + next 2 (~90 days of coverage)
-};
+function wowCandidate({ title, date, startHHMM, displayTime, desc, url, costText }) {
+  const ages = wowAgeFromTitle(title);
+  return {
+    title,
+    source: WOW_SOURCE,
+    city: "Lafayette",
+    category: "museum",
+    cost: wowCost(`${title} ${costText || ""}`),
+    age_min: ages.age_min,
+    age_max: ages.age_max,
+    day_of_week: dayOfWeekFor(date),
+    start_time: startHHMM,
+    display_time: displayTime,
+    recurrence: "dated",
+    event_date: date,
+    note: desc ? truncateAtBoundary(desc, 350) : null,
+    source_url: url
+  };
+}
+
+function wowCleanDesc(html) {
+  let text = decodeHtmlEntities(stripTags(String(html || "").replace(/>/g, "> ")));
+  for (const bp of WOW_BOILERPLATE) text = text.split(bp).join(" ");
+  return text.replace(/\s+/g, " ").trim();
+}
+
+async function fetchWowFromTribeApi(today, end) {
+  const out = [];
+  let url = `${WOW_SITE}/wp-json/tribe/events/v1/events?per_page=50&start_date=${today}&end_date=${end}`;
+  for (let page = 0; url && page < 4; page++) {
+    let data;
+    try {
+      const res = await fetch(url, { headers: { ...WOW_HEADERS, Accept: "application/json" } });
+      if (!res.ok) return page === 0 ? null : out;
+      data = await res.json();
+    } catch (e) {
+      return page === 0 ? null : out;
+    }
+    for (const ev of data.events || []) {
+      if (ev.all_day) continue;
+      const date = String(ev.start_date || "").slice(0, 10);
+      const start = libcalClock(ev.start_date), endT = libcalClock(ev.end_date);
+      if (!date || !start) continue;
+      const title = decodeHtmlEntities(stripTags(ev.title || "")).trim();
+      out.push(wowCandidate({
+        title, date, startHHMM: start.hhmm,
+        displayTime: endT ? `${start.label} – ${endT.label}` : start.label,
+        desc: wowCleanDesc(ev.excerpt || ev.description),
+        url: ev.url || `${WOW_SITE}/news-events/calendar.html`,
+        costText: `${ev.cost || ""} ${wowCleanDesc(ev.description)}`
+      }));
+    }
+    url = data.next_rest_url || null;
+  }
+  return out;
+}
+
+const WOW_DETAIL_DATE_RE = /(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day,\s+([A-Z][a-z]+)\s+(\d{1,2}),\s+(\d{4})\s+(\d{1,2}:\d{2}\s*[ap]m)\s*[–-]\s*(\d{1,2}:\d{2}\s*[ap]m)/i;
+const MONTHS_LONG = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+
+async function fetchWowDetail(url) {
+  try {
+    const res = await fetch(url, { headers: WOW_HEADERS, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+    const text = wowCleanDesc(noScript);
+    const m = WOW_DETAIL_DATE_RE.exec(text);
+    if (!m) return null;
+    const mi = MONTHS_LONG.indexOf(m[1].toLowerCase());
+    if (mi < 0) return null;
+    const date = `${m[3]}-${String(mi + 1).padStart(2, "0")}-${String(m[2]).padStart(2, "0")}`;
+    const h1 = noScript.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+    const t = noScript.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = decodeHtmlEntities(stripTags((h1 && h1[1]) || (t && t[1]) || ""))
+      .replace(/\s*[-–|]\s*WOW! Children'?s Museum\s*$/i, "").trim();
+    if (!title) return null;
+    const startLabel = m[4].replace(/\s+/g, ""), endLabel = m[5].replace(/\s+/g, "");
+    const after = text.slice(m.index + m[0].length).trim();
+    return wowCandidate({
+      title, date, startHHMM: to24HourFromLabel(startLabel),
+      displayTime: `${startLabel} – ${endLabel}`,
+      desc: after.slice(0, 600), url, costText: after.slice(0, 600)
+    });
+  } catch (e) {
+    return null;
+  }
+}
+
+async function fetchWowFromPages(today, end) {
+  const res = await fetch(`${WOW_SITE}/news-events/calendar.html`, { headers: WOW_HEADERS });
+  if (!res.ok) throw new Error(`WOW calendar fetch failed: ${res.status}`);
+  const html = await res.text();
+  const sample = decodeHtmlEntities(stripTags(html.replace(/<script[\s\S]*?<\/script>/gi, " "))).slice(0, 900);
+  const urls = new Set();
+  const linkRe = /href="((?:https?:\/\/(?:www\.)?wowchildrensmuseum\.org)?\/events\/[\w-]+\/(?:(\d{4}-\d{2}-\d{2})\/)?)"/gi;
+  let m;
+  while ((m = linkRe.exec(html)) !== null) {
+    if (m[2] && (m[2] < today || m[2] > end)) continue; // dated link outside the window
+    urls.add(m[1].startsWith("http") ? m[1] : `${WOW_SITE}${m[1]}`);
+  }
+  if (urls.size === 0) throw zeroFoundError("WOW! Children's Museum (no /events/ links on the calendar page)", sample);
+  const list = [...urls].slice(0, 40);
+  const out = [];
+  for (let i = 0; i < list.length; i += 6) {
+    const batch = await Promise.all(list.slice(i, i + 6).map(fetchWowDetail));
+    for (const ev of batch) if (ev && ev.event_date >= today && ev.event_date <= end) out.push(ev);
+  }
+  return out;
+}
 
 async function fetchAndNormalizeWowCalendar() {
-  const now = new Date();
-  const urls = getWowMonthUrls(WOW_MUSEUM.baseUrl, WOW_MUSEUM.monthsAhead, now);
-  const cutoff = new Date(now.getTime() + 100 * 864e5);
-  const allEvents = [];
-  for (const url of urls) {
-    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.app)" } });
-    if (!res.ok) throw new Error(`WOW calendar fetch failed for ${url}: ${res.status}`);
-    const html = await res.text();
-    allEvents.push(...(await parseWowCalendarHtml(html, WOW_MUSEUM.city)));
-  }
-  // De-dupe across month pages (boundary events can appear on two month
-  // pages) and drop anything already in the past or past the lookahead window.
-  const byId = new Map();
-  for (const ev of allEvents) byId.set(ev.libcal_event_id, ev);
-  return [...byId.values()].filter((ev) => {
-    const d = new Date(`${ev.event_date}T${ev.start_time}:00-06:00`);
-    return d >= now && d <= cutoff;
+  const today = toMountainDateStr(new Date());
+  const end = toMountainDateStr(new Date(Date.now() + WOW_HORIZON_DAYS * 864e5));
+  const fromApi = await fetchWowFromTribeApi(today, end);
+  const events = fromApi && fromApi.length ? fromApi : await fetchWowFromPages(today, end);
+  const seen = new Set();
+  return events.filter((ev) => {
+    const k = `${ev.title}|${ev.event_date}|${ev.start_time}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
   });
 }
 
-// Registered below (after SOURCE_RUNNERS import target exists) as the
-// wow_museum runner — just returns candidates, ingestCandidate handles the rest.
 SOURCE_RUNNERS.wow_museum = async () => fetchAndNormalizeWowCalendar();
 
 // --- Westminster Public Library scraper (pending-review only) ---
@@ -724,148 +684,57 @@ SOURCE_RUNNERS.wow_museum = async () => fetchAndNormalizeWowCalendar();
 // approve/reject via the existing email flow — same as the Mead "needs
 // review" path. Once you've approved a few and are confident the parsing
 // is solid, this is a reasonable candidate to promote to auto-add later.
+// Westminster Public Library -- Library Market list page, parsed by the
+// shared parseLibraryMarketBlock (see the Lyons section).
 const WESTMINSTER_LIBRARY_LIST_URL = "https://westminsterco.librarycalendar.com/events/upcoming";
 const WESTMINSTER_LIBRARY_BASE_URL = "https://westminsterco.librarycalendar.com";
+// Same source strings as the hand-entered weekly rows, so the duplicate
+// check (which compares source) recognizes the same program.
+const WESTMINSTER_BRANCH_SOURCES = {
+  "college hill": "Westminster Public Library — College Hill, 3705 W 112th Ave",
+  "irving street": "Westminster Public Library — Irving Street, 7392 Irving St"
+};
 
-// Matches href="/event/<slug>-<id>" links in the list page's raw HTML.
-const WESTMINSTER_EVENT_LINK_RE = /href="(\/event\/[\w-]+)"/gi;
-
-function extractWestminsterEventPaths(html) {
-  const paths = new Set();
-  let m;
-  while ((m = WESTMINSTER_EVENT_LINK_RE.exec(html)) !== null) {
-    paths.add(m[1]);
-  }
-  return [...paths];
-}
-
-/**
- * Parses a Westminster library event detail page from raw HTML text.
- * Location renders as "Branch · Street Address · City, ST ZIP", and
- * category/audience tags appear as a plain comma-separated line before
- * the description. Date/time regexes confirmed 2026-09 against real
- * detail-page text (via search-engine snippets, not a live render) --
- * previously flagged as unverified placeholders; both matched correctly,
- * the actual bug was downstream in fetchAndScanWestminsterLibrary
- * discarding the successfully-parsed start time instead of using it.
- */
-function parseWestminsterLibraryDetail(html, url) {
-  const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
-  const text = decodeHtmlEntities(stripTags(noScript));
-
-  const titleMatch = html.match(/<h1[^>]*>(.*?)<\/h1>/is);
-  const title = titleMatch ? decodeHtmlEntities(stripTags(titleMatch[1])).trim() : null;
-  const cancelled = /^CANCELLED/i.test(title || "");
-
-  const locationMatch = text.match(
-    /([\w\s]+?)\s*[·•]\s*(\d+[\w\s.]+?)\s*[·•]\s*(Westminster,\s*CO\s*\d{5})/i
-  );
-
-  const categoryAudienceMatch = text.match(
-    /([\w\s&,]+?)\s*[·•]\s*(Adults|Teens|Youth|Children|All Ages|Birth[\w\s-]*)/i
-  );
-  const categories = categoryAudienceMatch ? categoryAudienceMatch[1].trim() : null;
-  const audience = categoryAudienceMatch ? categoryAudienceMatch[2].trim() : null;
-
-  // Confirmed 2026-09 against real detail-page text — see the doc comment above.
-  const dateMatch = text.match(/(\w+day),?\s+([A-Za-z]+\.?\s+\d{1,2}\.?,?\s+\d{4})/i);
-  const timeMatch = text.match(/(\d{1,2}:\d{2}\s*[ap]m)\s*[-–]\s*(\d{1,2}:\d{2}\s*[ap]m)/i);
-
-  return {
-    title,
-    cancelled,
-    source_url: url,
-    raw_day: dateMatch ? dateMatch[1] : null,
-    raw_date: dateMatch ? dateMatch[2] : null,
-    raw_start: timeMatch ? timeMatch[1] : null,
-    raw_end: timeMatch ? timeMatch[2] : null,
-    location: locationMatch
-      ? `${locationMatch[1].trim()} — ${locationMatch[2].trim()}, ${locationMatch[3].trim()}`
-      : null,
-    audience,
-    categories,
-    raw_excerpt: truncateAtBoundary(text, 400)
-  };
-}
-
-function ageFromWestminsterLibraryText(audience) {
-  const a = (audience || "").toLowerCase();
-  if (a.includes("birth")) return { age_min: 0, age_max: 5 };
-  if (a.includes("youth") || a.includes("children")) return { age_min: 5, age_max: 12 };
-  if (a.includes("teen")) return { age_min: 12, age_max: 18 };
-  if (a.includes("all ages")) return { age_min: 0, age_max: 18 };
-  return null; // covers "adults" and anything unrecognized — not a kid event
+function ageFromWestminsterGroups(ageGroupText, details) {
+  const g = (ageGroupText || "").toLowerCase();
+  const kid = /child|famil|babies|toddler|preschool|birth|all ages/.test(g);
+  if (!kid) return null; // Adults / Teens only -- not Playroute content
+  // Descriptions usually state the real range, e.g. "AGES: 0–2".
+  const m = (details || "").match(/\bAGES?:?\s*(\d{1,2})\s*(?:[–-]|to)\s*(\d{1,2})/i);
+  if (m) return { age_min: +m[1], age_max: +m[2] };
+  return { age_min: 0, age_max: 12 };
 }
 
 async function fetchAndScanWestminsterLibrary() {
+  const { blocks, sample } = await fetchLibraryMarketBlocks(WESTMINSTER_LIBRARY_LIST_URL, { maxPages: 6 });
+  if (blocks.length === 0) throw zeroFoundError("Westminster library", sample);
   const needsReview = [];
-  const listRes = await fetch(WESTMINSTER_LIBRARY_LIST_URL, {
-    headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
-  });
-  if (!listRes.ok) throw new Error(`Westminster library list fetch failed: ${listRes.status}`);
-  const listHtml = await listRes.text();
-  const paths = extractWestminsterEventPaths(listHtml);
-
-  for (const path of paths) {
-    const detailUrl = `${WESTMINSTER_LIBRARY_BASE_URL}${path}`;
-    const res = await fetch(detailUrl, {
-      headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
-    });
-    if (!res.ok) continue;
-    const html = await res.text();
-    const detail = parseWestminsterLibraryDetail(html, detailUrl);
-    if (!detail.title || detail.cancelled) continue;
-
-    const ages = ageFromWestminsterLibraryText(detail.audience);
-    if (!ages) continue; // adult-only program — not relevant to Playroute
-
+  for (const parsed of blocks) {
+    if (parsed.cancelled || parsed.notSponsored) continue;
+    const ages = ageFromWestminsterGroups(parsed.ageGroup, parsed.details);
+    if (!ages) continue;
+    const branchKey = (parsed.branch || "").toLowerCase().replace(/\s+library$/, "").trim();
+    // Titles carry a branch code suffix ("Book Babies Storytime-CH").
+    const title = parsed.title.replace(/\s*[-–]\s*(CH|IS)\s*$/i, "").trim();
     needsReview.push({
-      title: detail.title,
-      // Some events' location text names the branch specifically ("College
-      // Hill", "Irving Street"), others just say "Westminster Public
-      // Library" with no sub-branch -- in the latter case, unconditionally
-      // prepending "Westminster Public Library — " again duplicated it
-      // (confirmed via a real end-to-end test, 2026-09). Only prepend when
-      // the parsed location doesn't already start with it.
-      source: detail.location && detail.location.startsWith("Westminster Public Library")
-        ? detail.location
-        : `Westminster Public Library${detail.location ? " — " + detail.location : ""}`,
+      title,
+      source: WESTMINSTER_BRANCH_SOURCES[branchKey] || `Westminster Public Library${parsed.branch ? " — " + parsed.branch : ""}`,
       city: "Westminster",
       category: "library",
       cost: "free",
       age_min: ages.age_min,
       age_max: ages.age_max,
-      day_of_week: detail.raw_day,
-      // Was hardcoded to null with a comment punting this to manual
-      // review "for every candidate" -- even though raw_start had
-      // already been successfully parsed right above and was sitting
-      // unused. Confirmed against real detail-page text (2026-09) that
-      // the date/time regexes in parseWestminsterLibraryDetail do work;
-      // to24HourFromLabel converts the result the rest of the app
-      // expects. Only falls through to null (and therefore gets held
-      // back by ingestCandidate's error-severity gate, rather than
-      // queued incomplete) on a genuine extraction miss.
-      start_time: detail.raw_start ? to24HourFromLabel(detail.raw_start) : null,
-      display_time: detail.raw_start
-        ? detail.raw_end
-          ? `${detail.raw_start} – ${detail.raw_end}`
-          : detail.raw_start
-        : "Check listing for time",
-      recurrence: "weekly",
-      note: detail.categories
-        ? `Category: ${detail.categories}. ${detail.raw_excerpt}`
-        : detail.raw_excerpt,
-      source_url: detailUrl
-      // No dedup_key here on purpose — this platform mints a new URL per
-      // date instance of a recurring program (confirmed bug, 2026-07-14),
-      // so keying on `path` meant the same weekly program got queued as a
-      // "new" candidate every week. Letting the pipeline compute a stable
-      // title+city+day key instead is the actual fix.
+      day_of_week: dayOfWeekFor(parsed.eventDate),
+      start_time: to24HourFromLabel(parsed.startLabel),
+      display_time: `${parsed.startLabel}–${parsed.endLabel}`,
+      recurrence: "dated",
+      event_date: parsed.eventDate,
+      note: parsed.details || null,
+      source_url: `${WESTMINSTER_LIBRARY_BASE_URL}${parsed.href}`
     });
   }
   return needsReview;
 }
-
 SOURCE_RUNNERS.westminster_library = async () => fetchAndScanWestminsterLibrary();
 
 // --- Lyons Regional Library scraper (list-page only, weekly) ---------------
@@ -913,80 +782,157 @@ function ageFromLyonsGroups(ageGroupText) {
   return { age_min: min, age_max: max };
 }
 
-function parseLyonsEventBlock(blockText, href) {
-  // Example raw text shape (confirmed via search-engine snippet, not a
-  // live render): 'Feb 24 2026 Tue Baby Storytime 10:30am–11:00am ...
-  // Library Branch: Lyons Community Library Room: Community Room
-  // Age Group: Babies Program Type: Storytime Event Details: <description>'
-  const dateMatch = blockText.match(
-    /([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{4})\s+\w{3}\s+(.+?)\s+(\d{1,2}:\d{2}[ap]m)\s*[–-]\s*(\d{1,2}:\d{2}[ap]m)/i
-  );
-  if (!dateMatch) return null;
-  const [, monAbbr, day, year, title, startLabel, endLabel] = dateMatch;
-  const monthIdx = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].indexOf(monAbbr);
+// ---------------------------------------------------------------------
+// Library Market "LibraryCalendar" list pages (Lyons, Westminster,
+// Broomfield). Each event card's text reads:
+//   'Feb 24 2026 Tue Baby Storytime 10:30am–11:00am ... Library Branch:
+//    <branch> Room: <room> Age Group: Babies Program Type: Storytime
+//    Event Details: <description>'
+// (Broomfield labels the branch "Location:"). One shared parser so a fix
+// lands everywhere. Pages with ?page=N (Drupal, 0-based) until a page adds
+// nothing new. 2026-10: Westminster's old per-site parser looked for a
+// "·"-separated audience line that doesn't exist, so it dropped every
+// event as adults-only and never queued anything.
+const LM_TIME = String.raw`(\d{1,2}:\d{2}\s*[ap]m)\s*[–-]\s*(\d{1,2}:\d{2}\s*[ap]m)`;
+// Lyons/Westminster cards: "Oct 13 2026 Tue Book Babies Storytime 9:30am - 10:00am ..."
+const LM_HEADER_RE = /([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{4})\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/g;
+const LM_SHORT_RE = new RegExp(String.raw`^([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{4})\s+\w{3}\s+(.+?)\s+` + LM_TIME, "i");
+// Broomfield cards: "Family Storytime Tuesday, October 13, 2026 at 9:30am - 10:00am ..."
+const LM_LONG_RE = new RegExp(String.raw`^(.+?)\s+(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day,\s+([A-Z][a-z]+)\s+(\d{1,2}),\s+(\d{4})\s+at\s+` + LM_TIME, "i");
+const LM_LINK_RE = /\[\[LM:(\/event\/[\w-]+)\]\]/g;
+const LM_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+// Parses one card's text (link markers already removed).
+function parseLibraryMarketBlock(blockText, href) {
+  let monAbbr, day, year, title, startLabel, endLabel;
+  const short = LM_SHORT_RE.exec(blockText);
+  if (short) {
+    [, monAbbr, day, year, title, startLabel, endLabel] = short;
+  } else {
+    const long = LM_LONG_RE.exec(blockText.replace(/This event is in the "[^"]+" group\.?/gi, " ").trim());
+    if (!long) return null;
+    [, title, monAbbr, day, year, startLabel, endLabel] = long;
+    monAbbr = monAbbr.slice(0, 3);
+  }
+  const monthIdx = LM_MONTHS.indexOf(monAbbr);
   if (monthIdx === -1) return null;
   const eventDate = `${year}-${String(monthIdx + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
-  const roomMatch = blockText.match(/Room:\s*(.+?)(?:\s+Age Group:|\s+Purpose of Meeting|\s+Event Details:|$)/i);
-  const ageGroupMatch = blockText.match(/Age Group:\s*(.+?)(?:\s+Program Type:|\s+Event Details:|\s+Registration|$)/i);
-  const detailsMatch = blockText.match(/Event Details:\s*(.+)$/i);
-
+  const branchMatch = blockText.match(/(?:Library Branch|Location):\s*(.+?)(?:\s+Room:|\s+Age Group:|\s+Program Type:|\s+Event Details:|$)/i);
+  const roomMatch = blockText.match(/Room:\s*(.+?)(?:\s+Age Group:|\s+Purpose of Meeting|\s+Program Type:|\s+Event Details:|$)/i);
+  const ageGroupMatch = blockText.match(/Age Group:\s*(.+?)(?:\s+Program Type:|\s+Event Details:|\s+Registration|\s+Location:|\s+Room:|$)/i);
+  const detailsMatch = blockText.match(/Event Details:\s*(.+?)(?:\s+Disclaimer\(?s?\)?|$)/i);
+  title = decodeHtmlEntities(title).trim();
   return {
-    title: decodeHtmlEntities(title).trim(),
+    title,
     eventDate,
-    startLabel,
-    endLabel,
+    startLabel: startLabel.replace(/\s+/g, ""),
+    endLabel: endLabel.replace(/\s+/g, ""),
+    branch: branchMatch ? decodeHtmlEntities(branchMatch[1]).trim() : null,
     room: roomMatch ? decodeHtmlEntities(roomMatch[1]).trim() : null,
     ageGroup: ageGroupMatch ? ageGroupMatch[1].trim() : null,
     details: detailsMatch ? truncateAtBoundary(decodeHtmlEntities(detailsMatch[1]).trim(), 400) : null,
     notSponsored: LYONS_NOT_SPONSORED_RE.test(blockText),
+    cancelled: /^CANCELL?ED\b/i.test(title),
     href
   };
 }
 
-async function fetchAndScanLyonsLibrary() {
-  const needsReview = [];
-  const res = await fetch(LYONS_LIBRARY_LIST_URL, {
-    headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
-  });
-  if (!res.ok) throw new Error(`Lyons library list fetch failed: ${res.status}`);
-  const html = await res.text();
+// Flat text with each /event/ link marked as [[LM:/event/slug]] so cards
+// can be matched to their link by position, wherever the link sits.
+function libraryMarketMarkedText(html) {
   const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+  const marked = noScript.replace(/<a\b[^>]*?href="(?:https?:\/\/[^"\/]+)?(\/event\/[\w-]+)\/?"[^>]*>/gi, " [[LM:$1]] ");
+  return decodeHtmlEntities(stripTags(marked.replace(/>/g, "> "))).replace(/\s+/g, " ").trim();
+}
 
-  // Each event card links to its own /event/<slug> detail page -- the href
-  // is used purely to build a human-facing source_url, NOT fetched (see
-  // robots.txt note above). Split the page into per-event chunks using
-  // each href as a boundary, then parse the plain-text version of each
-  // chunk. This vendor commonly renders two DOM copies of the same event
-  // (compact card + expanded detail) back-to-back -- dedup below keeps
-  // only one candidate per title+date+time.
-  const hrefPositions = [];
+// Splits a page into cards two ways and keeps whichever parses:
+// at date headers ("Oct 13 2026 Tue", Lyons/Westminster) or at title links
+// (Broomfield, whose date line follows the title). A card's link is the
+// first marker inside it, else the last one before it.
+function libraryMarketCards(text) {
+  const links = [];
   let m;
-  const hrefOnlyRe = /href="(\/event\/[\w-]+)"/gi;
-  while ((m = hrefOnlyRe.exec(noScript)) !== null) {
-    hrefPositions.push({ href: m[1], index: m.index });
-  }
+  LM_LINK_RE.lastIndex = 0;
+  while ((m = LM_LINK_RE.exec(text)) !== null) links.push({ href: m[1], index: m.index });
+  const linkFor = (start, end) => {
+    const inside = links.find((l) => l.index >= start && l.index < end);
+    if (inside) return inside.href;
+    const before = links.filter((l) => l.index < start).pop();
+    return before ? before.href : null;
+  };
+  const clean = (t) => t.replace(LM_LINK_RE, " ").replace(/\s+/g, " ").trim();
+  const cards = [];
+  const headers = [];
+  LM_HEADER_RE.lastIndex = 0;
+  while ((m = LM_HEADER_RE.exec(text)) !== null) headers.push(m.index);
+  const timeRe = new RegExp(LM_TIME, "i");
+  headers.forEach((start, i) => {
+    const end = i + 1 < headers.length ? headers[i + 1] : start + 3000;
+    // A link counts as this card's only if it comes before the card's time
+    // (i.e. on the title). One near the end belongs to the next card's
+    // image, so fall back to the last link before the header.
+    const t = timeRe.exec(text.slice(start, end));
+    const titleEnd = t ? start + t.index : start + 300;
+    cards.push({ text: clean(text.slice(start, end)), href: linkFor(start, titleEnd) });
+  });
+  links.forEach((l, i) => {
+    const end = i + 1 < links.length ? links[i + 1].index : l.index + 3000;
+    cards.push({ text: clean(text.slice(l.index, end)), href: l.href });
+  });
+  return cards;
+}
 
+// Returns { blocks, sample }. sample = start of the first page's text, used
+// in the "found 0" error so a broken parser can be fixed from real markup.
+async function fetchLibraryMarketBlocks(listUrl, { maxPages = 4 } = {}) {
+  const blocks = [];
   const seen = new Set();
-  for (let i = 0; i < hrefPositions.length; i++) {
-    const start = hrefPositions[i].index;
-    const end = i + 1 < hrefPositions.length ? hrefPositions[i + 1].index : start + 3000;
-    const chunkText = decodeHtmlEntities(stripTags(noScript.slice(start, end))).replace(/\s+/g, " ").trim();
+  let sample = null;
+  for (let page = 0; page < maxPages; page++) {
+    const url = page === 0 ? listUrl : `${listUrl}${listUrl.includes("?") ? "&" : "?"}page=${page}`;
+    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+    if (!res.ok) {
+      if (page === 0) throw new Error(`${listUrl} fetch failed: ${res.status}`);
+      break;
+    }
+    const text = libraryMarketMarkedText(await res.text());
+    if (page === 0) sample = text.replace(LM_LINK_RE, " ").slice(0, 1500);
+    let added = 0;
+    for (const card of libraryMarketCards(text)) {
+      if (!card.href) continue;
+      const parsed = parseLibraryMarketBlock(card.text, card.href);
+      if (!parsed) continue;
+      // The vendor can render a compact and an expanded copy of one event.
+      const sig = `${parsed.title}|${parsed.eventDate}|${parsed.startLabel}`;
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      blocks.push(parsed);
+      added++;
+    }
+    if (added === 0) break;
+  }
+  return { blocks, sample };
+}
 
-    const parsed = parseLyonsEventBlock(chunkText, hrefPositions[i].href);
-    if (!parsed || parsed.notSponsored) continue;
+function dayOfWeekFor(eventDate) {
+  return ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date(`${eventDate}T12:00:00Z`).getUTCDay()];
+}
 
-    const dedupSig = `${parsed.title}|${parsed.eventDate}|${parsed.startLabel}`;
-    if (seen.has(dedupSig)) continue;
-    seen.add(dedupSig);
+// Thrown when an automatic source parses nothing, so it shows as an error
+// in admin (with what the page actually said) instead of "ok, 0 found".
+function zeroFoundError(label, sample) {
+  return new Error(`${label}: found 0 events -- the site may have changed. Page text: ${(sample || "(none)").slice(0, 900)}`);
+}
 
+async function fetchAndScanLyonsLibrary() {
+  const { blocks, sample } = await fetchLibraryMarketBlocks(LYONS_LIBRARY_LIST_URL);
+  if (blocks.length === 0) throw zeroFoundError("Lyons library", sample);
+  const needsReview = [];
+  for (const parsed of blocks) {
+    if (parsed.notSponsored) continue;
     const ages = ageFromLyonsGroups(parsed.ageGroup);
     if (!ages) continue; // adults-only or unrecognized -- not Playroute content
-
-    const startTime = to24HourFromLabel(parsed.startLabel);
-    const d = new Date(`${parsed.eventDate}T12:00:00Z`);
-    const dayOfWeek = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d.getUTCDay()];
-
     needsReview.push({
       title: parsed.title,
       source: `Lyons Regional Library${parsed.room ? " — " + parsed.room : ""}`,
@@ -995,8 +941,8 @@ async function fetchAndScanLyonsLibrary() {
       cost: "free",
       age_min: ages.age_min,
       age_max: ages.age_max,
-      day_of_week: dayOfWeek,
-      start_time: startTime,
+      day_of_week: dayOfWeekFor(parsed.eventDate),
+      start_time: to24HourFromLabel(parsed.startLabel),
       display_time: `${parsed.startLabel}–${parsed.endLabel}`,
       recurrence: "dated",
       event_date: parsed.eventDate,
@@ -1029,9 +975,6 @@ SOURCE_RUNNERS.lyons_library = async () => fetchAndScanLyonsLibrary();
 // HTML tag structure wasn't directly inspectable, so the regexes below are
 // built from visible page text patterns. confidence is set to 'review' on
 // purpose -- treat every queued item as needing a look before approving.
-const JCPL_ARVADA_LIST_URL = "https://jeffcolibrary.bibliocommons.com/v2/events?locations=ARBA";
-const JCPL_ARVADA_MAX_PAGES = 6; // ~6 weeks of coverage at this branch's pace
-
 function ageFromJcplAudiences(audienceTags) {
   const tags = audienceTags.map((t) => t.toLowerCase());
   let min = null, max = null;
@@ -1046,95 +989,79 @@ function ageFromJcplAudiences(audienceTags) {
   return { age_min: min, age_max: max };
 }
 
-function parseJcplEventChunk(rawChunk, permalink) {
-  // decodeHtmlEntities(stripTags()) first, so this all operates on plain
-  // text regardless of the real surrounding markup -- same technique used
-  // for the Lyons scraper above, chosen because the exact tag structure
-  // here is unverified.
-  const text = decodeHtmlEntities(stripTags(rawChunk)).replace(/\s+/g, " ").trim();
-  if (/\bCanceled\b/.test(rawChunk.slice(0, 200))) return null; // skip canceled sessions
-
-  const dateMatch = text.match(/on ([A-Z][a-z]+ \d{1,2}, \d{4}), (\d{1,2}:\d{2}[ap]m)[\u2013-]+(\d{1,2}:\d{2}[ap]m)/);
-  if (!dateMatch) return null;
-  const [, dateStr, startLabel, endLabel] = dateMatch;
-  const d = new Date(dateStr + " 12:00:00");
-  if (isNaN(d.getTime())) return null;
-  const eventDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const dayOfWeek = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d.getDay()];
-
-  // Title comes from the actual anchor text on the real HTML (most
-  // reliable single signal available), not the plain-text chunk -- the
-  // first /v2/events/<id> anchor in a chunk is consistently the title link
-  // in every real page fetched during development.
-  const titleMatch = rawChunk.match(/<a[^>]+href="\/v2\/events\/[0-9a-f]+"[^>]*>([^<]+)<\/a>/i);
-  if (!titleMatch) return null;
-  const title = decodeHtmlEntities(titleMatch[1]).trim();
-
-  const locationMatch = text.match(/Event location:\s*([A-Za-z0-9 .'&()-]{3,60})/);
-  const location = locationMatch ? locationMatch[1].trim() : "Arvada Balsam Temporary Library";
-
-  // Audience tags appear as repeated "<Name>Find more events in: <Name>"
-  // link text -- capture the leading name before that literal suffix.
-  const audienceTags = [];
-  const audRe = /([A-Za-z ]+?)Find more events in: \1/g;
-  let m;
-  while ((m = audRe.exec(text)) !== null) audienceTags.push(m[1].trim());
-  const ages = ageFromJcplAudiences(audienceTags);
-  if (!ages) return null; // not a baby/toddler/preschooler event -- skip
-
-  // Description: between the location label and the first audience-tag
-  // sentence, truncated -- BiblioCommons itself truncates with "…" mid
-  // sentence in the source text, which is fine for a pending-review note.
-  const descMatch = text.match(/Event location:\s*[A-Za-z0-9 .'&()-]{3,60}\s*(.+?)(?:Story TimesFind|BabiesFind|ToddlersFind|PreschoolersFind|$)/);
-  const description = descMatch ? descMatch[1].trim().slice(0, 350) : null;
-
-  return {
-    title,
-    source: `Jefferson County Public Library \u2014 ${location}`,
-    city: "Arvada",
-    category: "library",
-    cost: "free",
-    age_min: ages.age_min,
-    age_max: ages.age_max,
-    day_of_week: dayOfWeek,
-    start_time: to24HourFromLabel(startLabel),
-    display_time: `${startLabel}\u2013${endLabel}`,
-    recurrence: "dated",
-    event_date: eventDate,
-    note: description,
-    source_url: `https://jeffcolibrary.bibliocommons.com${permalink}`
-  };
-}
+// 2026-10: the events page is drawn by JavaScript, so the HTML scrape found
+// nothing after July. Read BiblioCommons' own data API instead. It ignores
+// location/date filters (every branch, odd order, ~40 pages at 100 each), so
+// page through it 6 at a time and keep Arvada Balsam (ARBA) events for
+// babies/toddlers/preschoolers in the next 30 days.
+const JCPL_GATEWAY = "https://gateway.bibliocommons.com/v2/libraries/jeffcolibrary/events?locale=en-US&limit=100";
+const JCPL_BRANCH = "ARBA";
+const JCPL_HORIZON_DAYS = 30;
+const JCPL_MAX_PAGES = 80;
 
 async function fetchAndScanJcplArvada() {
-  const needsReview = [];
-  const seen = new Set();
-  for (let page = 1; page <= JCPL_ARVADA_MAX_PAGES; page++) {
-    const url = page === 1 ? JCPL_ARVADA_LIST_URL : `${JCPL_ARVADA_LIST_URL}&page=${page}`;
-    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
-    if (!res.ok) break;
-    const html = await res.text();
-    const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
-
-    const hrefPositions = [];
-    let m;
-    const hrefOnlyRe = /href="(\/v2\/events\/[0-9a-f]+)"/gi;
-    while ((m = hrefOnlyRe.exec(noScript)) !== null) hrefPositions.push({ href: m[1], index: m.index });
-    if (hrefPositions.length === 0) break; // no more events -- stop paging
-
-    for (let i = 0; i < hrefPositions.length; i++) {
-      const start = hrefPositions[i].index;
-      const end = i + 1 < hrefPositions.length ? hrefPositions[i + 1].index : start + 3000;
-      const chunkHtml = noScript.slice(start, end);
-      const parsed = parseJcplEventChunk(chunkHtml, hrefPositions[i].href);
-      if (!parsed) continue;
-      const dedupSig = `${parsed.title}|${parsed.event_date}|${parsed.start_time}`;
-      if (seen.has(dedupSig)) continue;
-      seen.add(dedupSig);
-      needsReview.push(parsed);
-    }
+  const today = toMountainDateStr(new Date());
+  const horizon = toMountainDateStr(new Date(Date.now() + JCPL_HORIZON_DAYS * 864e5));
+  const headers = { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)", Accept: "application/json" };
+  const getPage = async (page) => {
+    const res = await fetch(`${JCPL_GATEWAY}&page=${page}`, { headers, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`JCPL events API failed: ${res.status}`);
+    return res.json();
+  };
+  const first = await getPage(1);
+  const pages = Math.min((first.events && first.events.pagination && first.events.pagination.pages) || 1, JCPL_MAX_PAGES);
+  const audienceNames = {};
+  const all = [];
+  let branchEvents = 0;
+  const take = (data) => {
+    const ents = data.entities || {};
+    for (const [id, a] of Object.entries(ents.eventAudiences || {})) audienceNames[id] = a.name;
+    for (const ev of Object.values(ents.events || {})) all.push(ev);
+  };
+  take(first);
+  const rest = Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2);
+  for (let i = 0; i < rest.length; i += 6) {
+    const batch = await Promise.all(rest.slice(i, i + 6).map((p) => getPage(p).catch(() => null)));
+    batch.forEach((d) => d && take(d));
   }
-  return needsReview;
+
+  const seen = new Set();
+  const out = [];
+  for (const ev of all) {
+    const def = ev.definition || {};
+    if (def.branchLocationId !== JCPL_BRANCH) continue;
+    branchEvents++;
+    if (def.isCancelled) continue;
+    const date = String(def.start || "").slice(0, 10);
+    if (!date || date < today || date > horizon) continue;
+    const ages = ageFromJcplAudiences((def.audienceIds || []).map((id) => audienceNames[id] || ""));
+    if (!ages) continue; // not a baby/toddler/preschooler event
+    const startHHMM = String(def.start).slice(11, 16);
+    const endHHMM = String(def.end || "").slice(11, 16);
+    const label = (hhmm) => { let [h, m] = hhmm.split(":").map(Number); const ap = h >= 12 ? "pm" : "am"; h = h % 12 || 12; return `${h}:${String(m).padStart(2, "0")}${ap}`; };
+    const key = `${def.title}|${date}|${startHHMM}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const desc = decodeHtmlEntities(stripTags(String(def.description || "").replace(/>/g, "> "))).replace(/\s+/g, " ").trim();
+    out.push({
+      title: decodeHtmlEntities(def.title).trim(),
+      source: "Jefferson County Public Library — Arvada Balsam Temporary Library",
+      city: "Arvada",
+      category: "library",
+      cost: "free",
+      age_min: ages.age_min,
+      age_max: ages.age_max,
+      day_of_week: dayOfWeekFor(date),
+      start_time: startHHMM,
+      display_time: endHHMM ? `${label(startHHMM)}–${label(endHHMM)}` : label(startHHMM),
+      recurrence: "dated",
+      event_date: date,
+      note: desc ? truncateAtBoundary(desc, 350) : null,
+      source_url: `https://jeffcolibrary.bibliocommons.com/v2/events/${ev.id}`
+    });
+  }
+  if (branchEvents === 0) throw zeroFoundError(`JCPL (no ${JCPL_BRANCH} events in ${all.length} read)`, JSON.stringify(Object.keys(first.entities || {})));
+  return out;
 }
 
 SOURCE_RUNNERS.jcpl_arvada = async () => fetchAndScanJcplArvada();
@@ -1721,41 +1648,6 @@ function stripHtmlToText(html) {
     .replace(/<[^>]+>/g, " ")
     .replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
-}
-
-// Distinct from stripHtmlToText above on purpose: that one collapses ALL
-// whitespace to single spaces, which is fine for a single-line text-match
-// (My Nature Lab's schedule confirmation) but destroys the line structure
-// a block-based field-label parser (Broomfield below) depends on. This
-// inserts a newline at common block-level tag boundaries BEFORE stripping
-// tags, so labeled fields ("Location:", "Room:", etc.) stay on their own
-// lines the way they visually render.
-//
-// HONEST CAVEAT, 2026-09: this was built and tested against Broomfield's
-// page content as returned by Claude's own web-fetch tool, which already
-// does its own HTML-to-readable-text conversion -- not against the raw
-// HTML a live Cloudflare Worker's plain fetch() actually receives, which
-// could use different block tags than assumed here (div/p/li/tr/br/
-// headings) and produce different line breaks. The regex in
-// parseBroomfieldEventList was verified against the real *shape* of the
-// content (confirmed field order, confirmed badge-line variability,
-// confirmed date format) but this specific conversion step is a
-// best-effort match, not something confirmed against genuine raw source.
-// Check the pending-review queue after the first live run -- if this
-// produces zero candidates despite Broomfield's calendar clearly having
-// kids' events, this line-break assumption is the first thing to revisit.
-function htmlToLineText(html) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|tr|td|th|section|article|header|footer|h[1-6])>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
-    .replace(/[ \t]+/g, " ")           // collapse horizontal whitespace only
-    .replace(/\n[ \t]+/g, "\n")        // trim leading spaces on each line
-    .replace(/\n{3,}/g, "\n\n")        // cap consecutive blank lines
     .trim();
 }
 
@@ -3840,45 +3732,104 @@ SOURCE_RUNNERS.erie_ical = async () => {
   const lib = ICAL_LIBRARIES.find((l) => l.city === "Erie");
   return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
 };
-// Mead Public Library (High Plains Library District, opens 2026-10-03).
-// No Mead-specific campus id could be confirmed for the LibCal export, so
-// this pulls the district-wide HPLD feed (one request) and keeps only
-// events whose LOCATION is the Mead branch. Same kid filter as Erie.
-const MEAD_LIBRARY_ICAL_URL = "https://highplains.libcal.com/ical_subscribe.php?src=p&cid=8181";
-SOURCE_RUNNERS.mead_library = async () =>
-  fetchAndNormalizeICalFeed(MEAD_LIBRARY_ICAL_URL, "Mead", { locationRe: /Mead Public Library/i });
+// Mead Public Library (High Plains Library District, opened 2026-10-03).
+// 2026-10: the district iCal feed puts the ROOM ("Mead Meeting Room") in
+// LOCATION, so filtering it on "Mead Public Library" never matched and the
+// source queued nothing. LibCal's JSON list has a real `campus` field and
+// audience tags, so use that: the district calendar (cid 8181), 100 per
+// page, keep campus "Mead Public Library".
+const MEAD_LIBCAL_LIST = "https://highplains.libcal.com/ajax/calendar/list?c=8181&date=0000-00-00&perpage=100&audience=&cats=&camps=&inc=0";
+const MEAD_HORIZON_DAYS = 45;
+const HPLD_AUDIENCE_AGES = {
+  "baby/toddler": [0, 3], "preschool": [3, 5], "elementary school": [5, 11],
+  "family": [0, 12], "all ages": [0, 12]
+};
+
+function hpldAges(audiences) {
+  let min = null, max = null;
+  for (const a of audiences || []) {
+    const r = HPLD_AUDIENCE_AGES[String(a.name || "").toLowerCase()];
+    if (!r) continue;
+    if (min === null || r[0] < min) min = r[0];
+    if (max === null || r[1] > max) max = r[1];
+  }
+  return min === null ? null : { age_min: min, age_max: max };
+}
+
+function libcalClock(dt) {
+  const m = /\s(\d{2}):(\d{2})/.exec(dt || "");
+  if (!m) return null;
+  let h = +m[1];
+  const ap = h >= 12 ? "pm" : "am";
+  h = h % 12 || 12;
+  return { hhmm: `${m[1]}:${m[2]}`, label: `${h}:${m[2]}${ap}` };
+}
+
+async function fetchMeadLibrary() {
+  const today = toMountainDateStr(new Date());
+  const horizon = toMountainDateStr(new Date(Date.now() + MEAD_HORIZON_DAYS * 864e5));
+  const out = [];
+  let seenMead = 0, sample = null;
+  for (let page = 1; page <= 5; page++) {
+    const res = await fetch(`${MEAD_LIBCAL_LIST}&page=${page}`, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)", Accept: "application/json" } });
+    if (!res.ok) throw new Error(`HPLD LibCal list fetch failed: ${res.status}`);
+    const body = await res.text();
+    let data;
+    try { data = JSON.parse(body); } catch (e) { throw new Error(`HPLD LibCal list wasn't JSON: ${body.slice(0, 300)}`); }
+    const items = data.results || [];
+    if (page === 1) sample = JSON.stringify(items.slice(0, 2)).slice(0, 900);
+    for (const ev of items) {
+      if (ev.campus !== "Mead Public Library") continue;
+      seenMead++;
+      const date = String(ev.startdt || "").slice(0, 10);
+      if (!date || date < today || date > horizon) continue;
+      if (ev.all_day || /cancel/i.test(ev.title || "")) continue;
+      const ages = hpldAges(ev.audiences);
+      if (!ages) continue; // adults / teens only
+      const start = libcalClock(ev.startdt), end = libcalClock(ev.enddt);
+      if (!start) continue;
+      const desc = decodeHtmlEntities(stripTags(ev.shortdesc || ev.description || "")).replace(/\s+/g, " ").trim();
+      out.push({
+        title: decodeHtmlEntities(ev.title).trim(),
+        source: `Mead Public Library${ev.location ? " — " + decodeHtmlEntities(ev.location) : ""}`,
+        city: "Mead",
+        category: "library",
+        cost: "free",
+        age_min: ages.age_min,
+        age_max: ages.age_max,
+        day_of_week: dayOfWeekFor(date),
+        start_time: start.hhmm,
+        display_time: end ? `${start.label} – ${end.label}` : start.label,
+        recurrence: "dated",
+        event_date: date,
+        note: desc ? truncateAtBoundary(desc, 300) : null,
+        source_url: ev.url || "https://highplains.libcal.com/calendar?cid=8181"
+      });
+    }
+    if (items.length < 100) break; // last page
+  }
+  // No Mead events at all (any audience) means the feed or campus name
+  // changed; Mead events that are all adult-only just means a quiet week.
+  if (seenMead === 0) throw zeroFoundError("Mead library (no events with campus \"Mead Public Library\")", sample);
+  return out;
+}
+SOURCE_RUNNERS.mead_library = async () => fetchMeadLibrary();
 SOURCE_RUNNERS.lafayette_ical = async () => {
   const lib = ICAL_LIBRARIES.find((l) => l.city === "Lafayette");
   return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });
 };
 
 // ---------------------------------------------------------------------
-// Broomfield Library (compass.broomfield.org) -- text-block scraper.
-// Built 2026-09 to replace fully manual entry (this source previously had
-// no runner at all -- mode: "manual" in scrape_sources, meaning every
-// Broomfield Library event in the app had been hand-typed from
-// screenshots/PDF exports the owner sent).
-//
-// Uses /events/list, NOT /events/upcoming -- upcoming's rendered text has
-// no per-event date at all (confirmed by direct comparison), while list's
-// date line ("Monday, December 23, 2024 at 4:00pm - 5:00pm") is present,
-// unambiguous, and used here as the primary anchor for each event block,
-// rather than relying on fragile fixed line-position parsing. Verified
-// against real fetched page text, including the awkward cases: a variable
-// number of interstitial badge lines (Full/Required/Registration Open/
-// Cancelled/Seats Remaining) between the location line and the next
-// labeled field, and a cancelled event ("CANCELLED - " title prefix,
-// filtered out below).
-//
-// CAVEAT, 2026-09: the real content fetched to build and test this
-// parser returned December 2024 dates despite being fetched today --
-// the same stale-cache behavior hit earlier with other sources through
-// this same fetch tool. The regex/parsing logic itself is verified
-// against real markup; live freshness from the actual Cloudflare Worker
-// (a plain server-side fetch, not subject to this tool's caching) could
-// not be independently confirmed the same way. Check the pending-review
-// queue after the first real run.
-const BROOMFIELD_LIST_URL = "https://compass.broomfield.org/events/list";
+// Broomfield Library (compass.broomfield.org). Uses /events/list, not
+// /events/upcoming: upcoming's text has no per-event date. The list's date
+// line reads "Monday, December 23, 2024 at 4:00pm - 5:00pm". (Pages seen
+// through Claude's fetch tool showed late-2024 dates -- a stale cache on
+// that tool's side, not what the Worker receives.)
+// 2026-10: the original parser split the page into lines with a custom
+// HTML-to-lines converter and a rigid field-order regex; it never matched
+// the Worker's real fetch and the source queued nothing. Now parsed by the
+// shared Library Market parser (flat text per /event/ link, both date
+// formats), which is what works for Lyons.
 
 // Broomfield's own audience taxonomy, mapped to age ranges. Events tagged
 // with NONE of these (i.e. only Adults/55+/Teens) are filtered out
@@ -3899,75 +3850,39 @@ function ageFromBroomfieldGroups(groupText) {
   return min === null ? null : { age_min: min, age_max: max };
 }
 
-function parseBroomfieldEventList(html) {
-  const text = htmlToLineText(html);
-  // \n+ (not a literal \n) throughout on purpose -- genuine block-tag HTML
-  // (div/p per field) produces variable blank-line spacing depending on
-  // markup density, confirmed by testing against constructed raw HTML with
-  // real tags, not just pre-cleaned text. A rigid single-\n version passed
-  // against clean text samples but silently matched zero events against
-  // realistic tag-derived spacing -- exactly the failure mode most likely
-  // to go unnoticed (source "runs fine," finds nothing, nobody investigates
-  // an empty diff).
-  const BADGE = "(?:Full|Required|Virtual Event|Cancelled|Registration Open|Registration Required|Seats Remaining: \\d+)\\n+";
-  const BLOCK_RE = new RegExp(
-    "([^\\n]{2,90})\\n+" +
-    "(\\w+), (\\w+ \\d{1,2}, \\d{4}) at (\\d{1,2}:\\d{2}[ap]m) - (\\d{1,2}:\\d{2}[ap]m)\\n+" +
-    "[^\\n]+\\n+" + // "Room at Location" descriptive line -- not used, the labeled fields below are more reliable
-    "Program Type:\\n+[^\\n]+\\n+" +
-    "Age Group:\\n+[^\\n]+\\n+" +
-    "(?:" + BADGE + ")*" +
-    "Location:\\s*([^\\n]+)\\n+" +
-    "Room:\\s*([^\\n]+)\\n+" +
-    "Age Group:\\s*([^\\n]+)\\n+" +
-    "Program Type:\\s*([^\\n]+)\\n+" +
-    "(?:" + BADGE + ")*" +
-    "Event Details:\\n+" +
-    "([\\s\\S]*?)\\n+" +
-    "Disclaimer",
-    "g"
-  );
-
-  const results = [];
-  let m;
-  while ((m = BLOCK_RE.exec(text)) !== null) {
-    const [, rawTitle, weekday, dateStr, startRaw, endRaw, location, room, ageGroupText, programType, details] = m;
-    const title = decodeHtmlEntities(rawTitle).trim();
-    if (/^CANCELLED\b/i.test(title)) continue; // explicitly cancelled -- don't queue a candidate for it
-
-    const ages = ageFromBroomfieldGroups(ageGroupText);
-    if (!ages) continue; // Adults/55+/Teens-only -- out of scope for this app
-
-    const d = new Date(`${dateStr} ${startRaw}`);
-    if (isNaN(d.getTime()) || d < new Date(Date.now() - 864e5)) continue; // unparseable or already past
-
-    results.push({
-      title,
-      source: `Broomfield Library & Auditorium${room && room !== location ? ` — ${room}` : ""}`,
-      city: "Broomfield",
-      category: "library",
-      cost: "free", // every event seen on this source across both list/upcoming views was free; revisit if a paid one ever surfaces
-      age_min: ages.age_min,
-      age_max: ages.age_max,
-      day_of_week: weekday,
-      event_date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
-      start_time: to24HourFromLabel(startRaw),
-      display_time: `${startRaw} – ${endRaw}`,
-      recurrence: "dated", // each occurrence scraped individually; a recurring program naturally re-appears each future date it's listed
-      note: truncateAtBoundary(decodeHtmlEntities(details).trim(), 400) || `Program Type: ${programType.trim()}.`,
-      source_url: BROOMFIELD_LIST_URL,
-      verified: 1
-    });
-  }
-  return results;
-}
+const BROOMFIELD_LIST_URL = "https://compass.broomfield.org/events/list";
 
 async function fetchAndScanBroomfieldLibrary() {
-  const res = await fetch(BROOMFIELD_LIST_URL, {
-    headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
-  });
-  if (!res.ok) throw new Error(`Broomfield Library fetch failed: ${res.status}`);
-  return parseBroomfieldEventList(await res.text());
+  const { blocks, sample } = await fetchLibraryMarketBlocks(BROOMFIELD_LIST_URL, { maxPages: 6 });
+  if (blocks.length === 0) throw zeroFoundError("Broomfield library", sample);
+  const today = toMountainDateStr(new Date());
+  const needsReview = [];
+  for (const parsed of blocks) {
+    if (parsed.cancelled || parsed.eventDate < today) continue;
+    const ages = ageFromBroomfieldGroups(parsed.ageGroup);
+    if (!ages) continue; // Adults/55+/Teens-only -- out of scope for this app
+    // Same source strings as the hand-entered weekly rows.
+    const source = /eisenhower/i.test(parsed.room || "")
+      ? "Broomfield Library — Eisenhower Meeting Room"
+      : "Broomfield Library & Auditorium";
+    needsReview.push({
+      title: parsed.title,
+      source,
+      city: "Broomfield",
+      category: "library",
+      cost: "free",
+      age_min: ages.age_min,
+      age_max: ages.age_max,
+      day_of_week: dayOfWeekFor(parsed.eventDate),
+      start_time: to24HourFromLabel(parsed.startLabel),
+      display_time: `${parsed.startLabel} – ${parsed.endLabel}`,
+      recurrence: "dated",
+      event_date: parsed.eventDate,
+      note: parsed.details || null,
+      source_url: `https://compass.broomfield.org${parsed.href}`
+    });
+  }
+  return needsReview;
 }
 SOURCE_RUNNERS.broomfield_library = async () => fetchAndScanBroomfieldLibrary();
 

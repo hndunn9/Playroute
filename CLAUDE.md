@@ -98,6 +98,18 @@ keep reads proportional to traffic:
   from date link to date link, so it looks the title up by the event's own URL (`longmontTitlesByPath`)
   and cuts the description at the next day header ("Fri 16"). Taking the first title inside the chunk
   gave every card the NEXT event's title (Aug–Oct 2026; mislabeled history was cleared).
+- **Rebuilt 2026-10** (each had sat at "ok, 0 found" for weeks):
+  - Lyons, Westminster, Broomfield: shared Library Market parser (`fetchLibraryMarketBlocks`). Cards are split
+    at date headers ("Oct 13 2026 Tue") or at title links (Broomfield's "Tuesday, October 13, 2026 at …" line
+    follows the title); each card's link is matched by position. Westminster/Broomfield map to the same
+    source strings as the hand-entered weekly rows so duplicates are caught.
+  - Mead: LibCal JSON (`/ajax/calendar/list?c=8181`), filtered on `campus` = "Mead Public Library". The iCal
+    LOCATION holds the room, not the branch.
+  - WOW: site moved to WordPress (`/events/<slug>/<date>/`). Tries The Events Calendar REST API, falls back to
+    calendar-page links + each event page. "Included with Museum Admission" = paid.
+  - JCPL Arvada: BiblioCommons gateway API (ignores filters, so it pages everything 6 at a time and keeps ARBA).
+  - Parsers throw `zeroFoundError` (with page text) when they parse nothing. `runSources` also marks any auto
+    source that finds 0 two runs in a row as an error.
 - **JS-rendered platforms** (WellnessLiving, Arketa, iClassPro) can't be read with
   `fetch()`. WellnessLiving's API needs a per-request signature, so use the
   Browser Run binding (`env.BROWSER`) via `browserRun()` and read the

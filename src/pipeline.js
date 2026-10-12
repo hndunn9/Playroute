@@ -630,6 +630,12 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
     }
     try {
       const candidates = await runner(env, source);
+      // An automatic source that finds nothing two runs in a row is almost
+      // always a broken scraper, not a quiet calendar (five sources sat at
+      // "ok, 0 found" for weeks in 2026). Surface it as an error in admin.
+      if (candidates.length === 0 && source.last_found === 0) {
+        throw new Error("Found 0 events two runs in a row -- the site or its layout may have changed.");
+      }
       const reviewCtx = (await loadReviewContext(env, source)) || {};
       Object.assign(reviewCtx, await preloadIngestIndex(env, source, candidates));
       let queued = 0, skippedDuplicate = 0, blockedInvalid = 0, warnings = 0, skippedByReview = 0, filtered = 0, alreadySeen = 0;
