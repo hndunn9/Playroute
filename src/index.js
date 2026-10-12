@@ -1259,9 +1259,10 @@ const LONGMONT_SEARCH_CONCURRENCY = 6;
 const LONGMONT_SEARCH_PAGE_TIMEOUT_MS = 10000;
 const LONGMONT_SEARCH_BUDGET_MS = 45000;
 // Search results run ~6 months out. Weekly runs pick up later dates as they
-// come into range, so only queue the next 90 days (the review queue groups
-// a series into one card either way).
-const LONGMONT_SEARCH_HORIZON_DAYS = 90;
+// come into range, so only queue the next 30 days. Results are in date
+// order, so once a page is all past the window, paging stops (it adds
+// nothing new), which keeps the run short.
+const LONGMONT_SEARCH_HORIZON_DAYS = 30;
 
 function longmontSearchUrl(term, page) {
   const q = `?tribe-bar-search=${encodeURIComponent(term)}&tribe_eventcategory%5B0%5D=${LONGMONT_LIBRARY_CATEGORY_ID}`;

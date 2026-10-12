@@ -90,7 +90,7 @@ keep reads proportional to traffic:
   Queued items carry `season_start`/`season_end`, and approval copies them to `events`.
 - **Longmont library** (`longmont_library`): after the plain category list (6 pages ≈ a week, the
   calendar is busy), it runs kid keyword searches (`LONGMONT_LIBRARY_KID_SEARCHES`: storytime, baby,
-  toddler, craft, yoga…) on the library category, queuing the next 90 days. Searches run 6 at a
+  toddler, craft, yoga…) on the library category, queuing the next 30 days. Searches run 6 at a
   time with a 10 s page timeout and 45 s total budget; run one after another they timed out the admin Run. Every-other-week series
   (Craft/Yoga Storytime) were being missed before. Add a term there if a kids series goes missing.
   The museum runner doesn't use searches.
