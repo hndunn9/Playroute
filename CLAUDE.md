@@ -143,8 +143,9 @@ keep reads proportional to traffic:
   Keep every card's element ids when moving things: the loaders write into them.
 - Weekly stats are week-to-date (the visitor-hash salt rotates Monday midnight MT),
   so `/api/stats` compares against the same elapsed time last week, not the full week.
-- Recommended-section A/B test: 50/50 random split. Read at **80% confidence**
-  (p < 0.20) with 80% power. These are directional reads.
+- "Recommended for you" was removed in Oct 2026 (A/B test didn't show enough value). Admin >
+  Experiments keeps its final results. Future A/B tests: read at **80% confidence** (p < 0.20)
+  with 80% power. These are directional reads.
 - **Newsletter day picks** follow `src/digest-rules.js`: same title + venue on one day merges into one
   entry with all times; one entry per venue per day; each series once per week (later days become
   "also Thu, Fri"); a venue on at most 3 days. Thin days (<3 picks) relax the last two. Run
