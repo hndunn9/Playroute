@@ -1237,44 +1237,89 @@ function parseLongmontEventChunk(rawChunk, permalink, eventDate, opts = {}) {
   };
 }
 
+// Kid-program searches run against the library category after the main
+// scan (2026-10). The library calendar is busy enough (Kids Café alone,
+// adult programs, closures) that LONGMONT_LIBRARY_MAX_PAGES of the plain
+// list only reaches about a week ahead, so every-other-week series like
+// Craft Storytime and Yoga Storytime kept landing past the last page and
+// were never seen. A keyword search returns just that series months out.
+// Library only -- the museum runner doesn't pass searchTerms.
+const LONGMONT_LIBRARY_CATEGORY_ID = 1251;
+const LONGMONT_LIBRARY_KID_SEARCHES = [
+  "storytime", "story time", "baby", "babies", "toddler", "preschool",
+  "kids", "family", "tots", "lego", "stay and play", "music and movement",
+  "sensory", "craft", "yoga", "dance", "puppet", "bilingual"
+];
+const LONGMONT_SEARCH_MAX_PAGES = 3;
+// Search results run ~6 months out. Weekly runs pick up later dates as they
+// come into range, so only queue the next 90 days (the review queue groups
+// a series into one card either way).
+const LONGMONT_SEARCH_HORIZON_DAYS = 90;
+
+function longmontSearchUrl(term, page) {
+  const q = `?tribe-bar-search=${encodeURIComponent(term)}&tribe_eventcategory%5B0%5D=${LONGMONT_LIBRARY_CATEGORY_ID}`;
+  return page === 1
+    ? `https://longmontcolorado.gov/events/list/${q}`
+    : `https://longmontcolorado.gov/events/list/page/${page}/${q}`;
+}
+
+// Parses one page of The Events Calendar list view (category list or
+// search results -- same markup). Returns how many dated links it saw.
+function scanLongmontListHtml(html, opts, seen, out, maxDate = null) {
+  const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+  const hrefPositions = [];
+  let m;
+  const hrefOnlyRe = /href="(https?:\/\/longmontcolorado\.gov\/event\/[\w-]+\/(\d{4}-\d{2}-\d{2})\/)"/gi;
+  while ((m = hrefOnlyRe.exec(noScript)) !== null) {
+    const path = m[1].replace(/^https?:\/\/longmontcolorado\.gov/, "");
+    hrefPositions.push({ href: path, eventDate: m[2], index: m.index });
+  }
+  for (let i = 0; i < hrefPositions.length; i++) {
+    if (maxDate && hrefPositions[i].eventDate > maxDate) continue;
+    const start = hrefPositions[i].index;
+    const end = i + 1 < hrefPositions.length ? hrefPositions[i + 1].index : start + 2500;
+    const parsed = parseLongmontEventChunk(noScript.slice(start, end), hrefPositions[i].href, hrefPositions[i].eventDate, opts);
+    if (!parsed) continue;
+    const dedupSig = `${parsed.title}|${parsed.event_date}|${parsed.start_time}`;
+    if (seen.has(dedupSig)) continue;
+    seen.add(dedupSig);
+    out.push(parsed);
+  }
+  return hrefPositions.length;
+}
+
 // Same The Events Calendar list layout for every city category, so the
 // museum (2026-10-01: 209 hand-entered events) reuses this parser.
 async function fetchAndScanLongmontLibrary(opts = {}) {
   const listUrl = opts.listUrl || LONGMONT_LIBRARY_LIST_URL;
+  const headers = { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" };
   const needsReview = [];
   const seen = new Set();
   for (let page = 1; page <= LONGMONT_LIBRARY_MAX_PAGES; page++) {
     const url = page === 1 ? listUrl : `${listUrl}page/${page}/`;
-    const res = await fetch(url, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
+    const res = await fetch(url, { headers });
     if (!res.ok) break;
-    const html = await res.text();
-    const noScript = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+    if (scanLongmontListHtml(await res.text(), opts, seen, needsReview) === 0) break;
+  }
 
-    const hrefPositions = [];
-    let m;
-    const hrefOnlyRe = /href="(https?:\/\/longmontcolorado\.gov\/event\/[\w-]+\/(\d{4}-\d{2}-\d{2})\/)"/gi;
-    while ((m = hrefOnlyRe.exec(noScript)) !== null) {
-      const path = m[1].replace(/^https?:\/\/longmontcolorado\.gov/, "");
-      hrefPositions.push({ href: path, eventDate: m[2], index: m.index });
-    }
-    if (hrefPositions.length === 0) break;
-
-    for (let i = 0; i < hrefPositions.length; i++) {
-      const start = hrefPositions[i].index;
-      const end = i + 1 < hrefPositions.length ? hrefPositions[i + 1].index : start + 2500;
-      const chunkHtml = noScript.slice(start, end);
-      const parsed = parseLongmontEventChunk(chunkHtml, hrefPositions[i].href, hrefPositions[i].eventDate, opts);
-      if (!parsed) continue;
-      const dedupSig = `${parsed.title}|${parsed.event_date}|${parsed.start_time}`;
-      if (seen.has(dedupSig)) continue;
-      seen.add(dedupSig);
-      needsReview.push(parsed);
+  if (opts.searchTerms && opts.searchTerms.length) {
+    const maxDate = toMountainDateStr(new Date(Date.now() + LONGMONT_SEARCH_HORIZON_DAYS * 864e5));
+    for (const term of opts.searchTerms) {
+      for (let page = 1; page <= LONGMONT_SEARCH_MAX_PAGES; page++) {
+        let res;
+        try { res = await fetch(longmontSearchUrl(term, page), { headers }); } catch (e) { break; }
+        if (!res.ok) break;
+        const before = needsReview.length;
+        const links = scanLongmontListHtml(await res.text(), opts, seen, needsReview, maxDate);
+        // Stop paging when a page is empty or adds nothing new.
+        if (links === 0 || needsReview.length === before) break;
+      }
     }
   }
   return needsReview;
 }
 
-SOURCE_RUNNERS.longmont_library = async () => fetchAndScanLongmontLibrary();
+SOURCE_RUNNERS.longmont_library = async () => fetchAndScanLongmontLibrary({ searchTerms: LONGMONT_LIBRARY_KID_SEARCHES });
 SOURCE_RUNNERS.longmont_museum = async () => fetchAndScanLongmontLibrary({
   listUrl: "https://longmontcolorado.gov/events/category/museum/",
   category: "museum",

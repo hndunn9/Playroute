@@ -88,6 +88,11 @@ keep reads proportional to traffic:
   Jackrabbit studios (`/jr3.0/Openings/OpeningsJson?OrgID=`, add to `JACKRABBIT_STUDIOS`; keep
   free/drop-in classes only), Communico libraries (`api.communico.co/v2/<org>/events/export.xml`).
   Queued items carry `season_start`/`season_end`, and approval copies them to `events`.
+- **Longmont library** (`longmont_library`): after the plain category list (6 pages ≈ a week, the
+  calendar is busy), it runs kid keyword searches (`LONGMONT_LIBRARY_KID_SEARCHES`: storytime, baby,
+  toddler, craft, yoga…) on the library category, queuing the next 90 days. Every-other-week series
+  (Craft/Yoga Storytime) were being missed before. Add a term there if a kids series goes missing.
+  The museum runner doesn't use searches.
 - **JS-rendered platforms** (WellnessLiving, Arketa, iClassPro) can't be read with
   `fetch()`. WellnessLiving's API needs a per-request signature, so use the
   Browser Run binding (`env.BROWSER`) via `browserRun()` and read the
