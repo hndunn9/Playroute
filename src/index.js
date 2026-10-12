@@ -1250,7 +1250,14 @@ const LONGMONT_LIBRARY_KID_SEARCHES = [
   "kids", "family", "tots", "lego", "stay and play", "music and movement",
   "sensory", "craft", "yoga", "dance", "puppet", "bilingual"
 ];
-const LONGMONT_SEARCH_MAX_PAGES = 3;
+const LONGMONT_SEARCH_MAX_PAGES = 2;
+// Searches run 6 at a time (Workers' open-connection limit) with a per-page
+// timeout and an overall budget. Run one after another, ~50 page loads on
+// the city's slow site took long enough that the admin "Run" request was
+// cut off before the run finished or was recorded (2026-10-12).
+const LONGMONT_SEARCH_CONCURRENCY = 6;
+const LONGMONT_SEARCH_PAGE_TIMEOUT_MS = 10000;
+const LONGMONT_SEARCH_BUDGET_MS = 45000;
 // Search results run ~6 months out. Weekly runs pick up later dates as they
 // come into range, so only queue the next 90 days (the review queue groups
 // a series into one card either way).
@@ -1304,17 +1311,28 @@ async function fetchAndScanLongmontLibrary(opts = {}) {
 
   if (opts.searchTerms && opts.searchTerms.length) {
     const maxDate = toMountainDateStr(new Date(Date.now() + LONGMONT_SEARCH_HORIZON_DAYS * 864e5));
-    for (const term of opts.searchTerms) {
+    const deadline = Date.now() + LONGMONT_SEARCH_BUDGET_MS;
+    const queue = [...opts.searchTerms];
+    const searchTerm = async (term) => {
       for (let page = 1; page <= LONGMONT_SEARCH_MAX_PAGES; page++) {
-        let res;
-        try { res = await fetch(longmontSearchUrl(term, page), { headers }); } catch (e) { break; }
-        if (!res.ok) break;
+        if (Date.now() > deadline) return;
+        let html;
+        try {
+          const res = await fetch(longmontSearchUrl(term, page), { headers, signal: AbortSignal.timeout(LONGMONT_SEARCH_PAGE_TIMEOUT_MS) });
+          if (!res.ok) return;
+          html = await res.text();
+        } catch (e) { return; }
+        // Parsing is synchronous, so the shared seen/out arrays stay consistent.
         const before = needsReview.length;
-        const links = scanLongmontListHtml(await res.text(), opts, seen, needsReview, maxDate);
+        const links = scanLongmontListHtml(html, opts, seen, needsReview, maxDate);
         // Stop paging when a page is empty or adds nothing new.
-        if (links === 0 || needsReview.length === before) break;
+        if (links === 0 || needsReview.length === before) return;
       }
-    }
+    };
+    const worker = async () => {
+      while (queue.length && Date.now() <= deadline) await searchTerm(queue.shift());
+    };
+    await Promise.all(Array.from({ length: LONGMONT_SEARCH_CONCURRENCY }, worker));
   }
   return needsReview;
 }
