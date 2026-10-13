@@ -303,6 +303,30 @@
   .pk-form label span{font-weight:400;color:#7A6650;}
   .pk-form input,.pk-form textarea{width:100%;padding:10px;border:1px solid #C8BA9E;border-radius:8px;font-size:14px;font-family:inherit;background:#fff;}
   .pk-form textarea{min-height:70px;resize:vertical;}
+  /* Newsletter draft review */
+  .nl-pill{display:inline-block;font-size:12px;font-weight:700;border-radius:99px;padding:3px 10px;}
+  .nl-pill.draft{background:#FBF1E0;color:#7A4E10;} .nl-pill.approved{background:#E4F2E9;color:#2D7A4F;}
+  .nl-pill.skipped,.nl-pill.none{background:var(--soft);color:var(--mute);} .nl-pill.sent{background:#E6EEF2;color:var(--brand-ink);}
+  .nl-pill.sending{background:#E6EEF2;color:var(--brand-ink);}
+  .nl-notes{background:var(--ground);border-radius:10px;padding:12px 14px;margin:10px 0 14px;font-size:14px;line-height:1.5;}
+  .nl-notes p{margin:0 0 6px;color:var(--ink);} .nl-notes p:last-child{margin:0;}
+  .nl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:18px;align-items:start;}
+  .nl-field{display:block;margin-bottom:12px;}
+  .nl-field[hidden]{display:none;}
+  .nl-field span{display:block;font-size:12.5px;font-weight:600;color:var(--mute);margin-bottom:4px;}
+  .nl-field input,.nl-field textarea,.nl-field select{width:100%;box-sizing:border-box;padding:10px;border:1px solid #CFCBC1;border-radius:8px;font-size:15px;font-family:inherit;background:#fff;color:var(--ink);}
+  .nl-field textarea{min-height:64px;resize:vertical;}
+  .nl-pick{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--soft);font-size:14px;cursor:pointer;}
+  .nl-pick:first-of-type{border-top:0;} .nl-pick input{width:20px;height:20px;margin-top:1px;flex-shrink:0;}
+  .nl-pick small{display:block;color:var(--mute);font-size:12.5px;}
+  .nl-tabs{display:flex;gap:6px;margin-bottom:8px;}
+  .nl-frame{width:100%;height:760px;border:1px solid var(--line);border-radius:10px;background:#E9E3D6;}
+  .nl-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;}
+  .nl-actions .grow{flex:1 1 160px;}
+  .nl-table-wrap{overflow-x:auto;}
+  .nl-table{width:100%;border-collapse:collapse;font-size:13px;min-width:560px;}
+  .nl-table th,.nl-table td{text-align:left;padding:8px 6px;border-top:1px solid var(--soft);vertical-align:top;}
+  .nl-table th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);border-top:0;}
   .pk-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 10px;}
   @media (max-width:520px){.pk-grid{grid-template-columns:1fr;}}
   .pk-flag{font-size:12.5px;padding:10px;border-radius:8px;background:#F6EBCB;color:#5C4A12;margin-bottom:12px;line-height:1.5;}
@@ -491,21 +515,31 @@
   </section>
 
   <section class="view" id="view-newsletter" data-view="newsletter">
-    <header class="view-head"><div><p class="eyebrow">Newsletter</p><h1>Weekly digest</h1></div></header>
+    <header class="view-head"><div><p class="eyebrow">Newsletter</p><h1>Weekly digest</h1></div>
+      <div class="head-actions"><button class="ghost btn-sm" onclick="nlLoad()">Refresh</button></div></header>
+    <p class="fine" style="margin:-8px 0 16px;">The agent drafts Sunday's issue every Thursday. It only sends if you approve it before Sunday 11am; otherwise that week is skipped.</p>
+
+    <div class="card" id="nlDraftCard"><div class="fine">Loading this week's draft…</div></div>
+
+    <div class="card">
+      <div class="card-head"><h2>Recent issues</h2><span class="fine">Click rate = unique clicks ÷ delivered. Opens are inflated by Apple Mail, so judge clicks.</span></div>
+      <div id="nlHistory" class="nl-table-wrap"><div class="fine">Loading…</div></div>
+    </div>
+
     <div class="cols">
   <div class="card">
-    <h2>✉️ Send test digest</h2>
-    <p>Sends this week's real digest content to one address only. Doesn't touch your subscriber list.</p>
+    <h2>✉️ Send test</h2>
+    <p>Sends the upcoming draft to one address only (both versions when there's a test). Doesn't touch your subscriber list.</p>
     <input type="email" id="testEmail" placeholder="you@example.com" value="hndunn9@gmail.com">
-    <button onclick="sendTestDigest()">Send test digest</button>
+    <button onclick="sendTestDigest()">Send test</button>
     <div class="result" id="digestResult"></div>
   </div>
   <div class="danger-zone">
     <div class="section-label">⚠️ Irreversible</div>
     <div class="card">
-      <h2>⚠️ Send real digest to all subscribers</h2>
-      <p>This actually emails everyone currently subscribed. Use with care.</p>
-      <button style="background:#7a2a2a;" onclick="sendRealDigest()">Send real digest to everyone</button>
+      <h2>⚠️ Send the approved draft now</h2>
+      <p>Emails every active subscriber right away instead of waiting for Sunday. Only works once the draft is approved.</p>
+      <button style="background:#7a2a2a;" onclick="sendRealDigest()">Send approved draft now</button>
       <div class="result" id="realDigestResult"></div>
     </div>
   </div>
@@ -681,9 +715,180 @@ function sendTestDigest(){
 }
 
 function sendRealDigest(){
-  const typed = prompt('This emails EVERY active subscriber right now. Type SEND to confirm.');
+  const typed = prompt('This emails the approved draft to EVERY active subscriber right now. Type SEND to confirm.');
   if((typed||'').trim().toUpperCase() !== 'SEND') return;
-  runAction('/api/digest-now', 'realDigestResult');
+  runAction('/api/digest-now', 'realDigestResult').then(nlLoad);
+}
+
+// ── Newsletter draft review ──
+let nlData = null;
+let nlVariant = 'A';
+const NL_STATUS = {
+  draft: 'Needs your approval', approved: 'Approved · sends Sunday 11am',
+  sending: 'Sending…', sent: 'Sent', skipped: 'Skipped'
+};
+function nlEsc(v){ return escapeHtml(v == null ? '' : String(v)); }
+function nlPct(v){ return v == null ? '–' : v + '%'; }
+
+async function nlLoad(){
+  const card = document.getElementById('nlDraftCard');
+  try{
+    const res = await fetch('/api/admin/newsletter');
+    nlData = await res.json();
+    if(!res.ok) throw new Error(nlData.error || res.status);
+  }catch(err){
+    card.innerHTML = '<div class="fine">Couldn\'t load the draft: ' + nlEsc(err.message) + '</div>';
+    return;
+  }
+  nlRenderDraft();
+  nlRenderHistory();
+}
+
+function nlRenderDraft(){
+  const card = document.getElementById('nlDraftCard');
+  const d = nlData.upcoming;
+  if(!d){
+    card.innerHTML = `<div class="card-head"><h2>${nlEsc(nlData.send_label)} issue</h2><span class="nl-pill none">No draft yet</span></div>
+      <p>The agent drafts on Thursdays. You can have it draft now.</p>
+      <div class="nl-actions"><button onclick="nlAction('generate')">Draft it now</button></div>
+      <div class="result" id="nlResult"></div>`;
+    return;
+  }
+  const editable = d.status === 'draft' || d.status === 'approved';
+  const variable = d.test_plan ? d.test_plan.variable : 'none';
+  if(!d.test_plan) nlVariant = 'A';
+  const dis = editable ? '' : ' disabled';
+  const picks = (nlData.candidates || []).map(ev => `
+    <label class="nl-pick"><input type="checkbox" name="nlSpot" value="${ev.id}"${(d.spotlight_ids||[]).map(Number).includes(Number(ev.id)) ? ' checked' : ''}${dis} onchange="nlLimitPicks(this)">
+      <span>${nlEsc(ev.title)}${ev.badge ? ` <b style="font-size:11px;color:#9E2C5C;">${nlEsc(ev.badge.toUpperCase())}</b>` : ''}
+      <small>${nlEsc(ev.day)} · ${nlEsc(ev.time)} · ${nlEsc(ev.venue ? ev.venue + ', ' : '')}${nlEsc(ev.city)}</small></span></label>`).join('');
+  const testLine = d.test_plan
+    ? `<p><b>This week's test:</b> ${d.test_plan.variable === 'subject' ? 'subject line' : 'intro line'}. ${nlEsc(d.test_plan.hypothesis)}</p>`
+    : '<p><b>No A/B test this week.</b></p>';
+  const actions = !editable ? '' : `
+    <div class="nl-actions">
+      ${d.status === 'draft'
+        ? '<button class="grow" onclick="nlApprove()">Approve for Sunday</button>'
+        : '<button class="ghost grow" onclick="nlAction(\'unapprove\')">Unapprove</button>'}
+      <button class="secondary" onclick="nlSave()">Save changes</button>
+      <button class="ghost" onclick="nlRedraft()">Redraft</button>
+      <button class="danger" onclick="nlSkip()">Skip this week</button>
+    </div>`;
+  card.innerHTML = `
+    <div class="card-head"><h2>${nlEsc(nlData.send_label)} issue</h2><span class="nl-pill ${nlEsc(d.status)}">${nlEsc(NL_STATUS[d.status] || d.status)}</span></div>
+    <div class="nl-notes">
+      ${d.last_issue_readout ? `<p><b>Last issue:</b> ${nlEsc(d.last_issue_readout)}</p>` : ''}
+      ${testLine}
+      ${d.rationale ? `<p><b>Why:</b> ${nlEsc(d.rationale)}</p>` : ''}
+      <p class="fine">Drafted by ${nlEsc(d.generated_by === 'rules' ? 'the rules (agent unavailable)' : 'the agent')}. Editing an approved issue sends it back to draft.</p>
+    </div>
+    <div class="nl-grid">
+      <div>
+        <label class="nl-field"><span>A/B test</span>
+          <select id="nlTestVar"${dis} onchange="nlToggleB()">
+            <option value="none"${variable === 'none' ? ' selected' : ''}>No test</option>
+            <option value="subject"${variable === 'subject' ? ' selected' : ''}>Subject line</option>
+            <option value="intro"${variable === 'intro' ? ' selected' : ''}>Intro line</option>
+          </select></label>
+        <label class="nl-field"><span>Subject${variable !== 'none' ? ' (A)' : ''}</span><input id="nlSubjectA" maxlength="80" value="${nlEsc(d.subject_a)}"${dis}></label>
+        <label class="nl-field" id="nlSubjectBWrap"${variable === 'subject' ? '' : ' hidden'}><span>Subject (B)</span><input id="nlSubjectB" maxlength="80" value="${nlEsc(d.subject_b)}"${dis}></label>
+        <label class="nl-field"><span>Intro${variable === 'intro' ? ' (A)' : ''}</span><textarea id="nlIntroA" maxlength="240"${dis}>${nlEsc(d.intro)}</textarea></label>
+        <label class="nl-field" id="nlIntroBWrap"${variable === 'intro' ? '' : ' hidden'}><span>Intro (B)</span><textarea id="nlIntroB" maxlength="240"${dis}>${nlEsc(d.intro_b)}</textarea></label>
+        <div class="nl-field"><span>Don't miss these (pick up to 3)</span>${picks || '<div class="fine">No events this week.</div>'}</div>
+      </div>
+      <div>
+        <div class="nl-tabs">
+          <button class="btn-sm ${nlVariant === 'A' ? '' : 'ghost'}" onclick="nlShowVariant('A')">Version A</button>
+          ${d.test_plan ? `<button class="btn-sm ${nlVariant === 'B' ? '' : 'ghost'}" onclick="nlShowVariant('B')">Version B</button>` : ''}
+        </div>
+        <iframe class="nl-frame" id="nlFrame" title="Newsletter preview" src="/api/admin/newsletter/preview?id=${d.id}&variant=${nlVariant}&t=${Date.now()}"></iframe>
+        <p class="fine">Preview shows events as of the send morning. The list is rebuilt fresh when it sends, so cancelled events drop out.</p>
+      </div>
+    </div>
+    ${actions}
+    <div class="result" id="nlResult"></div>`;
+}
+
+function nlToggleB(){
+  const v = document.getElementById('nlTestVar').value;
+  document.getElementById('nlSubjectBWrap').hidden = v !== 'subject';
+  document.getElementById('nlIntroBWrap').hidden = v !== 'intro';
+}
+function nlLimitPicks(box){
+  const checked = document.querySelectorAll('input[name=nlSpot]:checked');
+  if(checked.length > 3){ box.checked = false; alert('Pick up to 3.'); }
+}
+function nlShowVariant(v){
+  nlVariant = v;
+  nlRenderDraft();
+}
+function nlFormBody(){
+  return {
+    id: nlData.upcoming.id,
+    test_variable: document.getElementById('nlTestVar').value,
+    subject_a: document.getElementById('nlSubjectA').value,
+    subject_b: document.getElementById('nlSubjectB').value,
+    intro: document.getElementById('nlIntroA').value,
+    intro_b: document.getElementById('nlIntroB').value,
+    spotlight_ids: [...document.querySelectorAll('input[name=nlSpot]:checked')].map(b => Number(b.value))
+  };
+}
+function nlDirty(){
+  const d = nlData.upcoming, f = nlFormBody();
+  const same = (a, b) => (a || '').trim() === (b || '').trim();
+  const ids = JSON.stringify((d.spotlight_ids || []).map(Number));
+  return !same(f.subject_a, d.subject_a) || !same(f.subject_b, d.subject_b) || !same(f.intro, d.intro) || !same(f.intro_b, d.intro_b)
+    || f.test_variable !== (d.test_plan ? d.test_plan.variable : 'none') || JSON.stringify(f.spotlight_ids) !== ids;
+}
+async function nlPost(path, body){
+  const out = document.getElementById('nlResult');
+  if(out){ out.className = 'result show loading'; out.textContent = 'Working…'; }
+  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if(!res.ok){
+    if(out){ out.className = 'result show err'; out.textContent = data.error || ('Error ' + res.status); }
+    throw new Error(data.error || res.status);
+  }
+  return data;
+}
+async function nlSave(){
+  try{ await nlPost('/api/admin/newsletter/draft', nlFormBody()); await nlLoad(); }catch(e){}
+}
+async function nlApprove(){
+  try{
+    // Save any edits first, so what you approve is what you see.
+    if(nlDirty()) await nlPost('/api/admin/newsletter/draft', nlFormBody());
+    await nlPost('/api/admin/newsletter/action', { id: nlData.upcoming.id, action: 'approve' });
+    await nlLoad();
+  }catch(e){}
+}
+async function nlAction(action){
+  try{ await nlPost('/api/admin/newsletter/action', { id: nlData.upcoming ? nlData.upcoming.id : null, action }); await nlLoad(); }catch(e){}
+}
+function nlRedraft(){
+  if(!confirm('Have the agent write a fresh draft? Your edits to this one will be replaced.')) return;
+  nlAction('regenerate');
+}
+function nlSkip(){
+  if(!confirm('Skip this week? Nothing will be sent on Sunday.')) return;
+  nlAction('skip');
+}
+
+function nlRenderHistory(){
+  const el = document.getElementById('nlHistory');
+  const rows = nlData.history || [];
+  const skipped = nlData.skipped || [];
+  if(!rows.length && !skipped.length){ el.innerHTML = '<div class="fine">No issues sent through the approval flow yet.</div>'; return; }
+  const body = rows.map(h => {
+    const v = (h.results && h.results.variants) || {};
+    const t = h.results && h.results.test;
+    const line = (k, label) => v[k] ? `<div>${label}${nlEsc(v[k].delivered || v[k].sent)} delivered · ${nlPct(v[k].open_rate)} open · <b>${nlPct(v[k].click_rate)} click</b></div>` : '';
+    const subj = h.subject_b ? `<div>A: ${nlEsc(h.subject_a)}</div><div>B: ${nlEsc(h.subject_b)}</div>` : nlEsc(h.subject_a);
+    return `<tr><td>${nlEsc(h.send_date)}</td><td>${subj}</td><td>${line('A', v.B ? 'A: ' : '')}${line('B', 'B: ')}${!v.A && !v.B ? '<span class="fine">No webhook data yet</span>' : ''}</td>
+      <td>${h.test_plan ? nlEsc(h.test_plan.variable) + (t ? `<div class="fine">${nlEsc(t.verdict)}${t.p != null ? ' · p=' + nlEsc(t.p) : ''}</div>` : '') : '<span class="fine">none</span>'}</td></tr>`;
+  }).join('');
+  const sk = skipped.map(s => `<tr><td>${nlEsc(s.send_date)}</td><td colspan="3"><span class="nl-pill skipped">Skipped</span></td></tr>`).join('');
+  el.innerHTML = `<table class="nl-table"><thead><tr><th>Sunday</th><th>Subject</th><th>Results</th><th>Test</th></tr></thead><tbody>${body}${sk}</tbody></table>`;
 }
 
 function pctChange(curr, prev){
@@ -1470,7 +1675,8 @@ const VIEW_LOADERS = {
   growth: () => { loadStats(); loadEngagement(); loadReferralsTrend(); loadSearchInsights(); loadWauTrend(); },
   experiments: () => loadRecExperiment(),
   content: () => loadPlaygroundsForPhoto(),
-  partners: () => pkLoad()
+  partners: () => pkLoad(),
+  newsletter: () => nlLoad()
 };
 function showView(v){
   if(!VIEWS.includes(v)) v = 'today';

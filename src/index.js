@@ -6,6 +6,7 @@ import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SO
 // without this re-export, would be invisible to the platform.
 export { EventDiscoveryWorkflow } from "./discovery-workflow.js";
 import { cleanSourceForDisplay, selectDigestDays } from "./digest-rules.js";
+import { nextSendDate, mtDateStr, isThursdayMT, variantFor, summarizeResults, validateAgentDraft, buildAgentPrompt, parseAgentReply, verifyResendWebhook, RESEND_EVENT_TYPES } from "./newsletter-agent.js";
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
 const TZ = "America/Denver";
@@ -4098,7 +4099,9 @@ function escapeHtml(s) {
 
 // cleanSourceForDisplay lives in digest-rules.js (shared with the eval).
 
-async function getWeekAheadEvents(env) {
+// asOf: build the week as it will look on the send day (the Thursday draft
+// previews Sunday's issue). Defaults to now for the Sunday send itself.
+async function getWeekAheadEvents(env, asOf = new Date()) {
   const { results } = await env.DB.prepare("SELECT * FROM events").all();
   const now = new Date();
   // The digest should cover "starting tomorrow," not "starting right now" --
@@ -4108,7 +4111,7 @@ async function getWeekAheadEvents(env) {
   // implies what's still ahead. Computed the same DST-aware way as the
   // other mountainMidnight* helpers in this file (see below) rather than a
   // naive +24h, which would drift across the spring/fall DST transitions.
-  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  const mtNow = new Date(asOf.toLocaleString("en-US", { timeZone: TZ }));
   mtNow.setDate(mtNow.getDate() + 1);
   const windowStart = toMountainDate(mtCalendarDateStr(mtNow), 0, 0);
   const cutoff = new Date(windowStart.getTime() + DIGEST_MAX_DAYS * 864e5);
@@ -4264,7 +4267,7 @@ async function getWeekAheadEvents(env) {
     `SELECT COUNT(*) AS n FROM link_clicks WHERE category NOT IN ('playground','hike','support')`
   ).first();
 
-  return { byDay, spotlight, eventsDiscovered: statRow?.n || 0, weekLabel };
+  return { byDay, spotlight, firstAppearances, eventsDiscovered: statRow?.n || 0, weekLabel };
 }
 
 // Category icons for the email -- same shapes as the app's blaze icon set
@@ -4320,8 +4323,12 @@ const DIGEST_KOFI_HTML = `
       </tr></table>
     </td></tr></table>`;
 
-function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, picks = []) {
+const DIGEST_DEFAULT_INTRO = "A quick look at what's coming up for the kids this week.";
+
+// opts.intro: the approved intro line from the weekly draft (falls back to the default).
+function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, picks = [], opts = {}) {
   const days = [...byDay.entries()];
+  const intro = opts.intro || DIGEST_DEFAULT_INTRO;
   const ctaButton = (label) => `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:14px 0;">
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td align="center" bgcolor="#A8623A" style="border-radius:10px;">
@@ -4403,7 +4410,7 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, pic
 
     <div style="padding:20px 24px 4px;">
       <h1 style="font-family:Georgia,serif;font-size:19px;color:#1F2A22;margin:0 0 6px;">This week on Playroute</h1>
-      <p style="font-size:13px;color:#6B7268;margin:0;line-height:1.5;">A quick look at what's coming up for the kids this week.</p>
+      <p style="font-size:13px;color:#6B7268;margin:0;line-height:1.5;">${escapeHtml(intro)}</p>
     </div>
     <div style="padding:0 24px;">${ctaButton("Open Playroute")}</div>
 
@@ -4434,8 +4441,8 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, pic
   </div>`;
 }
 
-function buildDigestText(byDay, spotlight, eventsDiscovered, picks = []) {
-  const lines = ["This week on Playroute", "", `Open Playroute: ${DIGEST_SITE_URL}/?src=newsletter`, ""];
+function buildDigestText(byDay, spotlight, eventsDiscovered, picks = [], opts = {}) {
+  const lines = ["This week on Playroute", opts.intro || DIGEST_DEFAULT_INTRO, "", `Open Playroute: ${DIGEST_SITE_URL}/?src=newsletter`, ""];
   lines.push(...digestPicksText(picks));
 
   if (spotlight.length) {
@@ -4499,6 +4506,10 @@ async function sendDigestEmail(env, toEmail, html, text, subject = "This week on
   if (!res.ok) {
     throw new Error(`Resend send failed for ${toEmail}: ${res.status} ${await res.text()}`);
   }
+  // Resend's email id -- the newsletter records it so open/click webhooks
+  // can be matched back to the issue and variant. Other callers ignore it.
+  const data = await res.json().catch(() => ({}));
+  return data.id || null;
 }
 
 // ---------------------------------------------------------------------
@@ -4813,46 +4824,424 @@ async function runWeeklyEngagementDigest(env) {
   return { events_scored: scored.n, trending_count: trending.n, popular_count: popular.n };
 }
 
-async function runWeeklyDigest(env, testEmail = null) {
-  const { byDay, spotlight, eventsDiscovered, weekLabel } = await getWeekAheadEvents(env);
-  // Flagged: no subscriber sees a Pick until PICKS_PUBLIC is true.
-  const picks = PICKS_PUBLIC ? await getLivePicks(env) : [];
-  const subject = `This week on Playroute \uD83C\uDF33 \u2014 ${weekLabel}`;
+// ---------------------------------------------------------------------
+// WEEKLY NEWSLETTER: agent draft -> owner approval -> send (2026-10)
+// Thursday (daily cron, 09:00 UTC) the agent drafts Sunday's issue: subject,
+// intro, "Don't miss these" picks and one A/B test, using past results.
+// The owner reviews it in admin > Newsletter. Sunday's cron sends ONLY an
+// approved draft; with no approval that week is skipped. Resend webhooks
+// (/api/resend-webhook) record delivered/opened/clicked per variant.
+// Pure helpers + tests: src/newsletter-agent.js, src/newsletter-agent-eval.js.
+// Event selection is unchanged (digest-rules.js); the agent only writes the
+// editorial layer, and the event list is rebuilt fresh at send time.
+// ---------------------------------------------------------------------
+const NEWSLETTER_MODEL = "claude-sonnet-5-5";
+const ADMIN_NEWSLETTER_URL = `${DIGEST_SITE_URL}/admin.html#newsletter`;
 
-  if (testEmail) {
-    // Test mode: send to exactly one address, real content, without
-    // touching the subscribers table or anyone's real subscription at all.
-    // Subject includes a time marker (not just the week range) since test
-    // sends commonly get repeated several times within the same hour while
-    // debugging -- without it, Gmail would still thread those together.
-    const timeMarker = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
-    const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(testEmail)}`;
-    const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, picks);
-    const text = buildDigestText(byDay, spotlight, eventsDiscovered, picks);
-    try {
-      await sendDigestEmail(env, testEmail, html, text, `[TEST ${timeMarker}] ${subject}`);
-      return [{ email: testEmail, status: "sent (test)" }];
-    } catch (err) {
-      return [{ email: testEmail, status: "error", error: String(err) }];
-    }
+function newsletterDefaultSubject(weekLabel) {
+  return `This week on Playroute 🌳 — ${weekLabel}`;
+}
+// Build the week as it will look on the send morning.
+function newsletterAsOf(sendDate) {
+  return toMountainDate(sendDate, 11, 0);
+}
+function newsletterScore(ev) {
+  let s = ev.badge === "trending" ? 3 : ev.badge === "popular" ? 2 : ev.is_special ? 1 : 0;
+  if (ev.is_new) s += 0.5;
+  return s;
+}
+// Candidates the agent (and the admin checkboxes) can pick spotlight events
+// from: each series' first appearance this week, most notable first.
+function newsletterCandidates(week, limit = 25) {
+  return [...week.firstAppearances]
+    .sort((a, b) => (newsletterScore(b) - newsletterScore(a)) || (a.occurrence - b.occurrence))
+    .slice(0, limit);
+}
+function newsletterCompactEvent(ev) {
+  const out = { id: ev.id, title: ev.title, day: ev.occurrence_label, time: ev.display_time, city: ev.city, venue: cleanSourceForDisplay(ev.source), category: ev.category, cost: ev.cost };
+  if (ev.badge) out.badge = ev.badge;
+  if (ev.is_special) out.one_off = true;
+  if (ev.is_new) out.new = true;
+  return out;
+}
+// Approved spotlight ids -> this week's events. An approved pick that has
+// since dropped out (cancelled, deleted) is replaced by the rules' pick.
+function applyNewsletterSpotlight(week, ids) {
+  if (!Array.isArray(ids) || !ids.length) return week.spotlight;
+  const pool = new Map(week.firstAppearances.map((ev) => [Number(ev.id), ev]));
+  const chosen = [];
+  for (const id of ids) {
+    const ev = pool.get(Number(id));
+    if (ev && !chosen.includes(ev)) chosen.push(ev);
+  }
+  let missing = Math.min(ids.length, 3) - chosen.length;
+  for (const ev of week.spotlight) {
+    if (missing <= 0) break;
+    if (chosen.some((c) => c.id === ev.id)) continue;
+    chosen.push(ev);
+    missing--;
+  }
+  return chosen.length ? chosen : week.spotlight;
+}
+function decodeNewsletterDraft(d) {
+  if (!d) return null;
+  const parse = (s, fallback) => { try { return s ? JSON.parse(s) : fallback; } catch { return fallback; } };
+  return { ...d, spotlight_ids: parse(d.spotlight_ids, []), test_plan: parse(d.test_plan, null), send_summary: parse(d.send_summary, null) };
+}
+function formatSendDate(sendDate) {
+  return toMountainDate(sendDate, 12, 0).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: TZ });
+}
+
+async function getUpcomingNewsletterDraft(env) {
+  return await env.DB.prepare(
+    `SELECT * FROM newsletter_drafts WHERE send_date >= ? AND status IN ('draft','approved','sending') ORDER BY send_date LIMIT 1`
+  ).bind(mtDateStr()).first();
+}
+
+// The next Sunday that still needs an issue. Skips a Sunday that was
+// already sent early (admin "send now") or skipped.
+async function firstOpenSendDate(env) {
+  let d = nextSendDate();
+  for (let i = 0; i < 6; i++) {
+    const row = await env.DB.prepare(`SELECT status FROM newsletter_drafts WHERE send_date = ?`).bind(d).first();
+    if (!row || ["draft", "approved"].includes(row.status)) return d;
+    const t = new Date(`${d}T12:00:00Z`);
+    t.setUTCDate(t.getUTCDate() + 7);
+    d = t.toISOString().slice(0, 10);
+  }
+  return d;
+}
+
+// Sent issues with per-variant results, newest first.
+async function getNewsletterHistory(env, limit = 8) {
+  const { results: drafts } = await env.DB.prepare(
+    `SELECT * FROM newsletter_drafts WHERE status = 'sent' ORDER BY send_date DESC LIMIT ?`
+  ).bind(limit).all();
+  if (!drafts.length) return [];
+  const ids = drafts.map((d) => d.id);
+  const { results: rows } = await env.DB.prepare(
+    `SELECT s.draft_id, s.variant, COUNT(DISTINCT s.resend_id) AS sent,
+       COUNT(DISTINCT CASE WHEN e.type = 'delivered' THEN s.resend_id END) AS delivered,
+       COUNT(DISTINCT CASE WHEN e.type = 'opened' THEN s.resend_id END) AS opened,
+       COUNT(DISTINCT CASE WHEN e.type = 'clicked' THEN s.resend_id END) AS clicked
+     FROM newsletter_sends s LEFT JOIN newsletter_events e ON e.resend_id = s.resend_id
+     WHERE s.draft_id IN (${ids.map(() => "?").join(",")})
+     GROUP BY s.draft_id, s.variant`
+  ).bind(...ids).all();
+  return drafts.map((d) => ({
+    ...decodeNewsletterDraft(d),
+    results: summarizeResults(rows.filter((r) => r.draft_id === d.id))
+  }));
+}
+
+async function callNewsletterAgent(env, input) {
+  const { system, user } = buildAgentPrompt(input);
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: NEWSLETTER_MODEL, max_tokens: 2000, system, messages: [{ role: "user", content: user }] })
+  });
+  if (!res.ok) throw new Error(`Anthropic API error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const data = await res.json();
+  return parseAgentReply((data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n"));
+}
+
+// Drafts (or redrafts) the issue for sendDate. Never touches an issue that's
+// already approved-and-sent or skipped unless force is set by the admin.
+async function generateNewsletterDraft(env, { sendDate = null, force = false, notify = true } = {}) {
+  if (!sendDate) sendDate = await firstOpenSendDate(env);
+  const existing = await env.DB.prepare(`SELECT * FROM newsletter_drafts WHERE send_date = ?`).bind(sendDate).first();
+  if (existing && ["sent", "sending"].includes(existing.status)) return { created: false, reason: `already ${existing.status}` };
+  if (existing && !force) return { created: false, reason: "a draft already exists", draft: decodeNewsletterDraft(existing) };
+
+  const week = await getWeekAheadEvents(env, newsletterAsOf(sendDate));
+  const history = await getNewsletterHistory(env, 8);
+  const candidates = newsletterCandidates(week);
+  const defaults = {
+    candidateIds: candidates.map((ev) => ev.id),
+    defaultSpotlightIds: week.spotlight.map((ev) => ev.id),
+    defaultSubject: newsletterDefaultSubject(week.weekLabel),
+    pastSubjects: history.flatMap((h) => [h.subject_a, h.subject_b]).filter(Boolean)
+  };
+
+  let draft, generatedBy = NEWSLETTER_MODEL;
+  try {
+    if (!env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY isn't set");
+    const raw = await callNewsletterAgent(env, {
+      send_date: sendDate,
+      week_label: week.weekLabel,
+      days: [...week.byDay.entries()].map(([day, { shown, total }]) => ({ day, more_on_site: total - shown.length, events: shown.map(newsletterCompactEvent) })),
+      spotlight_candidates: candidates.map(newsletterCompactEvent),
+      default_spotlight_ids: defaults.defaultSpotlightIds,
+      history: history.map((h) => ({ send_date: h.send_date, subject_a: h.subject_a, subject_b: h.subject_b, intro: h.intro, intro_b: h.intro_b, test: h.test_plan, results: h.results }))
+    });
+    draft = validateAgentDraft(raw, defaults);
+  } catch (err) {
+    generatedBy = "rules";
+    draft = validateAgentDraft({}, defaults);
+    draft.rationale = `The agent couldn't run (${String(err.message || err).slice(0, 200)}), so this is the standard rules-only issue with no test. Approve it as is, or edit the subject and intro first.`;
   }
 
-  const { results: subs } = await env.DB.prepare(
-    "SELECT email FROM subscribers WHERE active = 1"
-  ).all();
-  const results = [];
-  for (const { email } of subs) {
-    const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}`;
-    const html = buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, picks);
-    const text = buildDigestText(byDay, spotlight, eventsDiscovered, picks);
+  await env.DB.prepare(
+    `INSERT INTO newsletter_drafts (send_date, status, subject_a, subject_b, intro, intro_b, spotlight_ids, test_plan, rationale, last_issue_readout, generated_by, updated_at)
+     VALUES (?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(send_date) DO UPDATE SET status = 'draft', subject_a = excluded.subject_a, subject_b = excluded.subject_b,
+       intro = excluded.intro, intro_b = excluded.intro_b, spotlight_ids = excluded.spotlight_ids, test_plan = excluded.test_plan,
+       rationale = excluded.rationale, last_issue_readout = excluded.last_issue_readout, generated_by = excluded.generated_by,
+       approved_at = NULL, updated_at = CURRENT_TIMESTAMP`
+  ).bind(
+    sendDate, draft.subject_a, draft.subject_b, draft.intro, draft.intro_b,
+    JSON.stringify(draft.spotlight_ids), draft.test_plan ? JSON.stringify(draft.test_plan) : null,
+    draft.rationale, draft.last_issue_readout, generatedBy
+  ).run();
+
+  if (notify && env.ADMIN_EMAIL) {
+    const testLine = draft.test_plan
+      ? `Test: ${draft.test_plan.variable === "subject" ? `subject A "${draft.subject_a}" vs B "${draft.subject_b}"` : "two intro lines"}`
+      : "No A/B test this week.";
+    const html = `<div style="max-width:520px;margin:0 auto;font-family:-apple-system,sans-serif;color:#1F2A22;">
+      <h1 style="font-size:19px;">Newsletter for ${escapeHtml(formatSendDate(sendDate))} is ready to review</h1>
+      <p style="font-size:14px;"><b>Subject:</b> ${escapeHtml(draft.subject_a)}</p>
+      <p style="font-size:14px;">${escapeHtml(testLine)}</p>
+      <p style="font-size:14px;color:#5E6658;">${escapeHtml(draft.rationale || "")}</p>
+      <p style="font-size:14px;color:#5E6658;">It only sends if you approve it before Sunday at 11am.</p>
+      <a href="${ADMIN_NEWSLETTER_URL}" style="display:inline-block;background:#245E7A;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:700;">Review the draft</a>
+    </div>`;
     try {
-      await sendDigestEmail(env, email, html, text, subject);
-      results.push({ email, status: "sent" });
+      await sendDigestEmail(env, env.ADMIN_EMAIL, html, null, `Newsletter draft for ${formatSendDate(sendDate)} is ready to review`);
+    } catch (err) { console.error("draft notify failed", err); }
+  }
+  return { created: true, send_date: sendDate, generated_by: generatedBy };
+}
+
+// Renders one variant of a draft (for the admin preview and test sends).
+async function renderNewsletterDraft(env, draft, variant = "A", { asOf, unsubscribeUrl = "#unsubscribe" } = {}) {
+  const week = await getWeekAheadEvents(env, asOf || newsletterAsOf(draft.send_date));
+  const spotlight = applyNewsletterSpotlight(week, draft.spotlight_ids);
+  const picks = PICKS_PUBLIC ? await getLivePicks(env) : [];
+  const useB = variant === "B";
+  const subject = (useB && draft.subject_b) || draft.subject_a || newsletterDefaultSubject(week.weekLabel);
+  const intro = (useB && draft.intro_b) || draft.intro || null;
+  return {
+    subject,
+    html: buildDigestHtml(week.byDay, spotlight, week.eventsDiscovered, unsubscribeUrl, picks, { intro }),
+    text: buildDigestText(week.byDay, spotlight, week.eventsDiscovered, picks, { intro }),
+    week, spotlight, picks, intro
+  };
+}
+
+// Sunday send. Only an approved draft goes out; otherwise the week is
+// skipped (owner's call, 2026-10). manual = the admin "Send approved draft
+// now" button, which never skips anything.
+async function sendApprovedNewsletter(env, { sendDate = mtDateStr(), manual = false } = {}) {
+  const row = await env.DB.prepare(`SELECT * FROM newsletter_drafts WHERE send_date = ?`).bind(sendDate).first();
+  if (!row || row.status !== "approved") {
+    if (manual) return { sent: false, reason: row ? `This issue is "${row.status}". Approve it first.` : `There's no draft for ${sendDate}.` };
+    if (row && ["sent", "sending", "skipped"].includes(row.status)) return { sent: false, reason: `already ${row.status}` };
+    if (row) {
+      await env.DB.prepare(`UPDATE newsletter_drafts SET status = 'skipped', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
+    } else {
+      await env.DB.prepare(
+        `INSERT INTO newsletter_drafts (send_date, status, subject_a, rationale, generated_by) VALUES (?, 'skipped', '(no draft)', 'No draft existed at send time.', 'none')`
+      ).bind(sendDate).run();
+    }
+    if (env.ADMIN_EMAIL) {
+      try {
+        await sendDigestEmail(env, env.ADMIN_EMAIL,
+          `<div style="font-family:-apple-system,sans-serif;max-width:520px;margin:0 auto;"><p>No approved draft for ${escapeHtml(formatSendDate(sendDate))}, so this week's newsletter was skipped. Nothing was sent to subscribers.</p><p><a href="${ADMIN_NEWSLETTER_URL}">Open the Newsletter admin</a></p></div>`,
+          null, `Skipped the ${formatSendDate(sendDate)} newsletter (not approved)`);
+      } catch (err) { console.error("skip notify failed", err); }
+    }
+    return { sent: false, skipped: true, send_date: sendDate };
+  }
+
+  // Claim the issue so a retried cron or a double-tap can't send it twice.
+  const claim = await env.DB.prepare(
+    `UPDATE newsletter_drafts SET status = 'sending', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'`
+  ).bind(row.id).run();
+  if (!claim.meta || claim.meta.changes !== 1) return { sent: false, reason: "already being sent" };
+
+  const draft = decodeNewsletterDraft(row);
+  let subs;
+  try {
+    ({ results: subs } = await env.DB.prepare("SELECT email FROM subscribers WHERE active = 1").all());
+  } catch (err) {
+    await env.DB.prepare(`UPDATE newsletter_drafts SET status = 'approved' WHERE id = ?`).bind(row.id).run();
+    throw err;
+  }
+  // Build each variant once; only the unsubscribe link differs per person.
+  const now = new Date();
+  const rendered = {
+    A: await renderNewsletterDraft(env, draft, "A", { asOf: now, unsubscribeUrl: "__UNSUB__" }),
+    B: draft.test_plan ? await renderNewsletterDraft(env, draft, "B", { asOf: now, unsubscribeUrl: "__UNSUB__" }) : null
+  };
+  const sendRows = [];
+  const counts = { A: 0, B: 0, errors: 0 };
+  const errors = [];
+  for (const { email } of subs) {
+    const variant = draft.test_plan ? variantFor(email, draft.id) : "A";
+    const r = rendered[variant] || rendered.A;
+    const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}`;
+    try {
+      const id = await sendDigestEmail(env, email, r.html.split("__UNSUB__").join(unsubscribeUrl), r.text, r.subject);
+      counts[variant]++;
+      if (id) sendRows.push([id, draft.id, variant]);
     } catch (err) {
-      results.push({ email, status: "error", error: String(err) });
+      counts.errors++;
+      errors.push(String(err.message || err).slice(0, 200));
+    }
+  }
+  // One D1 batch per 50 rows instead of a write per subscriber.
+  for (let i = 0; i < sendRows.length; i += 50) {
+    await env.DB.batch(sendRows.slice(i, i + 50).map(([id, draftId, variant]) =>
+      env.DB.prepare(`INSERT OR IGNORE INTO newsletter_sends (resend_id, draft_id, variant) VALUES (?, ?, ?)`).bind(id, draftId, variant)
+    ));
+  }
+  const summary = { ...counts, subscribers: subs.length, errors_sample: errors.slice(0, 5) };
+  await env.DB.prepare(
+    `UPDATE newsletter_drafts SET status = 'sent', sent_at = CURRENT_TIMESTAMP, send_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(JSON.stringify(summary), draft.id).run();
+  return { sent: true, send_date: sendDate, ...summary };
+}
+
+// Admin "Send test" and /api/digest-now. With an email: sends the upcoming
+// draft (both variants when there's a test) to that one address, or the
+// rules-only issue if no draft exists yet. Without an email: sends the
+// approved draft to everyone, and refuses if it isn't approved.
+async function runWeeklyDigest(env, testEmail = null) {
+  const upcoming = decodeNewsletterDraft(await getUpcomingNewsletterDraft(env));
+  if (!testEmail) {
+    return sendApprovedNewsletter(env, { sendDate: upcoming ? upcoming.send_date : await firstOpenSendDate(env), manual: true });
+  }
+  const timeMarker = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
+  const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(testEmail)}`;
+  const draft = upcoming || { send_date: await firstOpenSendDate(env), spotlight_ids: [], subject_a: null, test_plan: null };
+  const variants = draft.test_plan ? ["A", "B"] : ["A"];
+  const results = [];
+  for (const v of variants) {
+    const r = await renderNewsletterDraft(env, draft, v, { unsubscribeUrl });
+    const label = variants.length > 1 ? ` ${v}` : "";
+    try {
+      await sendDigestEmail(env, testEmail, r.html, r.text, `[TEST${label} ${timeMarker}] ${r.subject}`);
+      results.push({ email: testEmail, variant: v, status: "sent (test)" });
+    } catch (err) {
+      results.push({ email: testEmail, variant: v, status: "error", error: String(err) });
     }
   }
   return results;
+}
+
+async function handleResendWebhook(request, env) {
+  if (!env.RESEND_WEBHOOK_SECRET) return json({ error: "RESEND_WEBHOOK_SECRET isn't set" }, 503);
+  const body = await request.text();
+  const svixId = request.headers.get("svix-id");
+  const ok = await verifyResendWebhook(env.RESEND_WEBHOOK_SECRET, {
+    id: svixId, timestamp: request.headers.get("svix-timestamp"), signature: request.headers.get("svix-signature")
+  }, body);
+  if (!ok) return json({ error: "bad signature" }, 401);
+  let evt;
+  try { evt = JSON.parse(body); } catch { return json({ error: "bad json" }, 400); }
+  const type = RESEND_EVENT_TYPES[evt.type];
+  const emailId = evt.data && evt.data.email_id;
+  if (!type || !emailId) return json({ ignored: true });
+  // Only newsletter emails are stored (admin and partner emails go through
+  // Resend too). svix_id is unique, so Resend's retries don't double count.
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO newsletter_events (svix_id, resend_id, type, link)
+     SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM newsletter_sends WHERE resend_id = ?)`
+  ).bind(svixId, emailId, type, (evt.data.click && evt.data.click.link) || null, emailId).run();
+  // A spam complaint unsubscribes that address.
+  if (type === "complained" && Array.isArray(evt.data.to) && evt.data.to[0]) {
+    await env.DB.prepare(
+      `UPDATE subscribers SET active = 0, unsubscribed_at = CURRENT_TIMESTAMP WHERE email = ? AND active = 1`
+    ).bind(String(evt.data.to[0]).toLowerCase()).run();
+  }
+  return json({ ok: true });
+}
+
+// ── Admin > Newsletter. Same unlisted-URL model as the rest of admin.html.
+async function handleAdminNewsletter(env) {
+  const upcomingRow = await getUpcomingNewsletterDraft(env);
+  const upcoming = decodeNewsletterDraft(upcomingRow);
+  const history = await getNewsletterHistory(env, 8);
+  const { results: skipped } = await env.DB.prepare(
+    `SELECT send_date, status FROM newsletter_drafts WHERE status = 'skipped' ORDER BY send_date DESC LIMIT 4`
+  ).all();
+  let candidates = [];
+  if (upcoming) {
+    const week = await getWeekAheadEvents(env, newsletterAsOf(upcoming.send_date));
+    candidates = newsletterCandidates(week).map(newsletterCompactEvent);
+  }
+  const nextOpen = upcoming ? upcoming.send_date : await firstOpenSendDate(env);
+  return json({ upcoming, next_send_date: nextOpen, send_label: formatSendDate(nextOpen), candidates, history, skipped });
+}
+
+async function handleAdminNewsletterPreview(env, url) {
+  const id = Number(url.searchParams.get("id"));
+  const variant = url.searchParams.get("variant") === "B" ? "B" : "A";
+  const row = await env.DB.prepare(`SELECT * FROM newsletter_drafts WHERE id = ?`).bind(id).first();
+  if (!row) return new Response("No such draft", { status: 404 });
+  const r = await renderNewsletterDraft(env, decodeNewsletterDraft(row), variant);
+  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(r.subject)}</title><body style="margin:0;background:#E9E3D6;">${r.html}</body>`, {
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }
+  });
+}
+
+async function handleAdminNewsletterSave(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const row = await env.DB.prepare(`SELECT * FROM newsletter_drafts WHERE id = ?`).bind(Number(body.id)).first();
+  if (!row) return json({ error: "No such draft" }, 404);
+  if (!["draft", "approved"].includes(row.status)) return json({ error: `Can't edit a ${row.status} issue` }, 409);
+  const current = decodeNewsletterDraft(row);
+  const week = await getWeekAheadEvents(env, newsletterAsOf(row.send_date));
+  const candidates = newsletterCandidates(week);
+  const history = await getNewsletterHistory(env, 8);
+  const variable = ["subject", "intro", "none"].includes(body.test_variable) ? body.test_variable : (current.test_plan ? current.test_plan.variable : "none");
+  const next = validateAgentDraft({
+    subject_a: body.subject_a, subject_b: body.subject_b, intro: body.intro, intro_b: body.intro_b,
+    spotlight_ids: Array.isArray(body.spotlight_ids) ? body.spotlight_ids : current.spotlight_ids,
+    test: { variable, hypothesis: current.test_plan ? current.test_plan.hypothesis : "Set by hand in admin." },
+    rationale: current.rationale, last_issue_readout: current.last_issue_readout
+  }, {
+    candidateIds: candidates.map((ev) => ev.id),
+    defaultSpotlightIds: week.spotlight.map((ev) => ev.id),
+    defaultSubject: newsletterDefaultSubject(week.weekLabel),
+    pastSubjects: history.flatMap((h) => [h.subject_a, h.subject_b]).filter(Boolean)
+  });
+  // Editing an approved issue sends it back to draft: approval covers what you saw.
+  await env.DB.prepare(
+    `UPDATE newsletter_drafts SET subject_a = ?, subject_b = ?, intro = ?, intro_b = ?, spotlight_ids = ?, test_plan = ?,
+       status = 'draft', approved_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(next.subject_a, next.subject_b, next.intro, next.intro_b, JSON.stringify(next.spotlight_ids),
+    next.test_plan ? JSON.stringify(next.test_plan) : null, row.id).run();
+  return json({ ok: true, status: "draft" });
+}
+
+async function handleAdminNewsletterAction(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const action = body.action;
+  if (action === "generate") {
+    return json(await generateNewsletterDraft(env, { force: false, notify: false }));
+  }
+  const row = await env.DB.prepare(`SELECT * FROM newsletter_drafts WHERE id = ?`).bind(Number(body.id)).first();
+  if (!row) return json({ error: "No such draft" }, 404);
+  const isFuture = row.send_date >= mtDateStr();
+  if (action === "approve" && row.status === "draft") {
+    await env.DB.prepare(`UPDATE newsletter_drafts SET status = 'approved', approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
+    return json({ ok: true, status: "approved" });
+  }
+  if (action === "unapprove" && row.status === "approved") {
+    await env.DB.prepare(`UPDATE newsletter_drafts SET status = 'draft', approved_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
+    return json({ ok: true, status: "draft" });
+  }
+  if (action === "skip" && ["draft", "approved"].includes(row.status)) {
+    await env.DB.prepare(`UPDATE newsletter_drafts SET status = 'skipped', approved_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(row.id).run();
+    return json({ ok: true, status: "skipped" });
+  }
+  if (action === "regenerate" && isFuture && ["draft", "approved", "skipped"].includes(row.status)) {
+    return json(await generateNewsletterDraft(env, { sendDate: row.send_date, force: true, notify: false }));
+  }
+  return json({ error: `Can't ${action} a ${row.status} issue` }, 409);
 }
 
 // Cron triggers at both 18:00 and 19:00 UTC on Sundays (see wrangler.jsonc)
@@ -6188,7 +6577,13 @@ const worker = {
       // sometimes build against last week's badges, or none at all, if it
       // happened to finish first. Awaiting the chain forces the order.
       ctx.waitUntil(
-        runWeeklyEngagementDigest(env).then(() => runWeeklyDigest(env))
+        // Sends only an approved draft; otherwise skips the week (see
+        // sendApprovedNewsletter).
+        // A badge-scoring failure must not block the send (or the skip
+        // notice), so it's caught before the newsletter step.
+        runWeeklyEngagementDigest(env)
+          .catch((err) => console.error("engagement digest failed", err))
+          .then(() => sendApprovedNewsletter(env))
       );
       // weekly cadence split into three groups (weekly-a/b/c), each its
       // OWN scheduled trigger and therefore its own Worker invocation
@@ -6231,6 +6626,11 @@ const worker = {
       // alongside this redesign.
       ctx.waitUntil(runSources(env, { cadence: "monthly" }).then(() => emailPendingReviewIfAny(env)));
       return;
+    }
+    // Thursday's daily run also drafts Sunday's newsletter for approval
+    // (no spare cron slot; the account is capped at 5).
+    if (isThursdayMT(new Date())) {
+      ctx.waitUntil(generateNewsletterDraft(env).catch((err) => console.error("newsletter draft failed", err)));
     }
     ctx.waitUntil(runSources(env, { cadence: "daily" }).then(() => emailPendingReviewIfAny(env)));
   },
@@ -6420,6 +6820,21 @@ const worker = {
         const testEmail = url.searchParams.get("email");
         const results = await runWeeklyDigest(env, testEmail);
         return json({ ranAt: new Date().toISOString(), mode: testEmail ? "test" : "all-subscribers", results });
+      }
+      if (url.pathname === "/api/resend-webhook" && request.method === "POST") {
+        return await handleResendWebhook(request, env);
+      }
+      if (url.pathname === "/api/admin/newsletter" && request.method === "GET") {
+        return await handleAdminNewsletter(env);
+      }
+      if (url.pathname === "/api/admin/newsletter/preview" && request.method === "GET") {
+        return await handleAdminNewsletterPreview(env, url);
+      }
+      if (url.pathname === "/api/admin/newsletter/draft" && request.method === "POST") {
+        return await handleAdminNewsletterSave(request, env);
+      }
+      if (url.pathname === "/api/admin/newsletter/action" && request.method === "POST") {
+        return await handleAdminNewsletterAction(request, env);
       }
       if (url.pathname === "/api/engagement-digest-now" && request.method === "POST") {
         const results = await runWeeklyEngagementDigest(env);
