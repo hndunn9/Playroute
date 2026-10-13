@@ -4307,7 +4307,7 @@ function digestBadgeHtml(badge) {
 // #coffeeCalloutText) so the ask reads the same in both places.
 // Same link as the app.
 const DIGEST_KOFI_URL = "https://ko-fi.com/playroute";
-const DIGEST_KOFI_TEXT = "🧡 I built this app — buy my wife, the stay-at-home parent who inspired it, a coffee.";
+const DIGEST_KOFI_TEXT = "🧡 I built this app — buy my wife the SAHM a coffee.";
 const DIGEST_KOFI_HTML = `
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:0 24px 18px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1E7D2;border-radius:12px;"><tr>
