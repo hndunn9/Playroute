@@ -4303,6 +4303,23 @@ function digestBadgeHtml(badge) {
   return "";
 }
 
+// Ko-fi footer -- same words as the app's footer callout (public/index.html,
+// #coffeeCalloutText) so the ask reads the same in both places.
+// Same link as the app.
+const DIGEST_KOFI_URL = "https://ko-fi.com/playroute";
+const DIGEST_KOFI_TEXT = "🧡 I built this app — buy my wife, the stay-at-home parent who inspired it, a coffee.";
+const DIGEST_KOFI_HTML = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:0 24px 18px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F1E7D2;border-radius:12px;"><tr>
+        <td align="center" style="padding:16px;font-family:-apple-system,sans-serif;">
+          <div style="font-size:13px;line-height:1.5;color:#3A4F45;">${DIGEST_KOFI_TEXT}</div>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:10px auto 0;"><tr><td align="center" bgcolor="#ffffff" style="border:1px solid #D3D8C8;border-radius:10px;">
+            <a href="${DIGEST_KOFI_URL}" target="_blank" rel="noopener noreferrer" style="display:block;padding:10px 18px;font-size:13.5px;font-weight:700;color:#A8623A;text-decoration:none;">☕ Wife's coffee fund</a>
+          </td></tr></table>
+        </td>
+      </tr></table>
+    </td></tr></table>`;
+
 function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, picks = []) {
   const days = [...byDay.entries()];
   const ctaButton = (label) => `
@@ -4411,6 +4428,8 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, pic
       </tr></table>
     </td></tr></table>
 
+    ${DIGEST_KOFI_HTML}
+
     <p style="text-align:center;font-size:11px;color:#b5a88f;font-family:-apple-system,sans-serif;padding-bottom:20px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
   </div>`;
 }
@@ -4446,6 +4465,8 @@ function buildDigestText(byDay, spotlight, eventsDiscovered, picks = []) {
   lines.push(`${eventsDiscovered.toLocaleString()} events discovered through Playroute so far`);
   lines.push("");
   lines.push(`We love Best Day Ever Kids' clothes for adventure-ready kids (affiliate link): https://bestdayeverkids.com?sca_ref=11971740.LIQBY7i7kE`);
+  lines.push("");
+  lines.push(`${DIGEST_KOFI_TEXT} ☕ Wife's coffee fund: ${DIGEST_KOFI_URL}`);
   lines.push("");
   lines.push(`Open Playroute: ${DIGEST_SITE_URL}/?src=newsletter`);
   return lines.join("\n");
