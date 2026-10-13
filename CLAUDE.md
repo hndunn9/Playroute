@@ -175,6 +175,14 @@ keep reads proportional to traffic:
   entry with all times; one entry per venue per day; each series once per week (later days become
   "also Thu, Fri"); a venue on at most 3 days. Thin days (<3 picks) relax the last two. Run
   `node src/newsletter-eval.js` after changing digest selection.
+- **Newsletter approval flow** (`src/newsletter-agent.js` + index.js, Oct 2026): Thursday's daily cron has the agent
+  (Claude, `NEWSLETTER_MODEL`) draft Sunday's issue into D1 `newsletter_drafts`: subject, intro, up to 3 "Don't miss
+  these" picks and at most one A/B test (subject or intro). The owner approves in admin > Newsletter. **Sunday's cron
+  sends only an approved draft; otherwise the week is skipped** (owner's decision) and she gets a skip notice. The
+  day-by-day list still comes from digest-rules.js and is rebuilt fresh at send time. Each send is logged in
+  `newsletter_sends` (Resend id + variant, no emails); `/api/resend-webhook` (Svix-signed, `RESEND_WEBHOOK_SECRET`)
+  writes delivered/opened/clicked to `newsletter_events`. Judge tests on click rate, read at 80% like the app test.
+  Run `node src/newsletter-agent-eval.js` after changing the helpers.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
 - **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
   A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within
