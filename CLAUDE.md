@@ -107,6 +107,11 @@ keep reads proportional to traffic:
     at date headers ("Oct 13 2026 Tue") or at title links (Broomfield's "Tuesday, October 13, 2026 at …" line
     follows the title); each card's link is matched by position. Westminster/Broomfield map to the same
     source strings as the hand-entered weekly rows so duplicates are caught.
+  - Library Market renders some events twice (compact card + expanded copy). The compact one only says
+    `This event is in the "Children & Families" group.`, so `parseLibraryMarketBlock` reads that as the age
+    group, and `fetchLibraryMarketBlocks` merges branch/room/age/details from the second copy into the first.
+    Westminster had silently kept 0 events since the rebuild because of this; its runner now drops past dates
+    and throws with per-reason counts when it parses events but keeps none. Branch codes: CH, IR (Irving), IS.
   - Mead: LibCal JSON (`/ajax/calendar/list?c=8181`), filtered on `campus` = "Mead Public Library". The iCal
     LOCATION holds the room, not the branch.
   - WOW: site moved to WordPress (`/events/<slug>/<date>/`). Tries The Events Calendar REST API, falls back to
