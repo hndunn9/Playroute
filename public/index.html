@@ -95,6 +95,27 @@
   --pill-neutral-text: #5B6560;
   --icon-sparkle: #3C4E7A;
   --nav-border: rgba(255,255,255,0.06);
+  /* Text on colored fills (buttons, pills) and the white backdrop behind
+     product photos -- named so nothing in the CSS is a bare #fff. */
+  --on-fill:   #FFFFFF;
+  --photo-bg:  #FFFFFF;
+  /* Light text on the dark plates (hero wordmark, newsletter signup). */
+  --on-dark:      #F4F5F0;
+  --on-dark-soft: #A7B0A4;
+  --hero-plate:   #14211D;
+  --water:        var(--sky);
+  /* Category icon colors (unchanged values, now in one place). */
+  --icon-library:   #7A5568;
+  --icon-museum:    #9A7645;
+  --icon-outdoor:   #93704F;
+  --icon-community: #85759C;
+  --icon-market:    var(--ember);
+  --icon-rec:       #6E8B8A;
+}
+:root.season-fall{
+  --fall-plate:  #211510;
+  --fall-cream:  #F4E6CF;
+  --fall-button: #A4521F;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -164,7 +185,7 @@ body{
   flex-shrink:0;align-self:center;
   width:34px;height:34px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;
-  color:#fff;background:var(--clay);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  color:var(--on-fill);background:var(--clay);cursor:pointer;-webkit-tap-highlight-color:transparent;
   box-shadow:0 2px 6px rgba(0,0,0,0.18);
 }
 /* ── TOP-OF-FEED NATIVE AD ── admin preview only, see initTopFeedAffiliate.
@@ -176,60 +197,59 @@ body{
   background:var(--parchment);border:1px dashed var(--fog);border-radius:12px;
   padding:10px 12px;margin-bottom:16px;position:relative;
 }
-.native-affiliate img{width:56px;height:70px;border-radius:8px;object-fit:contain;flex-shrink:0;background:#fff;padding:3px;}
+.native-affiliate img{width:56px;height:70px;border-radius:8px;object-fit:contain;flex-shrink:0;background:var(--photo-bg);padding:3px;}
 .native-affiliate-body{flex:1;min-width:0;}
 .native-affiliate-text{font-size:12px;color:var(--ink-soft);line-height:1.4;}
 .native-affiliate-text b{color:var(--ink);font-weight:600;}
-.native-affiliate-tag{font-size:9.5px;color:#a89478;margin-top:2px;}
+.native-affiliate-tag{font-size:9.5px;color:var(--ink-soft);margin-top:2px;}
 .native-affiliate-btn{
-  display:inline-block;margin-top:7px;padding:6px 12px;border-radius:100px;
-  background:var(--bark);color:#fff;font-size:11px;font-weight:600;
+  display:inline-block;margin-top:7px;padding:6px 14px;border-radius:100px;
+  border:1px solid var(--clay);color:var(--clay);background:transparent;font-size:12px;font-weight:600;
   text-decoration:none;
 }
 .native-affiliate-preview-tag{
-  position:absolute;top:-8px;right:8px;background:var(--clay);color:#fff;
+  position:absolute;top:-8px;right:8px;background:var(--clay);color:var(--on-fill);
   font-size:9px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:100px;
 }
 .native-affiliate-close{color:var(--ink-soft);opacity:.4;font-size:14px;flex-shrink:0;padding:2px;cursor:pointer;-webkit-tap-highlight-color:transparent;}
 
-.support-callout{
-  margin:20px 16px 4px;
-  background:var(--parchment);
-  border:1.5px solid var(--clay);
-  border-radius:var(--radius-md);
-  padding:16px;
-  text-align:center;
+.support-callout{margin:20px 16px 4px;}
+/* ── SUPPORT CARD ── one quiet pattern for Ko-fi, affiliates and feedback:
+   parchment card, hairline border, small uppercase label, one line of copy,
+   one outline pill button, optional white product thumb. */
+.sp-card{
+  background:var(--parchment);border:1px solid var(--fog);
+  border-radius:var(--radius-md);padding:2px 14px;
 }
-.support-row{padding:8px 0;}
-.support-row + .support-row{border-top:1px solid var(--fog);}
-.support-callout-text{
-  font-size:14px;color:var(--ink);line-height:1.5;margin-bottom:10px;font-weight:500;
+.sp-card.sp-solo{margin:0 0 14px;}
+.sp-item{display:flex;gap:12px;align-items:center;padding:12px 0;color:inherit;text-decoration:none;}
+.sp-item + .sp-item{border-top:1px solid var(--fog);}
+.sp-card.sp-item{padding:12px 14px;}
+a.sp-item,.sp-item[role="link"]{cursor:pointer;}
+.sp-thumb{
+  flex-shrink:0;display:block;width:56px;height:70px;border-radius:var(--radius-sm);
+  background:var(--photo-bg);overflow:hidden;
 }
-.support-btn-primary,.support-btn-secondary{
-  display:block;width:100%;padding:11px 0;border-radius:var(--radius-sm);
-  font-weight:600;font-size:13.5px;text-decoration:none;box-sizing:border-box;
+.sp-thumb img{width:100%;height:100%;object-fit:contain;display:block;padding:3px;box-sizing:border-box;}
+.sp-body{flex:1;min-width:0;}
+.sp-label{font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:3px;}
+.sp-text{font-size:13px;color:var(--ink);line-height:1.45;}
+.sp-text b{font-weight:600;}
+.sp-btn{
+  display:inline-block;margin-top:8px;padding:6px 14px;border-radius:100px;
+  border:1px solid var(--clay);color:var(--clay);background:transparent;
+  font-size:12px;font-weight:600;text-decoration:none;
 }
-.support-btn-primary{background:var(--clay);color:#fff;}
-.support-btn-secondary{background:var(--bark);color:#fff;}
-.affiliate-row{
-  display:flex;align-items:center;gap:12px;text-align:left;
-}
-.affiliate-thumb{
-  flex-shrink:0;display:block;width:76px;height:96px;border-radius:var(--radius-sm);
-  overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.14);background:#fff;
-}
-.affiliate-thumb img{width:100%;height:100%;object-fit:contain;display:block;}
-.affiliate-copy{flex:1;min-width:0;}
-.affiliate-copy .support-btn-secondary{width:auto;display:inline-block;padding:9px 16px;}
+.sp-btn:active{transform:scale(0.97);}
 .hero-wordmark{
   position:absolute;top:14px;left:14px;
-  color:#FFFFFF;
+  color:var(--on-fill);
   font-family:'Playfair Display',serif;
   font-size:29px;font-weight:800;
   letter-spacing:0.02em;
   text-shadow:0 1px 4px rgba(0,0,0,0.55);
   display:flex;align-items:center;gap:10px;
-  background:#14211D;
+  background:var(--hero-plate);
   padding:7px 16px 7px 13px;
   border-radius:10px;
   border-left:4px solid var(--clay);
@@ -239,7 +259,7 @@ body{
   font-family:'DM Sans',sans-serif;
   font-size:10.5px;font-weight:700;
   text-transform:uppercase;letter-spacing:0.1em;
-  color:#F3F1E8;
+  color:var(--on-dark);
   border:1px solid rgba(243,241,232,0.55);
   border-radius:4px;padding:3px 8px;
 }
@@ -282,7 +302,7 @@ body{
   font-weight:500;display:flex;align-items:center;gap:7px;
 }
 .active-count{
-  background:var(--clay);color:#fff;
+  background:var(--clay);color:var(--on-fill);
   font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;
   padding:1px 7px;border-radius:100px;min-width:16px;text-align:center;display:none;
 }
@@ -300,7 +320,7 @@ body{
   color:var(--ink-soft);cursor:pointer;-webkit-tap-highlight-color:transparent;
   border-radius:100px;transition:background .15s ease,color .15s ease;position:relative;
 }
-.search-btn.active{background:var(--clay);color:#fff;}
+.search-btn.active{background:var(--clay);color:var(--on-fill);}
 
 .theme-toggle{
   width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
@@ -402,7 +422,7 @@ body{
   transition:all .15s ease;
 }
 .chip:active{transform:scale(0.96);}
-.chip.active{background:var(--clay);border-color:var(--clay);color:#fff;}
+.chip.active{background:var(--clay);border-color:var(--clay);color:var(--on-fill);}
 .chip.active.free{background:var(--wheat);border-color:var(--wheat);color:var(--ink);}
 
 /* section-jump nav always visible below filter toggle */
@@ -544,23 +564,23 @@ main{
   display:inline-block;font-size:11px;font-weight:500;
   padding:2px 8px;border-radius:6px;
 }
-.tag.city{background:var(--clay);color:#fff;font-weight:600;}
+.tag.city{background:var(--clay);color:var(--on-fill);font-weight:600;}
 .tag.free{background:var(--pill-green-bg);color:var(--pill-green-text);}
 .tag.paid{background:var(--pill-neutral-bg);color:var(--pill-neutral-text);}
 .tag.age{background:var(--pill-green-bg);color:var(--pill-green-text);}
 .tag.badge-trending{
   display:inline-flex;align-items:center;gap:3px;
-  background:var(--ember);color:#fff;font-weight:700;
+  background:var(--ember);color:var(--on-fill);font-weight:700;
   letter-spacing:0.01em;order:-1;
 }
 .tag.badge-popular{
   display:inline-flex;align-items:center;gap:3px;
-  background:var(--gold);color:#fff;font-weight:700;
+  background:var(--gold);color:var(--on-fill);font-weight:700;
   letter-spacing:0.01em;order:-1;
 }
 .tag.badge-new{
   display:inline-flex;align-items:center;gap:3px;
-  background:var(--bark);color:#fff;font-weight:700;
+  background:var(--bark);color:var(--on-fill);font-weight:700;
   letter-spacing:0.01em;order:-1;
 }
 
@@ -569,12 +589,12 @@ main{
 .picks-heading{font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);margin:4px 0 10px;display:flex;justify-content:space-between;gap:8px;}
 .picks-heading .picks-preview-note{color:var(--gold);letter-spacing:0.04em;}
 .pick-card{display:flex;gap:11px;align-items:flex-start;padding:13px 14px;margin-bottom:10px;background:var(--parchment);border:1px solid var(--pick-color,var(--sky));box-shadow:0 0 0 1px var(--pick-color,var(--sky)),0 2px 8px rgba(20,24,22,0.07);border-radius:var(--radius-md);text-decoration:none;color:inherit;-webkit-tap-highlight-color:transparent;}
-.pick-logo{width:40px;height:40px;border-radius:8px;flex-shrink:0;object-fit:contain;background:#fff;}
-.pick-logo.ph{background:var(--pick-color,var(--sky));color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;}
+.pick-logo{width:40px;height:40px;border-radius:8px;flex-shrink:0;object-fit:contain;background:var(--photo-bg);}
+.pick-logo.ph{background:var(--pick-color,var(--sky));color:var(--on-fill);font-weight:700;display:flex;align-items:center;justify-content:center;}
 .pick-main{flex:1;min-width:0;}
 .pick-desc{font-size:13px;color:var(--ink);margin-top:5px;line-height:1.45;}
 .pick-cta{font-size:12.5px;font-weight:700;color:var(--pick-color,var(--sky));}
-.tag.pick-brand{background:var(--pick-color,var(--sky));color:#fff;font-weight:700;}
+.tag.pick-brand{background:var(--pick-color,var(--sky));color:var(--on-fill);font-weight:700;}
 .pick-sponsor{font-size:10.5px;color:var(--ink-soft);margin:-6px 0 12px 2px;}
 
 /* Level 2 — inline expanded detail */
@@ -600,7 +620,7 @@ main{
 .card-detail-actions{display:flex;gap:8px;align-items:center;}
 .detail-btn-source{
   flex:1;padding:9px 0;border-radius:var(--radius-sm);
-  border:none;background:var(--clay);color:#fff;
+  border:none;background:var(--clay);color:var(--on-fill);
   font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;
   cursor:pointer;text-align:center;text-decoration:none;display:block;
 }
@@ -609,27 +629,6 @@ main{
   border:1px solid var(--fog);background:var(--wheat);
   display:flex;align-items:center;justify-content:center;
   text-decoration:none;cursor:pointer;font-size:17px;
-}
-
-/* ── AFFILIATE — day-closer card in feed ── */
-.affiliate-closer-card{
-  display:flex;align-items:center;
-  background:var(--parchment);border:1.5px solid var(--clay);
-  border-radius:var(--radius-md);overflow:hidden;
-  box-shadow:0 2px 8px rgba(20,24,22,0.07);
-  margin-bottom:14px;cursor:pointer;
-}
-.affiliate-closer-photo{width:96px;height:120px;object-fit:contain;flex-shrink:0;display:block;background:#fff;padding:4px;}
-.affiliate-closer-body{padding:10px 12px;flex:1;min-width:0;}
-.affiliate-closer-label{
-  font-size:9.5px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;
-  color:var(--clay);margin-bottom:3px;
-}
-.affiliate-closer-title{font-weight:700;font-size:13.5px;color:var(--ink);margin-bottom:3px;}
-.affiliate-closer-text{font-size:11.5px;color:var(--ink-soft);line-height:1.4;margin-bottom:7px;}
-.affiliate-closer-btn{
-  display:inline-block;background:var(--bark);color:#fff;
-  font-size:11.5px;font-weight:600;padding:6px 13px;border-radius:7px;text-decoration:none;
 }
 
 /* ── PLAYGROUNDS ── */
@@ -644,7 +643,7 @@ main{
 .pg-water-badge{
   position:absolute;top:6px;right:6px;
   width:22px;height:22px;border-radius:50%;
-  background:#3b8fa3;color:#fff;
+  background:var(--water);color:var(--on-fill);
   display:flex;align-items:center;justify-content:center;
   box-shadow:0 1px 4px rgba(0,0,0,0.25);
 }
@@ -653,7 +652,7 @@ main{
 .pg-name{font-weight:600;font-size:13px;line-height:1.25;color:var(--ink);}
 .pg-city{
   display:inline-block;font-size:10px;font-weight:600;
-  color:#fff;background:var(--clay);
+  color:var(--on-fill);background:var(--clay);
   padding:1px 7px;border-radius:100px;margin-top:4px;
 }
 .pg-detail{font-size:11.5px;color:var(--ink-soft);margin-top:4px;line-height:1.45;}
@@ -680,7 +679,7 @@ main{
 .hike-name{font-weight:600;font-size:14px;color:var(--ink);flex:1;min-width:0;}
 .hike-city{
   display:inline-block;font-size:10px;font-weight:600;
-  color:#fff;background:var(--clay);
+  color:var(--on-fill);background:var(--clay);
   padding:1px 7px;border-radius:100px;margin-top:4px;
 }
 .hike-stats{
@@ -697,19 +696,19 @@ main{
 .empty-illustration{margin:0 auto 12px;}
 .empty-title{font-family:'Playfair Display',serif;font-size:16px;font-weight:600;color:var(--ink);margin-bottom:6px;}
 .empty-sub{font-size:12.5px;color:var(--ink-soft);line-height:1.5;max-width:230px;margin:0 auto;}
-.empty-widen-btn{margin-top:12px;font:inherit;font-size:13px;font-weight:600;padding:9px 16px;border-radius:100px;border:none;background:var(--clay);color:#fff;cursor:pointer;}
+.empty-widen-btn{margin-top:12px;font:inherit;font-size:13px;font-weight:600;padding:9px 16px;border-radius:100px;border:none;background:var(--clay);color:var(--on-fill);cursor:pointer;}
 .empty-widen-btn:focus-visible{outline:2px solid var(--sky);outline-offset:2px;}
 
 /* ── SIGNUP ── */
 .signup{
-  margin-top:36px;background:var(--soil);color:#EFE9D8;
+  margin-top:36px;background:var(--soil);color:var(--on-dark);
   border-radius:var(--radius-md);padding:20px 18px;text-align:center;
 }
 .signup h3{
-  font-family:'Playfair Display',serif;color:#F7F8F4;
+  font-family:'Playfair Display',serif;color:var(--on-dark);
   font-size:17px;margin-bottom:6px;
 }
-.signup p{font-size:13px;color:#AEBBAF;margin:0 0 14px;line-height:1.5;}
+.signup p{font-size:13px;color:var(--on-dark-soft);margin:0 0 14px;line-height:1.5;}
 .signup-form{display:flex;gap:8px;max-width:340px;margin:0 auto;}
 .signup-form input{
   flex:1;padding:11px 12px;border-radius:9px;border:none;
@@ -721,7 +720,7 @@ main{
   font-weight:600;font-size:14px;cursor:pointer;
 }
 .signup-form button:active{transform:scale(0.97);}
-.signup-note{font-size:11px;color:#A7C0A0;margin-top:10px;}
+.signup-note{font-size:11px;color:var(--on-dark-soft);margin-top:10px;}
 
 /* ── RELEASE NOTES ── */
 
@@ -771,7 +770,7 @@ main{
   padding:6px 0;border-radius:6px;border:1px solid var(--fog);
   background:var(--cream);color:var(--ink);cursor:pointer;text-decoration:none;
 }
-.link-popover-actions a{background:var(--clay);color:#fff;border-color:var(--clay);}
+.link-popover-actions a{background:var(--clay);color:var(--on-fill);border-color:var(--clay);}
 
 /* ── LEVEL 3 DRAWER ── */
 .drawer-overlay{
@@ -809,7 +808,7 @@ main{
 .drawer-row-text strong{color:var(--ink);}
 .drawer-cta{
   display:block;margin:4px 18px 16px;padding:13px;
-  background:var(--clay);color:#fff;border-radius:var(--radius-md);
+  background:var(--clay);color:var(--on-fill);border-radius:var(--radius-md);
   font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;
   text-align:center;text-decoration:none;border:none;
   width:calc(100% - 36px);cursor:pointer;
@@ -873,8 +872,8 @@ footer{
 .season-fall .hero::after{
   background:linear-gradient(120deg,rgba(38,18,8,0.80) 0%,rgba(58,26,10,0.42) 40%,rgba(120,58,18,0.14) 65%,rgba(196,108,40,0.22) 100%);
 }
-.season-fall .hero-wordmark{background:#211510;border-left-color:var(--fall-accent);overflow:visible;}
-.season-fall .hero-beta{color:#F4E6CF;border-color:rgba(244,230,207,0.55);}
+.season-fall .hero-wordmark{background:var(--fall-plate);border-left-color:var(--fall-accent);overflow:visible;}
+.season-fall .hero-beta{color:var(--fall-cream);border-color:rgba(244,230,207,0.55);}
 .fall-pumpkin{
   position:absolute;top:-11px;right:-9px;width:26px;height:26px;
   filter:drop-shadow(0 2px 3px rgba(0,0,0,0.45));
@@ -899,7 +898,7 @@ footer{
 .season-fall .section-tab .tab-icon,.season-fall .section-tab .tab-label{color:var(--fall-ink-soft);}
 .season-fall .section-tab.active .tab-icon,.season-fall .section-tab.active .tab-label{color:var(--fall-deep);}
 .season-fall .tab-active-dot{background:var(--fall-deep);}
-.season-fall .about-btn{background:#A4521F;}
+.season-fall .about-btn{background:var(--fall-button);}
 .season-fall .filters{background:var(--fall-filter-bg);border-bottom-color:var(--fall-line);}
 </style>
 </head>
@@ -1002,23 +1001,30 @@ footer{
   <div id="topFeedAffiliate"></div>
   <div id="weekFeed"></div>
 
-  <div class="support-callout">
-    <div class="support-row">
-      <div class="support-callout-text" id="coffeeCalloutText">🧡 I built this app — buy my wife, the stay-at-home parent who inspired it, a coffee.</div>
-      <a class="support-btn-secondary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (footer callout)',category:'support',action:'support_click'})">☕ Wife's coffee fund</a>
-    </div>
-    <div class="support-row affiliate-row">
-      <a class="affiliate-thumb" href="https://keepthelittleswild.com/products/backpack-dark-blue?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/backpack-dark-blue',{title:'Keep the Littles Wild photo (footer callout)',category:'affiliate',action:'affiliate_click'})">
-        <img src="https://keepthelittleswild.com/cdn/shop/files/IMG-1938.png?v=1755261244&width=200" alt="Keep the Littles Wild" loading="lazy">
-      </a>
-      <div class="affiliate-copy">
-        <div class="support-callout-text" style="margin-bottom:6px;">🧥 We love Keep the Littles Wild's gear for adventure-ready kids — Colorado-owned! (Affiliate)</div>
-        <a class="support-btn-secondary" href="https://keepthelittleswild.com/products/backpack-dark-blue?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/backpack-dark-blue',{title:'Keep the Littles Wild (footer callout)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
+  <div class="support-callout sp-card">
+    <div class="sp-item">
+      <div class="sp-body">
+        <div class="sp-label">Support Playroute</div>
+        <div class="sp-text" id="coffeeCalloutText">🧡 I built this app — buy my wife, the stay-at-home parent who inspired it, a coffee.</div>
+        <a class="sp-btn" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (footer callout)',category:'support',action:'support_click'})">☕ Wife's coffee fund</a>
       </div>
     </div>
-    <div class="support-row">
-      <div class="support-callout-text" id="feedbackCalloutText">💬 Got a tip, a typo, or a wish-list item? We'd love to hear it.</div>
-      <a class="support-btn-primary" href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A">Send feedback</a>
+    <div class="sp-item">
+      <a class="sp-thumb" href="https://keepthelittleswild.com/products/backpack-dark-blue?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/backpack-dark-blue',{title:'Keep the Littles Wild photo (footer callout)',category:'affiliate',action:'affiliate_click'})">
+        <img src="https://keepthelittleswild.com/cdn/shop/files/IMG-1938.png?v=1755261244&width=200" alt="Keep the Littles Wild" loading="lazy">
+      </a>
+      <div class="sp-body">
+        <div class="sp-label">Affiliate · Colorado-owned</div>
+        <div class="sp-text">🧥 We love Keep the Littles Wild's gear for adventure-ready kids.</div>
+        <a class="sp-btn" href="https://keepthelittleswild.com/products/backpack-dark-blue?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/backpack-dark-blue',{title:'Keep the Littles Wild (footer callout)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
+      </div>
+    </div>
+    <div class="sp-item">
+      <div class="sp-body">
+        <div class="sp-label">Feedback</div>
+        <div class="sp-text" id="feedbackCalloutText">💬 Got a tip, a typo, or a wish-list item? We'd love to hear it.</div>
+        <a class="sp-btn" href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A">Send feedback</a>
+      </div>
     </div>
   </div>
 
@@ -1031,17 +1037,16 @@ footer{
   <div class="pg-grid" id="pgGrid"></div>
 
   <!-- Best Day Ever Kids affiliate — deliberately lives here, not next to
-       the Keep the Littles Wild block up in "Coming up." Same card style
-       (.affiliate-closer-card) for visual consistency, but a physically
+       the Keep the Littles Wild block up in "Coming up." Same support-card
+       style (.sp-card) for visual consistency, but a physically
        separate spot on the page so the two affiliates never compete for
        attention in the same glance. -->
-  <a class="affiliate-closer-card" style="text-decoration:none;margin:0 0 14px;" href="https://bestdayeverkids.com/products/serape-stripe-harem-pant?sca_ref=11971740.LIQBY7i7kE&sca_source=Playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://bestdayeverkids.com/products/serape-stripe-harem-pant?sca_ref=11971740.LIQBY7i7kE&sca_source=Playroute',{title:'Best Day Ever Kids (playgrounds-hikes gap)',category:'affiliate',action:'affiliate_click'})">
-    <img class="affiliate-closer-photo" src="https://bestdayeverkids.com/cdn/shop/files/best-day-ever-kids-baby-toddler-bottoms-serape-stripe-harem-pant-1233429336.png?v=1776812110&width=200" alt="Best Day Ever Kids" loading="lazy">
-    <div class="affiliate-closer-body">
-      <div class="affiliate-closer-label">Affiliate</div>
-      <div class="affiliate-closer-title">Best Day Ever Kids</div>
-      <div class="affiliate-closer-text">Boutique clothing made for kids on the move.</div>
-      <span class="affiliate-closer-btn">Shop now</span>
+  <a class="sp-card sp-solo sp-item" href="https://bestdayeverkids.com/products/serape-stripe-harem-pant?sca_ref=11971740.LIQBY7i7kE&sca_source=Playroute" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://bestdayeverkids.com/products/serape-stripe-harem-pant?sca_ref=11971740.LIQBY7i7kE&sca_source=Playroute',{title:'Best Day Ever Kids (playgrounds-hikes gap)',category:'affiliate',action:'affiliate_click'})">
+    <span class="sp-thumb"><img src="https://bestdayeverkids.com/cdn/shop/files/best-day-ever-kids-baby-toddler-bottoms-serape-stripe-harem-pant-1233429336.png?v=1776812110&width=200" alt="Best Day Ever Kids" loading="lazy"></span>
+    <div class="sp-body">
+      <div class="sp-label">Affiliate</div>
+      <div class="sp-text"><b>Best Day Ever Kids</b> — boutique clothing made for kids on the move.</div>
+      <span class="sp-btn">Shop now</span>
     </div>
   </a>
 
@@ -1169,12 +1174,12 @@ footer{
 
 <script>
 const blazes = {
-  library: `<path d="M11 4 C8 2.3 4 1.8 2 2.3 L2 17.3 C4 16.8 8 17.3 11 19 C14 17.3 18 16.8 20 17.3 L20 2.3 C18 1.8 14 2.3 11 4 Z" fill="#7A5568"/>`,
-  rec:     `<path d="M14.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm2.8 3.1l-2.1-1.8c-.3-.3-.7-.4-1.1-.3l-3.2 1c-.5.2-.8.6-.8 1.1v3.4c0 .6.4 1 1 1s1-.4 1-1V9.8l1.1-.3-1.7 3.3c-.2.4-.1.9.3 1.2l2.5 1.9-.9 4c-.1.5.2 1 .7 1.1.5.1 1-.2 1.1-.7l1-4.5c.1-.4-.1-.8-.4-1.1l-1.8-1.4 1.4-2.7 1 .9c.2.2.5.3.7.3h2.1c.6 0 1-.4 1-1s-.4-1-1-1h-1.7z" fill="#6E8B8A"/>`,
-  museum:  `<polygon points="11,2 20,8 2,8" fill="#9A7645"/><rect x="3" y="9" width="2.5" height="9" fill="#9A7645"/><rect x="9.5" y="9" width="2.5" height="9" fill="#9A7645"/><rect x="16" y="9" width="2.5" height="9" fill="#9A7645"/><rect x="2" y="18" width="18" height="2" fill="#9A7645"/>`,
-  outdoor: `<polygon points="11,2 17,11 13.5,11 18,18 4,18 8.5,11 5,11" fill="#93704F"/>`,
-  community: `<path d="M11 19 C11 19 2 13 2 7.5 C2 4.5 4.5 2 7.5 2 C9.5 2 11 3.5 11 3.5 C11 3.5 12.5 2 14.5 2 C17.5 2 20 4.5 20 7.5 C20 13 11 19 11 19 Z" fill="#85759C"/>`,
-  farmers_market: `<path d="M11 6 C7 5 4 8 4 12 C4 16 7 19 10 19 C10.5 19 11 18.5 11 18.5 C11 18.5 11.5 19 12 19 C15 19 18 16 18 12 C18 8 15 5 11 6 Z" fill="#B2555A"/><path d="M11 6 C11 4 12 2.5 13.5 2" stroke="#B2555A" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
+  library: `<path d="M11 4 C8 2.3 4 1.8 2 2.3 L2 17.3 C4 16.8 8 17.3 11 19 C14 17.3 18 16.8 20 17.3 L20 2.3 C18 1.8 14 2.3 11 4 Z" fill="var(--icon-library)"/>`,
+  rec:     `<path d="M14.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm2.8 3.1l-2.1-1.8c-.3-.3-.7-.4-1.1-.3l-3.2 1c-.5.2-.8.6-.8 1.1v3.4c0 .6.4 1 1 1s1-.4 1-1V9.8l1.1-.3-1.7 3.3c-.2.4-.1.9.3 1.2l2.5 1.9-.9 4c-.1.5.2 1 .7 1.1.5.1 1-.2 1.1-.7l1-4.5c.1-.4-.1-.8-.4-1.1l-1.8-1.4 1.4-2.7 1 .9c.2.2.5.3.7.3h2.1c.6 0 1-.4 1-1s-.4-1-1-1h-1.7z" fill="var(--icon-rec)"/>`,
+  museum:  `<polygon points="11,2 20,8 2,8" fill="var(--icon-museum)"/><rect x="3" y="9" width="2.5" height="9" fill="var(--icon-museum)"/><rect x="9.5" y="9" width="2.5" height="9" fill="var(--icon-museum)"/><rect x="16" y="9" width="2.5" height="9" fill="var(--icon-museum)"/><rect x="2" y="18" width="18" height="2" fill="var(--icon-museum)"/>`,
+  outdoor: `<polygon points="11,2 17,11 13.5,11 18,18 4,18 8.5,11 5,11" fill="var(--icon-outdoor)"/>`,
+  community: `<path d="M11 19 C11 19 2 13 2 7.5 C2 4.5 4.5 2 7.5 2 C9.5 2 11 3.5 11 3.5 C11 3.5 12.5 2 14.5 2 C17.5 2 20 4.5 20 7.5 C20 13 11 19 11 19 Z" fill="var(--icon-community)"/>`,
+  farmers_market: `<path d="M11 6 C7 5 4 8 4 12 C4 16 7 19 10 19 C10.5 19 11 18.5 11 18.5 C11 18.5 11.5 19 12 19 C15 19 18 16 18 12 C18 8 15 5 11 6 Z" fill="var(--icon-market)"/><path d="M11 6 C11 4 12 2.5 13.5 2" stroke="#B2555A" stroke-width="1.5" fill="none" stroke-linecap="round"/>`,
   // -- keyword-matched icons below, first draft: simple shapes only
   // (circles/rects/triangles) since these can't be visually previewed
   // before shipping -- eyeball in-browser and refine as needed.
@@ -1745,18 +1750,18 @@ function closeAboutDrawer(){
 function renderAffiliateCloserCard(){
   const url = "https://keepthelittleswild.com/products/backpack-dark-blue?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute";
   const card = document.createElement("div");
-  card.className = "affiliate-closer-card";
+  card.className = "sp-card sp-solo sp-item";
+  card.setAttribute("role","link");
   card.onclick = function(){
     trackClick(url, {title:'Keep the Littles Wild (feed closer card)', category:'affiliate', action:'affiliate_click'});
     window.open(url, '_blank', 'noopener,noreferrer');
   };
   card.innerHTML = `
-    <img class="affiliate-closer-photo" src="https://keepthelittleswild.com/cdn/shop/files/IMG-1938.png?v=1755261244&width=200" alt="Keep the Littles Wild" loading="lazy">
-    <div class="affiliate-closer-body">
-      <div class="affiliate-closer-label">Affiliate</div>
-      <div class="affiliate-closer-title">Keep the Littles Wild</div>
-      <div class="affiliate-closer-text">Colorado-owned gear for kids on the go.</div>
-      <a class="affiliate-closer-btn" href="${url}" target="_blank" rel="noopener noreferrer sponsored" onclick="event.stopPropagation();trackClick('${url}',{title:'Keep the Littles Wild (feed closer card btn)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
+    <span class="sp-thumb"><img src="https://keepthelittleswild.com/cdn/shop/files/IMG-1938.png?v=1755261244&width=200" alt="Keep the Littles Wild" loading="lazy"></span>
+    <div class="sp-body">
+      <div class="sp-label">Affiliate · Colorado-owned</div>
+      <div class="sp-text"><b>Keep the Littles Wild</b> — gear for kids on the go.</div>
+      <a class="sp-btn" href="${url}" target="_blank" rel="noopener noreferrer sponsored" onclick="event.stopPropagation();trackClick('${url}',{title:'Keep the Littles Wild (feed closer card btn)',category:'affiliate',action:'affiliate_click'})">Shop now</a>
     </div>
   `;
   return card;
@@ -2027,7 +2032,7 @@ function renderPlaygrounds(){
   if(distinctCities.length>1&&filtered.length>4){
     navWrap.innerHTML=`<div class="daynav-wrap" style="border-top:none;"><div class="daynav">${distinctCities.map(c=>`<div class="daynav-pill" onclick="document.getElementById('pg-city-${c}').scrollIntoView({behavior:'smooth',block:'start'})">${c}</div>`).join("")}</div></div>`;
   } else { navWrap.innerHTML=""; }
-  const palette=["#93704F","#6E8B8A","#9A7645","#7A5568"];
+  const palette=["var(--sky)","var(--sage)","var(--clay)","var(--bark)"]; // Granite & Glacier tints (was tan/plum hexes)
   const seenCities=new Set();
   filtered.forEach((pg,i)=>{
     const color=palette[i%palette.length];
@@ -2038,7 +2043,7 @@ function renderPlaygrounds(){
     card.className="pg-card";
     if(isFirst) card.id="pg-city-"+pg.city;
     card.innerHTML=`
-      <div class="pg-photo" style="background:${color}22;">
+      <div class="pg-photo" style="background:color-mix(in srgb, ${color} 14%, transparent);">
         ${pg.image_key
           ? `<img src="${API_BASE}/api/photos/${encodeURIComponent(pg.image_key)}" alt="${pg.name}" style="width:100%;height:100%;object-fit:cover;">`
           : `<svg viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">${blazes.outdoor}</svg>`}
@@ -2093,7 +2098,7 @@ function handleSignup(){
     // since --wheat is one of the constant accent colors, not one of the ones that flips.
   fetch(`${API_BASE}/api/subscribe`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})})
     .then(r=>{ if(!r.ok) throw new Error(); return r.json(); })
-    .then(()=>{ note.textContent="You're in! One email a week, every Sunday."; note.style.color="#A7C0A0"; input.value=""; })
+    .then(()=>{ note.textContent="You're in! One email a week, every Sunday."; note.style.color="var(--on-dark-soft)"; input.value=""; })
     .catch(()=>{ note.textContent="Something went wrong — try again in a bit."; note.style.color="var(--ember)"; });
 }
 
