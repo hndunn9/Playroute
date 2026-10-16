@@ -546,7 +546,7 @@ main{
 }
 .tag-row{display:flex;flex-wrap:wrap;gap:4px 5px;margin-top:7px;}
 /* ── Time-led card variant (A/B test "timeled", 2026-10) ── one narrow rail stacks the category
-   icon, start time, AM/PM and duration since parents scan by time; city/age/cost collapse into one line. */
+   icon, start time, AM/PM and duration since parents scan by time; city and age share one line; Free/Paid stays a pill. */
 .event-card.timeled .card-summary{gap:12px;}
 .tl-rail{width:50px;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-start;}
 .tl-rail .blaze{width:20px;height:20px;margin:0 0 3px;}
@@ -557,7 +557,6 @@ main{
 .tl-chip.now{background:var(--pill-green-bg);color:var(--pill-green-text);}
 .tl-date{font-size:11px;color:var(--ink-soft);margin-top:2px;}
 .tl-meta{font-size:12.5px;color:var(--ink-soft);margin-top:3px;line-height:1.35;}
-.tl-meta .tl-free{color:var(--pill-green-text);font-weight:600;}
 .tl-badges{margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;}
 .tl-badges:empty{display:none;}
 .tag{
@@ -1828,13 +1827,13 @@ function timeledSummaryHTML(ev, showDate){
   const badges = ev.badge==="trending" ? `<span class="tag badge-trending">${ICONS.trendUp} Trending</span>`
     : ev.badge==="popular" ? `<span class="tag badge-popular">${ICONS.star} Popular</span>`
     : ev.is_new ? `<span class="tag badge-new">${ICONS.sparkle} New</span>` : "";
-  const cost = ev.cost==="free" ? `<span class="tl-free">Free</span>` : "Paid";
+  const cost = `<span class="tag ${ev.cost}">${ev.cost==="free"?"Free":"Paid"}</span>`;
   return `<div class="card-summary">
       <div class="tl-rail"><div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>${rail}${showDate && ev.occurrence_label ? `<div class="tl-date">${ev.occurrence_label}</div>` : ""}${timeledLiveChip(ev, t && t.dur)}</div>
       <div class="event-main">
         <div class="event-title">${ev.title}</div>
-        <div class="tl-meta">${ev.source}<br>${ev.city} · Ages ${formatAgeRange(ev.age_min,ev.age_max)} · ${cost}</div>
-        <div class="tl-badges">${badges}</div>
+        <div class="tl-meta">${ev.source}<br>${ev.city} · Ages ${formatAgeRange(ev.age_min,ev.age_max)}</div>
+        <div class="tl-badges">${badges}${cost}</div>
       </div>
       ${EXPAND_HINT_SVG}
     </div>`;
