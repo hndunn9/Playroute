@@ -39,6 +39,10 @@ keep reads proportional to traffic:
 - `node --check src/index.js` (and the other `src/*.js` you touched).
 - For `public/*.html`: run a real HTML tag-matching parser (htmlparser2), a real
   CSS parser, and a syntax check on the inline `<script>`. Brace-counting isn't enough.
+- **No bare hex colors in `public/index.html` CSS.** Use the Granite & Glacier tokens on `:root`
+  (`--on-fill` for text on colored buttons, `--photo-bg` behind product photos, `--on-dark*` on dark
+  plates, `--icon-*` for category icons, `--fall-*` for the fall theme). Add a token if one is missing.
+- Support / affiliate / feedback blocks all use the `.sp-card` pattern (label, one line, outline pill).
 - **Never overwrite the GA4 snippet** (`G-V212HC6MVZ`) in `public/index.html`.
 
 ## Event data rules (D1 `events`)
