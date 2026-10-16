@@ -529,9 +529,9 @@ main{
    time gets its own rail since parents scan by time; city/age/cost collapse into one line. */
 .event-card.timeled .card-summary{gap:10px;}
 .tl-rail{width:54px;flex-shrink:0;padding-top:1px;}
-.tl-start{font-family:'DM Sans',sans-serif;font-size:17px;font-weight:600;color:var(--ink);line-height:1.1;white-space:nowrap;}
-.tl-ampm{font-size:10.5px;font-weight:500;color:var(--ink-soft);margin-left:2px;}
-.tl-dur{font-size:11px;color:var(--ink-soft);margin-top:2px;}
+.tl-start{font-family:'DM Sans',sans-serif;font-size:15px;font-weight:600;color:var(--ink);line-height:1.25;white-space:nowrap;}
+.tl-start-text{white-space:normal;font-size:13px;}
+.tl-dur{font-size:11.5px;color:var(--ink-soft);margin-top:1px;white-space:nowrap;}
 .tl-chip{display:inline-block;margin-top:5px;font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:100px;background:var(--wheat);color:var(--soil);white-space:nowrap;}
 .tl-chip.now{background:var(--pill-green-bg);color:var(--pill-green-text);}
 .tl-date{font-size:11px;color:var(--ink-soft);margin-top:2px;}
@@ -1772,21 +1772,27 @@ function renderAffiliateCloserCard(){
 // itself or it reads as missing context, not just "no date."
 const EXPAND_HINT_SVG = `<div class="expand-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>`;
 
-// "10:30 AM – 11:15 AM" -> {start:"10:30", ampm:"AM", mins:45}. Falls back to
-// the raw label (e.g. "All day") when it doesn't parse.
+// "10:30 AM – 11:15 AM" or "12:30 – 2:00 PM" -> {start:"12:30", ampm:"PM", dur:90}.
+// The start often omits AM/PM; it inherits the end's, then flips to AM if that
+// would put it after the end ("11:30 – 12:30 PM" starts at 11:30 AM).
 function parseClock(label){
-  const m = /(\d{1,2})(?::(\d{2}))?\s*([AP])\.?M/i.exec(label||"");
-  if(!m) return null;
-  let h = (+m[1]) % 12; if(m[3].toUpperCase()==="P") h += 12;
-  return { h: +m[1], mm: m[2]||"00", ampm: m[3].toUpperCase()+"M", minutes: h*60 + (+(m[2]||0)) };
+  const m = /(\d{1,2})(?::(\d{2}))?\s*(?:([AP])\.?M\.?)?/i.exec(String(label||"").trim());
+  if(!m || +m[1] < 1 || +m[1] > 12) return null;
+  return { h: +m[1], mm: m[2]||"00", ap: m[3] ? m[3].toUpperCase() : null };
 }
+function clockMinutes(c, ap){ return ((c.h % 12) + (ap==="P" ? 12 : 0)) * 60 + (+c.mm); }
 function timeledTimeParts(displayTime){
   const parts = String(displayTime||"").split(/\s*[–—-]\s*/);
   const a = parseClock(parts[0]), b = parts.length > 1 ? parseClock(parts[1]) : null;
-  if(!a) return null;
-  let dur = null;
-  if(b){ const d = b.minutes - a.minutes; if(d > 0 && d < 12*60) dur = d; }
-  return { start: `${a.h}:${a.mm}`, ampm: a.ampm, dur };
+  if(!a || (!a.ap && !(b && b.ap))) return null;
+  let apA = a.ap || b.ap, dur = null;
+  if(b && b.ap){
+    const endM = clockMinutes(b, b.ap);
+    if(!a.ap && clockMinutes(a, apA) > endM) apA = "A";
+    const d = endM - clockMinutes(a, apA);
+    if(d > 0 && d < 12*60) dur = d;
+  }
+  return { start: `${a.h}:${a.mm}`, ampm: apA + "M", dur };
 }
 function fmtDuration(mins){
   if(!mins) return "";
@@ -1807,9 +1813,11 @@ function timeledLiveChip(ev, durMins){
 }
 function timeledSummaryHTML(ev, showDate){
   const t = timeledTimeParts(ev.display_time);
+  // Every card's rail has the same two lines at the same sizes: "10:00" over
+  // "AM · 4 hr". Unparseable labels ("All day") use the same top-line style.
   const rail = t
-    ? `<div class="tl-start">${t.start}<span class="tl-ampm">${t.ampm}</span></div>${t.dur ? `<div class="tl-dur">${fmtDuration(t.dur)}</div>` : ""}`
-    : `<div class="tl-dur">${ev.display_time||""}</div>`;
+    ? `<div class="tl-start">${t.start}</div><div class="tl-dur">${t.ampm}${t.dur ? ` · ${fmtDuration(t.dur)}` : ""}</div>`
+    : `<div class="tl-start tl-start-text">${ev.display_time||""}</div>`;
   const badges = ev.badge==="trending" ? `<span class="tag badge-trending">${ICONS.trendUp} Trending</span>`
     : ev.badge==="popular" ? `<span class="tag badge-popular">${ICONS.star} Popular</span>`
     : ev.is_new ? `<span class="tag badge-new">${ICONS.sparkle} New</span>` : "";
