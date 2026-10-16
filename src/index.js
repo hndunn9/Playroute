@@ -2506,6 +2506,7 @@ async function handlePageView(request, env) {
   let source = null;
   let sawRecommended = 0;
   let experimentArm = null, experimentSessionId = null;
+  let cardExp = null;
   try {
     const body = await request.json();
     if (body && body.source) source = String(body.source).slice(0, 50);
@@ -2526,6 +2527,7 @@ async function handlePageView(request, env) {
       experimentArm = body.experimentArm;
       experimentSessionId = body.experimentSessionId ? String(body.experimentSessionId).slice(0, 64) : null;
     }
+    if (body) cardExp = cardExperimentFromBody(body);
   } catch { /* no body / not JSON — fine, organic visit */ }
   await env.DB.prepare(
     `INSERT INTO page_views (visitor_hash, visitor_hash_month, city, country, region, device_type, source, saw_recommended) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -2540,7 +2542,29 @@ async function handlePageView(request, env) {
        ON CONFLICT(session_id) DO UPDATE SET exposed = MAX(exposed, excluded.exposed)`
     ).bind(experimentSessionId, experimentArm, sawRecommended).run();
   }
+  if (cardExp) {
+    // Establishes the session's row for the time-led card test. DO NOTHING
+    // on conflict so it never resets counts a fast click already logged.
+    await safeCardExpWrite(env,
+      `INSERT INTO card_experiment_sessions (session_id, arm) VALUES (?, ?) ON CONFLICT(session_id) DO NOTHING`,
+      [cardExp.sid, cardExp.arm]);
+  }
   return json({ ok: true });
+}
+
+// ── Time-led event card A/B test (2026-10) ──
+// Independent of the Recommended test: its own 50/50 assignment (client-side,
+// localStorage "playroute-exp-cards"), its own table. Primary metric is
+// session click-through to a source ("View source" click). Writes are wrapped
+// so a missing table (migration not run yet) can never break pageviews/clicks.
+const CARD_EXP_ARMS = new Set(["control", "timeled"]);
+function cardExperimentFromBody(body) {
+  if (!body || !CARD_EXP_ARMS.has(body.cardArm) || !body.experimentSessionId) return null;
+  return { arm: body.cardArm, sid: String(body.experimentSessionId).slice(0, 64) };
+}
+async function safeCardExpWrite(env, sql, binds) {
+  try { await env.DB.prepare(sql).bind(...binds).run(); }
+  catch (e) { console.warn("card experiment write skipped:", e && e.message); }
 }
 
 // What people search for and how many results it returned -- the
@@ -3349,6 +3373,39 @@ async function handleRecommendedExperiment(env) {
 }
 
 
+// Per-arm results for the time-led card test (admin > Tests). Primary metric:
+// share of sessions that clicked through to at least one source.
+async function handleCardExperiment(env) {
+  let results;
+  try {
+    ({ results } = await env.DB.prepare(
+      `SELECT arm, COUNT(*) AS sessions, SUM(source_clicks > 0) AS clickthrough_sessions,
+         SUM(detail_views > 0) AS expanded_sessions, SUM(source_clicks) AS source_clicks,
+         SUM(detail_views) AS detail_views, MIN(created_at) AS started_at
+       FROM card_experiment_sessions GROUP BY arm`
+    ).all());
+  } catch (e) {
+    return json({ notReady: true, error: "card_experiment_sessions table missing — run migrations/2026-10-16-card-experiment.sql" });
+  }
+  const zero = { sessions: 0, clickthrough_sessions: 0, expanded_sessions: 0, source_clicks: 0, detail_views: 0 };
+  const c = results.find((r) => r.arm === "control") || zero;
+  const t = results.find((r) => r.arm === "timeled") || zero;
+  const metric = (key) => {
+    const r = twoProportionZTest(c[key] || 0, c.sessions || 0, t[key] || 0, t.sessions || 0);
+    return { control: r.p1, treatment: r.p2, liftPct: r.p1 ? Math.round(((r.p2 - r.p1) / r.p1) * 1000) / 10 : null, pValue: r.pValue, significant: r.pValue !== null && r.pValue < EXPERIMENT_ALPHA, sessionsNeededPerArm: sampleSizeForPower(r.p1, r.p2, 0.8) };
+  };
+  const per = (x, k) => (x.sessions ? Math.round(((x[k] || 0) / x.sessions) * 100) / 100 : null);
+  const ctrOfExpands = (x) => (x.detail_views ? Math.round(((x.source_clicks || 0) / x.detail_views) * 1000) / 1000 : null);
+  const armOut = (x) => ({ sessions: x.sessions || 0, clickedThrough: x.clickthrough_sessions || 0, expanded: x.expanded_sessions || 0, sourceClicks: x.source_clicks || 0, detailViews: x.detail_views || 0, sourceClicksPerSession: per(x, "source_clicks"), sourceClicksPerExpand: ctrOfExpands(x) });
+  return json({
+    startedAt: [c.started_at, t.started_at].filter(Boolean).sort()[0] || null,
+    control: armOut(c),
+    treatment: armOut(t),
+    metrics: { clickedThrough: metric("clickthrough_sessions"), expanded: metric("expanded_sessions") },
+    generatedAt: new Date().toISOString()
+  });
+}
+
 async function handleStats(env) {
 
   const todayStart = mountainMidnightTodayUTC();
@@ -4044,6 +4101,14 @@ async function handleTrackClick(request, env) {
          rec_clicks = rec_clicks + excluded.rec_clicks,
          updated_at = datetime('now')`
     ).bind(sid, body.experimentArm, action === "view_details" ? 1 : 0, action === "source_click" ? 1 : 0, fromRecommended).run();
+  }
+  const cardExp = cardExperimentFromBody(body);
+  if (cardExp) {
+    await safeCardExpWrite(env,
+      `INSERT INTO card_experiment_sessions (session_id, arm, detail_views, source_clicks) VALUES (?, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET detail_views = detail_views + excluded.detail_views,
+         source_clicks = source_clicks + excluded.source_clicks, updated_at = datetime('now')`,
+      [cardExp.sid, cardExp.arm, action === "view_details" ? 1 : 0, action === "source_click" ? 1 : 0]);
   }
   return json({ ok: true });
 }
@@ -6549,6 +6614,7 @@ const EDGE_CACHE_TTLS = {
   "/api/coverage-alerts": 300,
   "/api/manual-source-gaps": 900,
   "/api/recommended-experiment": 300,
+  "/api/card-experiment": 300,
   "/api/sources": 120,
   "/api/picks": 300
 };
@@ -6691,6 +6757,7 @@ const worker = {
       if (url.pathname === "/api/source-freshness") return await handleSourceFreshness(env);
       if (url.pathname === "/api/recommended-adoption") return await handleRecommendedAdoption(env);
       if (url.pathname === "/api/recommended-experiment") return await handleRecommendedExperiment(env);
+      if (url.pathname === "/api/card-experiment") return await handleCardExperiment(env);
       if (url.pathname === "/api/experiment-exposure" && request.method === "POST") return await handleExperimentExposure(request, env);
       if (url.pathname === "/api/recommended-feedback" && request.method === "POST") return await handleRecommendedFeedback(request, env);
       if (url.pathname === "/api/referrals-trend") {

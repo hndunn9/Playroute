@@ -525,6 +525,20 @@ main{
   color:var(--bark);
 }
 .tag-row{display:flex;flex-wrap:wrap;gap:4px 5px;margin-top:7px;}
+/* ── Time-led card variant (A/B test "timeled", 2026-10) ── time gets its own
+   left rail since parents scan by time; city/age/cost collapse into one line. */
+.event-card.timeled .card-summary{gap:12px;}
+.tl-rail{width:58px;flex-shrink:0;padding-top:1px;}
+.tl-start{font-family:'DM Sans',sans-serif;font-size:17px;font-weight:600;color:var(--ink);line-height:1.1;white-space:nowrap;}
+.tl-ampm{font-size:10.5px;font-weight:500;color:var(--ink-soft);margin-left:2px;}
+.tl-dur{font-size:11px;color:var(--ink-soft);margin-top:2px;}
+.tl-chip{display:inline-block;margin-top:5px;font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:100px;background:var(--wheat);color:var(--soil);white-space:nowrap;}
+.tl-chip.now{background:var(--pill-green-bg);color:var(--pill-green-text);}
+.tl-date{font-size:11px;color:var(--ink-soft);margin-top:2px;}
+.tl-meta{font-size:12.5px;color:var(--ink-soft);margin-top:3px;line-height:1.35;}
+.tl-meta .tl-free{color:var(--pill-green-text);font-weight:600;}
+.tl-badges{margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;}
+.tl-badges:empty{display:none;}
 .tag{
   display:inline-block;font-size:11px;font-weight:500;
   padding:2px 8px;border-radius:6px;
@@ -682,6 +696,8 @@ main{
 .empty-illustration{margin:0 auto 12px;}
 .empty-title{font-family:'Playfair Display',serif;font-size:16px;font-weight:600;color:var(--ink);margin-bottom:6px;}
 .empty-sub{font-size:12.5px;color:var(--ink-soft);line-height:1.5;max-width:230px;margin:0 auto;}
+.empty-widen-btn{margin-top:12px;font:inherit;font-size:13px;font-weight:600;padding:9px 16px;border-radius:100px;border:none;background:var(--clay);color:#fff;cursor:pointer;}
+.empty-widen-btn:focus-visible{outline:2px solid var(--sky);outline-offset:2px;}
 
 /* ── SIGNUP ── */
 .signup{
@@ -1264,7 +1280,7 @@ async function loadData(){
   // whether the recommended section had anything to show. lastSawRecommended
   // is set inside renderFeed() itself, right where the section is built.
   const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
-  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, ...expPayload()})}).catch(()=>{});
+  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, ...expPayload(), ...cardExpPayload()})}).catch(()=>{});
 }
 
 let activeCities = new Set(), activeAges = new Set(), activeCats = new Set();
@@ -1754,15 +1770,71 @@ function renderAffiliateCloserCard(){
 // the day-heading above each group; the recommended strip pulls cards out
 // of that grouping entirely, so it needs the date restated on the card
 // itself or it reads as missing context, not just "no date."
+const EXPAND_HINT_SVG = `<div class="expand-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>`;
+
+// "10:30 AM – 11:15 AM" -> {start:"10:30", ampm:"AM", mins:45}. Falls back to
+// the raw label (e.g. "All day") when it doesn't parse.
+function parseClock(label){
+  const m = /(\d{1,2})(?::(\d{2}))?\s*([AP])\.?M/i.exec(label||"");
+  if(!m) return null;
+  let h = (+m[1]) % 12; if(m[3].toUpperCase()==="P") h += 12;
+  return { h: +m[1], mm: m[2]||"00", ampm: m[3].toUpperCase()+"M", minutes: h*60 + (+(m[2]||0)) };
+}
+function timeledTimeParts(displayTime){
+  const parts = String(displayTime||"").split(/\s*[–—-]\s*/);
+  const a = parseClock(parts[0]), b = parts.length > 1 ? parseClock(parts[1]) : null;
+  if(!a) return null;
+  let dur = null;
+  if(b){ const d = b.minutes - a.minutes; if(d > 0 && d < 12*60) dur = d; }
+  return { start: `${a.h}:${a.mm}`, ampm: a.ampm, dur };
+}
+function fmtDuration(mins){
+  if(!mins) return "";
+  if(mins < 60) return `${mins} min`;
+  const h = Math.floor(mins/60), m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h} hr`;
+}
+// "Now" / "in 20m" -- only for events starting within the next 2 hours or
+// already underway. Computed at render time; no timers (no polling rule).
+function timeledLiveChip(ev, durMins){
+  if(!ev.occurrence) return "";
+  const start = new Date(ev.occurrence).getTime(), now = Date.now();
+  const end = start + (durMins || 60) * 60000;
+  if(now >= start && now < end) return `<span class="tl-chip now">Now</span>`;
+  const diff = Math.round((start - now) / 60000);
+  if(diff > 0 && diff <= 120) return `<span class="tl-chip">in ${diff < 60 ? diff + "m" : fmtDuration(diff)}</span>`;
+  return "";
+}
+function timeledSummaryHTML(ev, showDate){
+  const t = timeledTimeParts(ev.display_time);
+  const rail = t
+    ? `<div class="tl-start">${t.start}<span class="tl-ampm">${t.ampm}</span></div>${t.dur ? `<div class="tl-dur">${fmtDuration(t.dur)}</div>` : ""}`
+    : `<div class="tl-dur">${ev.display_time||""}</div>`;
+  const badges = ev.badge==="trending" ? `<span class="tag badge-trending">${ICONS.trendUp} Trending</span>`
+    : ev.badge==="popular" ? `<span class="tag badge-popular">${ICONS.star} Popular</span>`
+    : ev.is_new ? `<span class="tag badge-new">${ICONS.sparkle} New</span>` : "";
+  const cost = ev.cost==="free" ? `<span class="tl-free">Free</span>` : "Paid";
+  return `<div class="card-summary">
+      <div class="tl-rail">${rail}${showDate && ev.occurrence_label ? `<div class="tl-date">${ev.occurrence_label}</div>` : ""}${timeledLiveChip(ev, t && t.dur)}</div>
+      <div class="event-main">
+        <div class="event-title">${ev.title}</div>
+        <div class="tl-meta">${ev.source}<br>${ev.city} · Ages ${formatAgeRange(ev.age_min,ev.age_max)} · ${cost}</div>
+        <div class="tl-badges">${badges}</div>
+      </div>
+      ${EXPAND_HINT_SVG}
+    </div>`;
+}
+
 function buildEventCard(ev, opts){
   const showDate = opts && opts.showDate;
   const fromRecommended = !!(opts && opts.fromRecommended);
   const card=document.createElement("div");
-  card.className="event-card";
+  const timeled = isTimeledCards();
+  card.className = timeled ? "event-card timeled" : "event-card";
   card.dataset.eventId=ev.id;
   card.onclick=function(){ toggleCard(this, ev, fromRecommended); };
   card.innerHTML=`
-    <div class="card-summary">
+    ${timeled ? timeledSummaryHTML(ev, showDate) : `<div class="card-summary">
       <div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>
       <div class="event-main">
         <div class="event-title">${ev.title}</div>
@@ -1776,8 +1848,8 @@ function buildEventCard(ev, opts){
           <span class="tag age">Ages ${formatAgeRange(ev.age_min,ev.age_max)}</span>
         </div>
       </div>
-      <div class="expand-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></div>
-    </div>
+      ${EXPAND_HINT_SVG}
+    </div>`}
     <div class="card-detail">
       <div class="card-detail-inner">
         <div class="card-detail-note">${ev.note||""}</div>
@@ -1887,9 +1959,34 @@ function renderFeed(){
       const clearBtn = hiddenByFilters ? ` <a href="#" onclick="event.preventDefault();clearFiltersForSearch()">Show ${hiddenByFilters} event${hiddenByFilters===1?'':'s'} hidden by your filters</a>.` : '';
       feed.innerHTML = emptyStateHTML("No events match", `Nothing upcoming for "${escapeHtml(activeSearchDisplay())}" with your current filters.${clearBtn}${also}${!clearBtn && !also ? ' Try a different word, or clear the search.' : ''}`);
     } else {
-      feed.innerHTML = emptyStateHTML("No trail markers this way","Nothing matches those filters — try widening the date range, age, or category.");
+      feed.innerHTML = widenTimeframeEmptyState();
     }
   }
+}
+
+// Empty feed (no search): offer the next-wider date range that actually has
+// events under the current city/age/category/cost filters, as one tap.
+const WHEN_WIDTH = {today:0, tomorrow:0, weekend:1, week:2, twoweeks:3, all:4};
+function widenTimeframeEmptyState(){
+  const cur = WHEN_WIDTH[activeWhen] ?? 4;
+  const labels = Object.fromEntries(dateRangeOptions().map(o=>[o.id,o.label]));
+  const pool = events.filter(passesFilters).filter(ev=>ev.occurrence);
+  for(const id of ["weekend","week","twoweeks","all"]){
+    if(WHEN_WIDTH[id] <= cur) continue;
+    const n = pool.filter(ev=>inDateRange(ev.occurrence,id)).length;
+    if(n){
+      const what = id==="all" ? "coming up" : (id==="weekend" ? "this weekend" : `in the ${labels[id].toLowerCase()}`);
+      return emptyStateHTML("No trail markers this way",
+        `Nothing matches for ${labels[activeWhen].toLowerCase()}.<br><button type="button" class="empty-widen-btn" onclick="widenWhen('${id}')">Show ${n} event${n===1?'':'s'} ${what}</button>`);
+    }
+  }
+  return emptyStateHTML("No trail markers this way", "Nothing upcoming matches these filters, even further out. Try another city or category.");
+}
+function widenWhen(id){
+  activeWhen = id;
+  saveFilterPrefs();
+  renderAll();
+  const f = document.getElementById("weekFeed"); if(f) f.scrollIntoView({behavior:"smooth", block:"start"});
 }
 
 function activeSearchDisplay(){
@@ -2201,6 +2298,38 @@ function sendExpExposureOnce(){
     fetch(`${API_BASE}/api/experiment-exposure`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify(expPayload())}).catch(()=>{});
   }catch(e){}
 }
+// ── TIME-LED CARD A/B TEST (2026-10) ── separate from the Recommended test:
+// each browser gets "control" (current cards) or "timeled" (time rail on the
+// left) 50/50 and keeps it. Results: admin > Tests ("Time-led event cards").
+// Primary metric = sessions that click through to a source. To end the test,
+// set CARD_TEST_WINNER to "timeled" or "control" (stops logging, shows it to all).
+// ?ff_cards=timeled / =control previews a variant (still logged under your arm).
+const CARD_TEST_WINNER = null;
+const CARD_ARM_KEY = "playroute-exp-cards";
+let _cardArm = null;
+function getCardArm(){
+  if(_cardArm) return _cardArm;
+  try{ _cardArm = localStorage.getItem(CARD_ARM_KEY); }catch(e){}
+  if(_cardArm!=="timeled" && _cardArm!=="control"){
+    _cardArm = Math.random() < 0.5 ? "timeled" : "control";
+    try{ localStorage.setItem(CARD_ARM_KEY, _cardArm); }catch(e){}
+  }
+  return _cardArm;
+}
+function isTimeledCards(){
+  try{
+    const ff = new URLSearchParams(location.search).get('ff_cards');
+    if(ff==='timeled') return true;
+    if(ff==='control') return false;
+  }catch(e){}
+  if(CARD_TEST_WINNER) return CARD_TEST_WINNER==="timeled";
+  return getCardArm()==="timeled";
+}
+function cardExpPayload(){
+  if(CARD_TEST_WINNER) return {};
+  return { cardArm: getCardArm(), experimentSessionId: getExpSessionId() };
+}
+
 function isRecommendedFeatureOn(){
   try{
     const ff = new URLSearchParams(location.search).get('ff_recommended');
@@ -2234,7 +2363,7 @@ function getRecommendedEvents(pool){
 function trackClick(url,meta){
   recordAffinity(meta);
   try{
-    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action,fromRecommended:!!meta?.fromRecommended,...expPayload()}),keepalive:true}).catch(()=>{});
+    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action,fromRecommended:!!meta?.fromRecommended,...expPayload(),...cardExpPayload()}),keepalive:true}).catch(()=>{});
   }catch(err){}
 }
 
