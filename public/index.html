@@ -525,10 +525,10 @@ main{
   color:var(--bark);
 }
 .tag-row{display:flex;flex-wrap:wrap;gap:4px 5px;margin-top:7px;}
-/* ── Time-led card variant (A/B test "timeled", 2026-10) ── time gets its own
-   left rail since parents scan by time; city/age/cost collapse into one line. */
-.event-card.timeled .card-summary{gap:12px;}
-.tl-rail{width:58px;flex-shrink:0;padding-top:1px;}
+/* ── Time-led card variant (A/B test "timeled", 2026-10) ── category icon stays first, then the
+   time gets its own rail since parents scan by time; city/age/cost collapse into one line. */
+.event-card.timeled .card-summary{gap:10px;}
+.tl-rail{width:54px;flex-shrink:0;padding-top:1px;}
 .tl-start{font-family:'DM Sans',sans-serif;font-size:17px;font-weight:600;color:var(--ink);line-height:1.1;white-space:nowrap;}
 .tl-ampm{font-size:10.5px;font-weight:500;color:var(--ink-soft);margin-left:2px;}
 .tl-dur{font-size:11px;color:var(--ink-soft);margin-top:2px;}
@@ -1815,6 +1815,7 @@ function timeledSummaryHTML(ev, showDate){
     : ev.is_new ? `<span class="tag badge-new">${ICONS.sparkle} New</span>` : "";
   const cost = ev.cost==="free" ? `<span class="tl-free">Free</span>` : "Paid";
   return `<div class="card-summary">
+      <div class="blaze">${blazeSvg(matchEventIcon(ev))}</div>
       <div class="tl-rail">${rail}${showDate && ev.occurrence_label ? `<div class="tl-date">${ev.occurrence_label}</div>` : ""}${timeledLiveChip(ev, t && t.dur)}</div>
       <div class="event-main">
         <div class="event-title">${ev.title}</div>
