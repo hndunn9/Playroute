@@ -709,14 +709,18 @@ function ageFromWestminsterGroups(ageGroupText, details) {
 async function fetchAndScanWestminsterLibrary() {
   const { blocks, sample } = await fetchLibraryMarketBlocks(WESTMINSTER_LIBRARY_LIST_URL, { maxPages: 6 });
   if (blocks.length === 0) throw zeroFoundError("Westminster library", sample);
+  const today = toMountainDateStr(new Date());
   const needsReview = [];
+  const dropped = { past: 0, cancelled: 0, notKids: 0 };
   for (const parsed of blocks) {
-    if (parsed.cancelled || parsed.notSponsored) continue;
+    if (parsed.eventDate < today) { dropped.past++; continue; }
+    if (parsed.cancelled || parsed.notSponsored) { dropped.cancelled++; continue; }
     const ages = ageFromWestminsterGroups(parsed.ageGroup, parsed.details);
-    if (!ages) continue;
+    if (!ages) { dropped.notKids++; continue; }
     const branchKey = (parsed.branch || "").toLowerCase().replace(/\s+library$/, "").trim();
-    // Titles carry a branch code suffix ("Book Babies Storytime-CH").
-    const title = parsed.title.replace(/\s*[-–]\s*(CH|IS)\s*$/i, "").trim();
+    // Titles carry a branch code suffix ("Book Babies Storytime-CH",
+    // "Cuéntame Cuentos Spanish Storytime - IR").
+    const title = parsed.title.replace(/\s*[-–]\s*(CH|IR|IS)\s*$/i, "").trim();
     needsReview.push({
       title,
       source: WESTMINSTER_BRANCH_SOURCES[branchKey] || `Westminster Public Library${parsed.branch ? " — " + parsed.branch : ""}`,
@@ -733,6 +737,10 @@ async function fetchAndScanWestminsterLibrary() {
       note: parsed.details || null,
       source_url: `${WESTMINSTER_LIBRARY_BASE_URL}${parsed.href}`
     });
+  }
+  // Parsed events but kept none: say why instead of the generic "found 0".
+  if (needsReview.length === 0) {
+    throw new Error(`Westminster library: parsed ${blocks.length} events, kept 0 (past ${dropped.past}, cancelled/not sponsored ${dropped.cancelled}, not kids ${dropped.notKids}). Sample: ${(sample || "").slice(0, 600)}`);
   }
   return needsReview;
 }
@@ -821,7 +829,9 @@ function parseLibraryMarketBlock(blockText, href) {
 
   const branchMatch = blockText.match(/(?:Library Branch|Location):\s*(.+?)(?:\s+Room:|\s+Age Group:|\s+Program Type:|\s+Event Details:|$)/i);
   const roomMatch = blockText.match(/Room:\s*(.+?)(?:\s+Age Group:|\s+Purpose of Meeting|\s+Program Type:|\s+Event Details:|$)/i);
-  const ageGroupMatch = blockText.match(/Age Group:\s*(.+?)(?:\s+Program Type:|\s+Event Details:|\s+Registration|\s+Location:|\s+Room:|$)/i);
+  const ageGroupMatch = blockText.match(/Age Group:\s*(.+?)(?:\s+Program Type:|\s+Event Details:|\s+Registration|\s+Location:|\s+Room:|$)/i)
+    // Compact cards only say: This event is in the "Children & Families" group.
+    || blockText.match(/This event is in the "([^"]+)" group/i);
   const detailsMatch = blockText.match(/Event Details:\s*(.+?)(?:\s+Disclaimer\(?s?\)?|$)/i);
   title = decodeHtmlEntities(title).trim();
   return {
@@ -888,7 +898,7 @@ function libraryMarketCards(text) {
 // in the "found 0" error so a broken parser can be fixed from real markup.
 async function fetchLibraryMarketBlocks(listUrl, { maxPages = 4 } = {}) {
   const blocks = [];
-  const seen = new Set();
+  const seen = new Map();
   let sample = null;
   for (let page = 0; page < maxPages; page++) {
     const url = page === 0 ? listUrl : `${listUrl}${listUrl.includes("?") ? "&" : "?"}page=${page}`;
@@ -905,9 +915,16 @@ async function fetchLibraryMarketBlocks(listUrl, { maxPages = 4 } = {}) {
       const parsed = parseLibraryMarketBlock(card.text, card.href);
       if (!parsed) continue;
       // The vendor can render a compact and an expanded copy of one event.
+      // Keep the first copy but fill in anything only the other copy has
+      // (Westminster's compact copy has no Age Group / branch / details,
+      // which used to get every event filtered out).
       const sig = `${parsed.title}|${parsed.eventDate}|${parsed.startLabel}`;
-      if (seen.has(sig)) continue;
-      seen.add(sig);
+      const prev = seen.get(sig);
+      if (prev) {
+        for (const k of ["branch", "room", "ageGroup", "details"]) if (!prev[k] && parsed[k]) prev[k] = parsed[k];
+        continue;
+      }
+      seen.set(sig, parsed);
       blocks.push(parsed);
       added++;
     }
