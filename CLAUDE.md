@@ -171,6 +171,10 @@ keep reads proportional to traffic:
   so `/api/stats` compares against the same elapsed time last week, not the full week.
 - Recommended-section A/B test: 50/50 random split. Read at **80% confidence**
   (p < 0.20) with 80% power. These are directional reads.
+- **Time-led card A/B test** (Oct 2026): separate 50/50 split from the Recommended test (`playroute-exp-cards`:
+  `control` | `timeled`), logged per visit in D1 `card_experiment_sessions` via the pageview and click beacons
+  (`cardArm`). Key metric: visits with ≥1 source click. Results in admin > Tests (`/api/card-experiment`, cached
+  5 min). Preview with `?ff_cards=timeled|control`. End it by setting `CARD_TEST_WINNER` in index.html.
 - **Newsletter day picks** follow `src/digest-rules.js`: same title + venue on one day merges into one
   entry with all times; one entry per venue per day; each series once per week (later days become
   "also Thu, Fri"); a venue on at most 3 days. Thin days (<3 picks) relax the last two. Run

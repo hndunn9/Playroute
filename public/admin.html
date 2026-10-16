@@ -492,6 +492,12 @@
     <button class="secondary" onclick="loadRecExperiment()">Load A/B results</button>
     <div id="recExpOutput" style="margin-top:12px;"></div>
   </div>
+  <div class="card">
+    <h2>🕘 Time-led event cards — A/B test</h2>
+    <p>Half of browsers see event cards with the start time in a bold left rail, duration and a "Now / in 20m" chip, and city · age · cost on one line (time-led). Half see today's cards (control). Separate split from the Recommended test. <strong>Key metric: click-through to a source</strong> — the share of visits that tapped "View source" at least once.</p>
+    <button class="secondary" onclick="loadCardExperiment()">Load A/B results</button>
+    <div id="cardExpOutput" style="margin-top:12px;"></div>
+  </div>
     </div>
   </section>
 
@@ -1431,6 +1437,57 @@ async function loadRecExperiment(){
       </p>`;
   }catch(err){
     out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
+async function loadCardExperiment(){
+  const out = document.getElementById('cardExpOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/card-experiment');
+    const d = await res.json();
+    if(d.notReady){ out.innerHTML = `<div class="result show err">${escapeHtml(d.error)}</div>`; return; }
+    const c = d.control, t = d.treatment, m = d.metrics, k = m.clickedThrough;
+    if(!c.sessions && !t.sessions){
+      out.innerHTML = '<div class="pending-empty">No sessions logged yet — results appear once the update is live and people visit.</div>';
+      return;
+    }
+    const pct = (x) => x === null || x === undefined ? '—' : (Math.round(x * 1000) / 10) + '%';
+    const sigColor = (mm) => mm.liftPct === null || !mm.significant ? '#7A6650' : mm.liftPct > 0 ? '#3a5a2a' : '#7a2a2a';
+    const lift = (mm) => mm.liftPct === null ? '—' : `${mm.liftPct > 0 ? '+' : ''}${mm.liftPct}%`;
+    const verdict = k.liftPct === null ? 'Not enough data yet'
+      : !k.significant ? 'No clear winner yet'
+      : k.liftPct > 0 ? 'Time-led is winning' : 'Control is winning';
+    const smaller = Math.min(c.sessions, t.sessions), need = k.sessionsNeededPerArm;
+    const progress = need ? Math.min(100, Math.round(100 * smaller / need)) : null;
+    out.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px;">
+        <div style="background:var(--surface-2, #f6f5f1);border-radius:10px;padding:10px 12px;">
+          <div style="font-size:11px;color:#7A6650;">Click-through · control</div>
+          <div style="font-size:22px;font-weight:600;">${pct(k.control)}</div>
+          <div style="font-size:11px;color:#7A6650;">${c.clickedThrough} of ${c.sessions} visits</div>
+        </div>
+        <div style="background:var(--surface-2, #f6f5f1);border-radius:10px;padding:10px 12px;">
+          <div style="font-size:11px;color:#7A6650;">Click-through · time-led</div>
+          <div style="font-size:22px;font-weight:600;">${pct(k.treatment)}</div>
+          <div style="font-size:11px;color:#7A6650;">${t.clickedThrough} of ${t.sessions} visits</div>
+        </div>
+      </div>
+      <p style="margin:0 0 4px;font-weight:600;color:${sigColor(k)};">${verdict} · lift ${lift(k)}${k.pValue !== null ? ` · p = ${Math.round(k.pValue * 1000) / 1000}` : ''}</p>
+      ${progress !== null ? `<div style="height:6px;border-radius:3px;background:#e6e1d6;overflow:hidden;margin:6px 0 2px;"><div style="height:100%;width:${progress}%;background:#5B84A0;"></div></div>
+      <p style="font-size:11px;color:#7A6650;margin:0 0 10px;">${progress}% of the ~${need.toLocaleString()} visits per group needed for a reliable read at this gap.</p>` : '<p style="font-size:11px;color:#7A6650;margin:0 0 10px;">Too little difference so far to estimate the sample needed.</p>'}
+      <table class="ab-table">
+        <tr><th></th><th>Control</th><th>Time-led</th></tr>
+        <tr><td>Visits</td><td>${c.sessions}</td><td>${t.sessions}</td></tr>
+        <tr><td>Expanded an event<div><span class="ab-sig" style="color:${sigColor(m.expanded)};">${lift(m.expanded)}${m.expanded.significant ? ' · significant' : ''}</span></div></td><td>${pct(m.expanded.control)}</td><td>${pct(m.expanded.treatment)}</td></tr>
+        <tr><td>Source clicks per visit</td><td>${c.sourceClicksPerSession ?? '—'}</td><td>${t.sourceClicksPerSession ?? '—'}</td></tr>
+        <tr><td>Source clicks per expand</td><td>${pct(c.sourceClicksPerExpand)}</td><td>${pct(t.sourceClicksPerExpand)}</td></tr>
+      </table>
+      <p style="font-size:11px;color:#7A6650;margin:8px 0 0;">
+        ${d.startedAt ? `Running since ${new Date(d.startedAt.replace(' ', 'T') + 'Z').toLocaleDateString()}. ` : ''}"Significant" = 80% confidence (p &lt; 0.20), a directional read. Preview either version with <code>?ff_cards=timeled</code> or <code>?ff_cards=control</code>.
+      </p>`;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${escapeHtml(err.message)}</div>`;
   }
 }
 
