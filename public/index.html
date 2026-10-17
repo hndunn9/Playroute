@@ -8,6 +8,24 @@
      survives future full-file rewrites instead of living only in a
      deployed copy that gets silently overwritten the next time this file
      is replaced wholesale. -->
+<!-- Internal / automated traffic opt-out (2026-10). Runs BEFORE the GA4
+     snippet so page_view is never sent. Excluded: headless/automated browsers
+     (navigator.webdriver: Playwright, Puppeteer, Claude's test runs) and any
+     browser that visited /?internal=1 (undo with /?internal=0). Excluded
+     browsers also skip the first-party /api/* beacons (see beaconsOn()). -->
+<script>
+  (function(){
+    var internal = !!navigator.webdriver;
+    try{
+      var q = new URLSearchParams(location.search).get('internal');
+      if(q==='1') localStorage.setItem('playroute-internal','1');
+      if(q==='0') localStorage.removeItem('playroute-internal');
+      if(localStorage.getItem('playroute-internal')==='1') internal = true;
+    }catch(e){}
+    window.PLAYROUTE_INTERNAL = internal;
+    if(internal) window['ga-disable-G-V212HC6MVZ'] = true;
+  })();
+</script>
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-V212HC6MVZ"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
@@ -1285,7 +1303,7 @@ async function loadData(){
   // whether the recommended section had anything to show. lastSawRecommended
   // is set inside renderFeed() itself, right where the section is built.
   const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
-  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, ...expPayload(), ...cardExpPayload()})}).catch(()=>{});
+  beaconsOn() && fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, ...expPayload(), ...cardExpPayload()})}).catch(()=>{});
 }
 
 let activeCities = new Set(), activeAges = new Set(), activeCats = new Set();
@@ -1559,7 +1577,7 @@ function handleSearchInput(){
   searchTrackTimer = setTimeout(()=>{
     const n = lastShownCount + lastParkMatches + lastHikeMatches;
     ga('search', {search_term: activeSearch.slice(0,100), results_count: n, zero_results: n===0});
-    fetch(`${API_BASE}/api/track-search`,{
+    beaconsOn() && fetch(`${API_BASE}/api/track-search`,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({query:activeSearch, resultsCount:lastShownCount + lastParkMatches + lastHikeMatches}),
@@ -2253,7 +2271,7 @@ function buildPicksSection(){
       card.href = p.link_url; card.target = "_blank"; card.rel = "noopener sponsored";
       if(!p.preview) card.addEventListener("click", ()=>{
         ga('partner_pick_click',{partner_name:(p.business_name||'').slice(0,100)});
-        try{ fetch(`${API_BASE}/api/track-click`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:p.link_url,event_title:p.business_name,category:"partner",action:"pick_click"})}).catch(()=>{}); }catch(e){}
+        try{ beaconsOn() && fetch(`${API_BASE}/api/track-click`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:p.link_url,event_title:p.business_name,category:"partner",action:"pick_click"})}).catch(()=>{}); }catch(e){}
       });
     }
     let logo;
@@ -2306,7 +2324,7 @@ function sendExpExposureOnce(){
   if(_expExposureSent || FEATURE_RECOMMENDED_ENABLED) return;
   _expExposureSent = true;
   try{
-    fetch(`${API_BASE}/api/experiment-exposure`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify(expPayload())}).catch(()=>{});
+    beaconsOn() && fetch(`${API_BASE}/api/experiment-exposure`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify(expPayload())}).catch(()=>{});
   }catch(e){}
 }
 // ── TIME-LED CARD A/B TEST (2026-10) ── separate from the Recommended test:
@@ -2424,6 +2442,9 @@ const GA_ACTION_EVENTS = {view_details:'view_event_details', add_to_calendar:'ad
 function gaItem(meta){
   return {item_id: meta?.id!=null ? String(meta.id) : undefined, item_name: (meta?.title||'').slice(0,100), activity_category: meta?.category, activity_city: meta?.city, from_recommended: !!meta?.fromRecommended};
 }
+// False for internal/automated browsers (set in <head>), so they never land
+// in page_views, link_clicks, search_queries or experiment tables.
+function beaconsOn(){ return !window.PLAYROUTE_INTERNAL; }
 function trackClick(url,meta){
   recordAffinity(meta);
   if(meta?.action && GA_ACTION_EVENTS[meta.action]){
@@ -2432,7 +2453,7 @@ function trackClick(url,meta){
     ga('open_maps', gaItem(meta));
   }
   try{
-    fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action,fromRecommended:!!meta?.fromRecommended,...expPayload(),...cardExpPayload()}),keepalive:true}).catch(()=>{});
+    beaconsOn() && fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action,fromRecommended:!!meta?.fromRecommended,...expPayload(),...cardExpPayload()}),keepalive:true}).catch(()=>{});
   }catch(err){}
 }
 
@@ -2476,7 +2497,7 @@ function submitRecommendedFeedback(vote){
   if(row) row.innerHTML = `<span>Thanks for the feedback! 🙏</span>`;
   try{ localStorage.setItem(RECOMMENDED_FEEDBACK_GIVEN_KEY, "true"); }catch(e){}
   try{
-    fetch(`${API_BASE}/api/recommended-feedback`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({vote, experimentArm:getExpArm(), experimentSessionId:getExpSessionId()}),keepalive:true}).catch(()=>{});
+    beaconsOn() && fetch(`${API_BASE}/api/recommended-feedback`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({vote, experimentArm:getExpArm(), experimentSessionId:getExpSessionId()}),keepalive:true}).catch(()=>{});
   }catch(e){}
 }
 

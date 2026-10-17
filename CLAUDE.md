@@ -44,6 +44,10 @@ keep reads proportional to traffic:
   plates, `--icon-*` for category icons, `--fall-*` for the fall theme). Add a token if one is missing.
 - Support / affiliate / feedback blocks all use the `.sp-card` pattern (label, one line, outline pill).
 - **Never overwrite the GA4 snippet** (`G-V212HC6MVZ`) in `public/index.html`.
+- **Don't inflate analytics.** Automated browsers (`navigator.webdriver`) and browsers that visited
+  `/?internal=1` skip GA4 and the first-party `/api/*` beacons (opt-out script before the GA snippet,
+  `beaconsOn()`). Keep new analytics beacons behind `beaconsOn()`. Prefer local copies of the page for
+  testing; never script traffic against playroute.co.
 
 ## Event data rules (D1 `events`)
 - **Check for duplicates first**, every time: same title (loosely) + city +
