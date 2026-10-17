@@ -3550,7 +3550,7 @@ async function handleCardExperiment(env) {
   };
   const per = (x, k) => (x.sessions ? Math.round(((x[k] || 0) / x.sessions) * 100) / 100 : null);
   const ctrOfExpands = (x) => (x.detail_views ? Math.round(((x.source_clicks || 0) / x.detail_views) * 1000) / 1000 : null);
-  const armOut = (x) => ({ sessions: x.sessions || 0, clickedThrough: x.clickthrough_sessions || 0, expanded: x.expanded_sessions || 0, sourceClicks: x.source_clicks || 0, detailViews: x.detail_views || 0, sourceClicksPerSession: per(x, "source_clicks"), sourceClicksPerExpand: ctrOfExpands(x) });
+  const armOut = (x) => ({ sessions: x.sessions || 0, clickedThrough: x.clickthrough_sessions || 0, expanded: x.expanded_sessions || 0, sourceClicks: x.source_clicks || 0, detailViews: x.detail_views || 0, sourceClicksPerSession: per(x, "source_clicks"), sourceClicksPerExpand: ctrOfExpands(x), clickedThroughOfExpanded: x.expanded_sessions ? Math.round(((x.clickthrough_sessions || 0) / x.expanded_sessions) * 1000) / 1000 : null });
   return json({
     startedAt: [c.started_at, t.started_at].filter(Boolean).sort()[0] || null,
     control: armOut(c),
