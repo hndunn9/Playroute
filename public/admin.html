@@ -1481,7 +1481,7 @@ async function loadCardExperiment(){
         <tr><td>Visits</td><td>${c.sessions}</td><td>${t.sessions}</td></tr>
         <tr><td>Expanded an event<div><span class="ab-sig" style="color:${sigColor(m.expanded)};">${lift(m.expanded)}${m.expanded.significant ? ' · significant' : ''}</span></div></td><td>${pct(m.expanded.control)}</td><td>${pct(m.expanded.treatment)}</td></tr>
         <tr><td>Source clicks per visit</td><td>${c.sourceClicksPerSession ?? '—'}</td><td>${t.sourceClicksPerSession ?? '—'}</td></tr>
-        <tr><td>Source clicks per expand</td><td>${pct(c.sourceClicksPerExpand)}</td><td>${pct(t.sourceClicksPerExpand)}</td></tr>
+        <tr><td>Clicked through, of visits that expanded<div style="font-size:11px;color:#7A6650;">Per visit, so one heavy user can't skew it</div></td><td>${pct(c.clickedThroughOfExpanded)}</td><td>${pct(t.clickedThroughOfExpanded)}</td></tr>
       </table>
       <p style="font-size:11px;color:#7A6650;margin:8px 0 0;">
         ${d.startedAt ? `Running since ${new Date(d.startedAt.replace(' ', 'T') + 'Z').toLocaleDateString()}. ` : ''}"Significant" = 80% confidence (p &lt; 0.20), a directional read. Preview either version with <code>?ff_cards=timeled</code> or <code>?ff_cards=control</code>.

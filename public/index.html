@@ -2284,7 +2284,7 @@ const FEATURE_RECOMMENDED_ENABLED = false;
 // session ride along on the pageview and every click beacon; results are
 // on the admin page ("Recommended for you A/B test"). Set
 // FEATURE_RECOMMENDED_ENABLED = true to end the test and show it to all.
-// ?ff_recommended=1 / =0 force it on/off for previewing (still logged
+// ?ff_recommended=1 / =0 force it on/off for previewing (NOT logged since 2026-10-17; before that they were
 // under your real arm, so keep previews to a minimum).
 const EXP_ARM_KEY = "playroute-exp-recommended";
 let _expSessionId = null, _expExposureSent = false;
@@ -2299,7 +2299,7 @@ function getExpSessionId(){
   return _expSessionId;
 }
 function expPayload(){
-  if(FEATURE_RECOMMENDED_ENABLED) return {}; // test over, stop logging
+  if(FEATURE_RECOMMENDED_ENABLED || isPreviewing('ff_recommended')) return {}; // test over or preview: don't log
   return { experimentArm: getExpArm(), experimentSessionId: getExpSessionId() };
 }
 function sendExpExposureOnce(){
@@ -2314,7 +2314,7 @@ function sendExpExposureOnce(){
 // left) 50/50 and keeps it. Results: admin > Tests ("Time-led event cards").
 // Primary metric = sessions that click through to a source. To end the test,
 // set CARD_TEST_WINNER to "timeled" or "control" (stops logging, shows it to all).
-// ?ff_cards=timeled / =control previews a variant (still logged under your arm).
+// ?ff_cards=timeled / =control previews a variant (not logged).
 const CARD_TEST_WINNER = null;
 const CARD_ARM_KEY = "playroute-exp-cards";
 function getCardArm(){ return getArm('cards'); }
@@ -2359,8 +2359,12 @@ function isTimeledCards(){
   }catch(e){}
   return variantFor('cards')==="timeled";
 }
+// Previews (?ff_cards / ?ff_recommended) show a forced variant, so they must
+// not be logged: they used to be recorded under the browser's real arm, which
+// put one variant's behavior into the other variant's numbers.
+function isPreviewing(flag){ try{ return new URLSearchParams(location.search).has(flag); }catch(e){ return false; } }
 function cardExpPayload(){
-  if(CARD_TEST_WINNER) return {};
+  if(CARD_TEST_WINNER || isPreviewing('ff_cards')) return {};
   return { cardArm: getCardArm(), experimentSessionId: getExpSessionId() };
 }
 
@@ -2411,7 +2415,7 @@ function ga(name, params){
       let seen = {};
       try{ seen = JSON.parse(sessionStorage.getItem('playroute-ga-exp')||'{}'); }catch(e){}
       runningExperiments().forEach(id=>{
-        if(seen[id]) return;
+        if(seen[id] || isPreviewing('ff_'+id)) return;
         seen[id] = 1;
         gtag('event','experiment_impression',{experiment_id:id, experiment_variant:getArm(id)});
       });
