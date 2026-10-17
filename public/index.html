@@ -1557,6 +1557,8 @@ function handleSearchInput(){
   clearTimeout(searchTrackTimer);
   if(activeSearch.length < 2) return; // too short to be a meaningful query
   searchTrackTimer = setTimeout(()=>{
+    const n = lastShownCount + lastParkMatches + lastHikeMatches;
+    ga('search', {search_term: activeSearch.slice(0,100), results_count: n, zero_results: n===0});
     fetch(`${API_BASE}/api/track-search`,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
@@ -2097,13 +2099,14 @@ function handleSignup(){
     // since --wheat is one of the constant accent colors, not one of the ones that flips.
   fetch(`${API_BASE}/api/subscribe`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})})
     .then(r=>{ if(!r.ok) throw new Error(); return r.json(); })
-    .then(()=>{ note.textContent="You're in! One email a week, every Sunday."; note.style.color="var(--on-dark-soft)"; input.value=""; })
+    .then(()=>{ ga('sign_up',{method:'newsletter'}); note.textContent="You're in! One email a week, every Sunday."; note.style.color="var(--on-dark-soft)"; input.value=""; })
     .catch(()=>{ note.textContent="Something went wrong — try again in a bit."; note.style.color="var(--ember)"; });
 }
 
 let filtersOpen=false;
 
 function scrollToSection(anchorId){
+  ga('section_nav',{section:anchorId.replace('section-','')});
   if(filtersOpen) toggleFilters();
   const target=document.getElementById(anchorId);
   if(target) target.scrollIntoView({behavior:"smooth",block:"start"});
@@ -2174,6 +2177,7 @@ function handleEventDeepLink(){
     card = tryFind();
   }
 
+  ga('shared_link_open',{item_id:String(targetId), found:!!card});
   if(card){
     const ev = events.find(e=>String(e.id)===String(targetId));
     setTimeout(()=>{
@@ -2248,6 +2252,7 @@ function buildPicksSection(){
     if(p.link_url){
       card.href = p.link_url; card.target = "_blank"; card.rel = "noopener sponsored";
       if(!p.preview) card.addEventListener("click", ()=>{
+        ga('partner_pick_click',{partner_name:(p.business_name||'').slice(0,100)});
         try{ fetch(`${API_BASE}/api/track-click`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:p.link_url,event_title:p.business_name,category:"partner",action:"pick_click"})}).catch(()=>{}); }catch(e){}
       });
     }
@@ -2374,8 +2379,35 @@ function getRecommendedEvents(pool){
   return scored.slice(0, RECOMMENDED_MAX_ITEMS).map(s=>s.ev);
 }
 
+// ── GA4 CUSTOM EVENTS (2026-10) ── mirrors the first-party /api/track-*
+// logging into GA4 so engagement shows up next to DAU/MAU. Never throws, and
+// no-ops if gtag is blocked. Param names must match the custom dimensions
+// registered in GA4 (Admin > Custom definitions) — see README "GA4 events".
+let _gaPropsSet = false;
+function ga(name, params){
+  try{
+    if(typeof gtag!=='function') return;
+    if(!_gaPropsSet){
+      _gaPropsSet = true;
+      const props = {theme: document.documentElement.getAttribute('data-theme')||'light'};
+      if(!FEATURE_RECOMMENDED_ENABLED) props.rec_test_arm = getExpArm();
+      if(!CARD_TEST_WINNER) props.card_test_arm = getCardArm();
+      gtag('set','user_properties',props);
+    }
+    gtag('event', name, params||{});
+  }catch(e){}
+}
+const GA_ACTION_EVENTS = {view_details:'view_event_details', add_to_calendar:'add_to_calendar', share:'share', source_click:'source_click', support_click:'support_click', affiliate_click:'affiliate_click'};
+function gaItem(meta){
+  return {item_id: meta?.id!=null ? String(meta.id) : undefined, item_name: (meta?.title||'').slice(0,100), activity_category: meta?.category, activity_city: meta?.city, from_recommended: !!meta?.fromRecommended};
+}
 function trackClick(url,meta){
   recordAffinity(meta);
+  if(meta?.action && GA_ACTION_EVENTS[meta.action]){
+    ga(GA_ACTION_EVENTS[meta.action], meta.action==='share' ? {...gaItem(meta), method: navigator.share ? 'native' : 'clipboard', content_type:'event'} : gaItem(meta));
+  } else if(meta?.category==='playground' || meta?.category==='hike'){
+    ga('open_maps', gaItem(meta));
+  }
   try{
     fetch(`${API_BASE}/api/track-click`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:url,event_id:meta?.id,event_title:meta?.title,city:meta?.city,category:meta?.category,action:meta?.action,fromRecommended:!!meta?.fromRecommended,...expPayload(),...cardExpPayload()}),keepalive:true}).catch(()=>{});
   }catch(err){}
@@ -2416,6 +2448,7 @@ function renderRecommendedFeedback(cardsEl){
   cardsEl.appendChild(row);
 }
 function submitRecommendedFeedback(vote){
+  ga('recommended_feedback',{vote});
   const row = document.getElementById("recommendedFeedback");
   if(row) row.innerHTML = `<span>Thanks for the feedback! 🙏</span>`;
   try{ localStorage.setItem(RECOMMENDED_FEEDBACK_GIVEN_KEY, "true"); }catch(e){}
@@ -2458,11 +2491,11 @@ function loadFilterPrefs(){
 }
 
 function init(){
-  renderChips("whenFilters",dateRangeOptions(),activeWhen,(v)=>{activeWhen=v;saveFilterPrefs();renderAll();});
-  renderChips("cityFilters",cityOptions(),activeCities,(v)=>{toggleFilterValue(activeCities,v);saveFilterPrefs();renderAll();});
-  renderChips("ageFilters",ageOptions(),activeAges,(v)=>{toggleFilterValue(activeAges,v);saveFilterPrefs();renderAll();});
-  renderChips("catFilters",catOptions(),activeCats,(v)=>{toggleFilterValue(activeCats,v);saveFilterPrefs();renderAll();});
-  renderChips("costFilters",costOptions(),activeCost,(v)=>{activeCost=v;saveFilterPrefs();renderAll();});
+  renderChips("whenFilters",dateRangeOptions(),activeWhen,(v)=>{ga('filter_change',{filter_type:'when',filter_value:v});activeWhen=v;saveFilterPrefs();renderAll();});
+  renderChips("cityFilters",cityOptions(),activeCities,(v)=>{ga('filter_change',{filter_type:'city',filter_value:v,selected:!activeCities.has(v)});toggleFilterValue(activeCities,v);saveFilterPrefs();renderAll();});
+  renderChips("ageFilters",ageOptions(),activeAges,(v)=>{ga('filter_change',{filter_type:'age',filter_value:v,selected:!activeAges.has(v)});toggleFilterValue(activeAges,v);saveFilterPrefs();renderAll();});
+  renderChips("catFilters",catOptions(),activeCats,(v)=>{ga('filter_change',{filter_type:'cat',filter_value:v,selected:!activeCats.has(v)});toggleFilterValue(activeCats,v);saveFilterPrefs();renderAll();});
+  renderChips("costFilters",costOptions(),activeCost,(v)=>{ga('filter_change',{filter_type:'cost',filter_value:v});activeCost=v;saveFilterPrefs();renderAll();});
 }
 function renderAll(){ init(); updateActiveCount(); renderFeed(); renderPlaygrounds(); renderHikes(); }
 
