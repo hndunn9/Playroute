@@ -98,3 +98,34 @@ Configured in `wrangler.jsonc`:
 - Several data sources are JS-rendered or login-walled and can't be automated at all — they're manually re-checked periodically instead
 - "Events discovered all-time" counts actions (card expands + source clicks + calendar-adds + shares), not deduplicated unique events — someone who does all four for the same event counts four times
 - Analytics only cover the period since tracking was added, not the app's entire history
+
+## GA4 events
+
+`public/index.html` sends these custom events to GA4 (`G-V212HC6MVZ`) via the `ga()` helper, alongside the existing `/api/track-*` logging.
+
+| Event | When | Params |
+|---|---|---|
+| `view_event_details` | Event card expanded | item_id, item_name, activity_category, activity_city, from_recommended |
+| `source_click` | "View source" clicked | same as above |
+| `add_to_calendar` | Calendar button | same as above |
+| `share` | Share button | same + method, content_type |
+| `open_maps` | Playground/hike "Open in Maps" | item_name, activity_category, activity_city |
+| `support_click` / `affiliate_click` | Ko-fi / affiliate links | item_name |
+| `partner_pick_click` | Playroute's Picks card | partner_name |
+| `search` | Settled search (800ms debounce) | search_term, results_count, zero_results |
+| `filter_change` | Filter chip tapped | filter_type, filter_value, selected |
+| `sign_up` | Newsletter signup succeeds | method |
+| `shared_link_open` | Landing via `?event=` link | item_id, found |
+| `recommended_feedback` | 👍/👎 on Recommended | vote |
+| `section_nav` | Events/Playgrounds/Hikes tab | section |
+
+Also `experiment_impression` (experiment_id, experiment_variant) once per running A/B test per session, fired with the first GA event of the session. User property: `theme`.
+
+### Adding an A/B test
+Add one entry to `EXPERIMENTS` in `public/index.html` and read it with `variantFor('id')`. To end it, set `winner`. Nothing to change in GA4: in Explore, build a segment of users with `experiment_impression` where `experiment_id` = your id and `experiment_variant` = the arm, then compare DAU/retention/key events across segments.
+
+**One-time GA4 setup** (Admin → Data display → Custom definitions → Create custom dimension). Data only appears after registration, never retroactively.
+- Event-scoped: `activity_category`, `activity_city`, `from_recommended`, `filter_type`, `filter_value`, `zero_results`, `partner_name`, `section`, `vote`, `experiment_id`, `experiment_variant`. (`search_term`, `item_id`, `item_name`, `method` are built in.)
+- Event-scoped metric (Custom metrics tab): `results_count`.
+- User-scoped: `theme`.
+- Key events (Admin → Data display → Events → mark as key event): `source_click`, `add_to_calendar`, `share`, `sign_up`.
