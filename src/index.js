@@ -1385,6 +1385,143 @@ async function fetchMuseumOfBoulder() {
 }
 SOURCE_RUNNERS.museum_of_boulder = async () => fetchMuseumOfBoulder();
 
+// --- Ned to Go (Nederland community calendar, WordPress + WP Event Manager)
+// Confirmed 2026-10-17: /wp-json/wp/v2/event_listing lists events (title,
+// link, content) but exposes no date/time meta, so dates come from each event
+// page, which renders "Oct-31-2026 (Sat) @ 10:00 AM to Oct-31-2026 (Sat) @
+// 01:00 PM" plus a Location line. Most listings are bar/music nights, so only
+// listings with a kid/family signal get a page fetch. A quiet month with no
+// kids' events is normal here (QUIET_OK_SOURCES in pipeline.js); a feed with
+// no listings at all still throws.
+const NTG_SITE = "https://nedtogo.com";
+const NTG_SOURCE = "Nederland — Ned to Go";
+const NTG_HEADERS = { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" };
+const NTG_HORIZON_DAYS = 60;
+const NTG_RECENT_DAYS = 150; // listings not edited in this long are old events
+const NTG_MAX_DETAILS = 30;
+const NTG_KID_RE = /\b(kids?|kiddos?|child|children|famil(y|ies)|toddlers?|bab(y|ies)|preschool\w*|story ?time|tots?|little ones?|all ages|youth|trick[- ]or[- ]treat\w*)\b/i;
+const NTG_ADULT_ONLY_RE = /\b21\s*\+|\b21 and (over|up)\b|\badults? only\b/i;
+const NTG_DATE_RE = /([A-Z][a-z]{2})-(\d{1,2})-(\d{4})\s*\(\w{3}\)\s*@\s*(\d{1,2}:\d{2}\s*[AP]M)(?:\s*to\s*([A-Z][a-z]{2})-(\d{1,2})-(\d{4})\s*\(\w{3}\)\s*@\s*(\d{1,2}:\d{2}\s*[AP]M))?/i;
+const MONTHS_SHORT = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+function ntgText(html) {
+  return decodeHtmlEntities(stripTags(String(html || "").replace(/>/g, "> "))).replace(/\s+/g, " ").trim();
+}
+
+function ntgDate(mon, day, year) {
+  const mi = MONTHS_SHORT.indexOf(String(mon).toLowerCase());
+  return mi < 0 ? null : `${year}-${String(mi + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+// "01:00 PM" -> "1:00 PM"
+function ntgClock(label) {
+  return String(label || "").replace(/\s+/g, " ").replace(/^0(\d)/, "$1").toUpperCase().trim();
+}
+
+function ntgCost(text) {
+  if (/\$\s*\d/.test(text)) return "paid";
+  return /\bfree\b/i.test(text) ? "free" : "paid";
+}
+
+async function fetchNedToGoListings() {
+  const cutoff = new Date(Date.now() - NTG_RECENT_DAYS * 864e5).toISOString().slice(0, 10);
+  const out = [];
+  for (let page = 1; page <= 2; page++) {
+    const url = `${NTG_SITE}/wp-json/wp/v2/event_listing?per_page=100&page=${page}&orderby=modified&order=desc&_fields=id,link,title,content,modified`;
+    const res = await fetch(url, { headers: { ...NTG_HEADERS, Accept: "application/json" } });
+    if (!res.ok) {
+      if (page === 1) throw new Error(`Ned to Go events API returned ${res.status}`);
+      break;
+    }
+    const items = await res.json();
+    if (!Array.isArray(items) || items.length === 0) break;
+    let older = false;
+    for (const it of items) {
+      if (String(it.modified || "").slice(0, 10) < cutoff) { older = true; continue; }
+      out.push({
+        title: decodeHtmlEntities(stripTags(it.title && it.title.rendered)).trim(),
+        desc: ntgText(it.content && it.content.rendered),
+        url: it.link
+      });
+    }
+    if (older || items.length < 100) break;
+  }
+  return out;
+}
+
+async function fetchNedToGoDetail(listing) {
+  try {
+    const res = await fetch(listing.url, { headers: NTG_HEADERS, signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const html = (await res.text()).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+    const text = ntgText(html);
+    const m = NTG_DATE_RE.exec(text);
+    if (!m) return { error: "no-date" };
+    const date = ntgDate(m[1], m[2], m[3]);
+    const endDate = m[5] ? ntgDate(m[5], m[6], m[7]) : null;
+    const startLabel = ntgClock(m[4]);
+    const endLabel = m[8] ? ntgClock(m[8]) : null;
+    const startHHMM = to24HourFromLabel(startLabel);
+    if (!date || !startHHMM) return { error: "no-date" };
+    const loc = (text.match(/\bLocation\s+(.+?)\s+(?:Event Category|Share With Friends|Made with)\b/) || [])[1] || "";
+    return {
+      date,
+      startHHMM,
+      displayTime: endLabel && (!endDate || endDate === date) ? `${startLabel} – ${endLabel}` : startLabel,
+      location: loc.slice(0, 120).trim()
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function fetchNedToGo() {
+  const today = toMountainDateStr(new Date());
+  const end = toMountainDateStr(new Date(Date.now() + NTG_HORIZON_DAYS * 864e5));
+  const listings = await fetchNedToGoListings();
+  if (listings.length === 0) throw zeroFoundError("Ned to Go (events API returned no recent listings)", "");
+  const kid = listings
+    .filter((l) => NTG_KID_RE.test(`${l.title} ${l.desc}`) && !NTG_ADULT_ONLY_RE.test(`${l.title} ${l.desc}`))
+    .slice(0, NTG_MAX_DETAILS);
+  const out = [];
+  let noDate = 0;
+  for (let i = 0; i < kid.length; i += 6) {
+    const batch = kid.slice(i, i + 6);
+    const details = await Promise.all(batch.map(fetchNedToGoDetail));
+    details.forEach((d, j) => {
+      if (!d) return;
+      if (d.error) { noDate++; return; }
+      if (d.date < today || d.date > end) return;
+      const l = batch[j];
+      const ages = ageFromLongmontTitle(l.title);
+      const broad = ages.age_min === 0 && ages.age_max === 18;
+      const note = [d.location ? `At ${d.location}.` : "", l.desc].filter(Boolean).join(" ");
+      out.push({
+        title: l.title,
+        source: NTG_SOURCE,
+        city: "Nederland",
+        category: "community",
+        cost: ntgCost(l.desc),
+        age_min: broad ? 0 : ages.age_min,
+        age_max: broad ? 12 : ages.age_max,
+        day_of_week: dayOfWeekFor(d.date),
+        start_time: d.startHHMM,
+        display_time: d.displayTime,
+        recurrence: "dated",
+        event_date: d.date,
+        note: note ? truncateAtBoundary(note, 250) : null,
+        source_url: l.url
+      });
+    });
+  }
+  // Every kid listing fetched but none had a readable date: the page layout changed.
+  if (kid.length > 0 && noDate === kid.length) {
+    throw new Error(`Ned to Go: ${kid.length} kids' listings found but no "Mon-DD-YYYY (Day) @ H:MM AM" date on any event page -- the page layout may have changed.`);
+  }
+  return out;
+}
+SOURCE_RUNNERS.nedtogo = async () => fetchNedToGo();
+
 // --- Jackrabbit class studios (public OpeningsJson) ----------------------
 // Confirmed 2026-10-01 for Mountain Kids (org 135459): a clean JSON list of
 // classes with meeting days, times, ages (ISO durations), location, fee and

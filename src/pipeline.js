@@ -615,6 +615,8 @@ const SOURCE_RUNNERS = {};
 // does). Every result funnels through ingestCandidate; nothing here ever
 // writes to `events` directly. Stamps last_run_at/last_status/last_error/
 // last_found on scrape_sources for each source it touches.
+const QUIET_OK_SOURCES = new Set(["nedtogo"]);
+
 async function runSources(env, { cadence = null, sourceKey = null } = {}) {
   // sourceKey: run exactly one source -- used by the per-source fan-out
   // (runSourcesFannedOut in index.js), where each source gets its own
@@ -641,7 +643,9 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
       // An automatic source that finds nothing two runs in a row is almost
       // always a broken scraper, not a quiet calendar (five sources sat at
       // "ok, 0 found" for weeks in 2026). Surface it as an error in admin.
-      if (candidates.length === 0 && source.last_found === 0) {
+      // Community calendars that are mostly adult events can legitimately have
+      // no kids' events for weeks; their runners throw on real breakage instead.
+      if (candidates.length === 0 && source.last_found === 0 && !QUIET_OK_SOURCES.has(source.source_key)) {
         throw new Error("Found 0 events two runs in a row -- the site or its layout may have changed.");
       }
       const reviewCtx = (await loadReviewContext(env, source)) || {};

@@ -117,6 +117,10 @@ keep reads proportional to traffic:
   - WOW: site moved to WordPress (`/events/<slug>/<date>/`). Tries The Events Calendar REST API, falls back to
     calendar-page links + each event page. "Included with Museum Admission" = paid.
   - JCPL Arvada: BiblioCommons gateway API (ignores filters, so it pages everything 6 at a time and keeps ARBA).
+  - Ned to Go (`nedtogo`, Nederland, added 2026-10-17): `/wp-json/wp/v2/event_listing` has no date meta, so
+    only listings with a kid/family signal get their event page fetched for the "Oct-31-2026 (Sat) @ 10:00 AM"
+    line. It's in `QUIET_OK_SOURCES` (pipeline.js): weeks with no kids' events are normal, so two zero runs
+    don't error; it throws when the API is empty or no fetched page has a readable date.
   - Parsers throw `zeroFoundError` (with page text) when they parse nothing. `runSources` also marks any auto
     source that finds 0 two runs in a row as an error.
 - **JS-rendered platforms** (WellnessLiving, Arketa, iClassPro) can't be read with
