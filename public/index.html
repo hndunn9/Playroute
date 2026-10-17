@@ -1110,7 +1110,7 @@ footer{
     </div>
   </div>
 
-  <footer>PLAYROUTE · BOULDER COUNTY + BROOMFIELD AND BEYOND</footer>
+  <footer>PLAYROUTE · BOULDER COUNTY + BROOMFIELD AND BEYOND<br>© <span id="footerYear">2026</span> Playroute LLC</footer>
 </main>
 
 <!-- ── LEVEL 3: FULL DETAIL DRAWER ── -->
@@ -2575,6 +2575,7 @@ initSearchCoachmark();
 initThemeCoachmark();
 initTopFeedAffiliate();
 document.getElementById("weekFeed").innerHTML=`<div class="empty-state">Loading this week's events…</div>`;
+try{ document.getElementById('footerYear').textContent = new Date().getFullYear(); }catch(e){}
 loadData();
 </script>
 </body>
