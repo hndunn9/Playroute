@@ -2284,8 +2284,8 @@ const FEATURE_RECOMMENDED_ENABLED = false;
 // session ride along on the pageview and every click beacon; results are
 // on the admin page ("Recommended for you A/B test"). Set
 // FEATURE_RECOMMENDED_ENABLED = true to end the test and show it to all.
-// ?ff_recommended=1 / =0 force it on/off for previewing (NOT logged since 2026-10-17; before that they were
-// under your real arm, so keep previews to a minimum).
+// ?ff_recommended=1 / =0 force it on/off for previewing (NOT logged since 2026-10-17; before that they were logged
+// under your real arm, which skewed results).
 const EXP_ARM_KEY = "playroute-exp-recommended";
 let _expSessionId = null, _expExposureSent = false;
 function getExpArm(){ return getArm('recommended'); }
