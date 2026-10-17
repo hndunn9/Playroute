@@ -119,10 +119,13 @@ Configured in `wrangler.jsonc`:
 | `recommended_feedback` | 👍/👎 on Recommended | vote |
 | `section_nav` | Events/Playgrounds/Hikes tab | section |
 
-User properties: `theme`, `rec_test_arm`, `card_test_arm` (only while each test runs).
+Also `experiment_impression` (experiment_id, experiment_variant) once per running A/B test per session, fired with the first GA event of the session. User property: `theme`.
+
+### Adding an A/B test
+Add one entry to `EXPERIMENTS` in `public/index.html` and read it with `variantFor('id')`. To end it, set `winner`. Nothing to change in GA4: in Explore, build a segment of users with `experiment_impression` where `experiment_id` = your id and `experiment_variant` = the arm, then compare DAU/retention/key events across segments.
 
 **One-time GA4 setup** (Admin → Data display → Custom definitions → Create custom dimension). Data only appears after registration, never retroactively.
-- Event-scoped: `activity_category`, `activity_city`, `from_recommended`, `filter_type`, `filter_value`, `zero_results`, `partner_name`, `section`, `vote`. (`search_term`, `item_id`, `item_name`, `method` are built in.)
+- Event-scoped: `activity_category`, `activity_city`, `from_recommended`, `filter_type`, `filter_value`, `zero_results`, `partner_name`, `section`, `vote`, `experiment_id`, `experiment_variant`. (`search_term`, `item_id`, `item_name`, `method` are built in.)
 - Event-scoped metric (Custom metrics tab): `results_count`.
-- User-scoped: `theme`, `rec_test_arm`, `card_test_arm`.
+- User-scoped: `theme`.
 - Key events (Admin → Data display → Events → mark as key event): `source_click`, `add_to_calendar`, `share`, `sign_up`.

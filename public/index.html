@@ -2287,16 +2287,8 @@ const FEATURE_RECOMMENDED_ENABLED = false;
 // ?ff_recommended=1 / =0 force it on/off for previewing (still logged
 // under your real arm, so keep previews to a minimum).
 const EXP_ARM_KEY = "playroute-exp-recommended";
-let _expArm = null, _expSessionId = null, _expExposureSent = false;
-function getExpArm(){
-  if(_expArm) return _expArm;
-  try{ _expArm = localStorage.getItem(EXP_ARM_KEY); }catch(e){}
-  if(_expArm!=="treatment" && _expArm!=="control"){
-    _expArm = Math.random() < 0.5 ? "treatment" : "control";
-    try{ localStorage.setItem(EXP_ARM_KEY, _expArm); }catch(e){}
-  }
-  return _expArm;
-}
+let _expSessionId = null, _expExposureSent = false;
+function getExpArm(){ return getArm('recommended'); }
 function getExpSessionId(){
   if(_expSessionId) return _expSessionId;
   const fresh = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -2325,24 +2317,47 @@ function sendExpExposureOnce(){
 // ?ff_cards=timeled / =control previews a variant (still logged under your arm).
 const CARD_TEST_WINNER = null;
 const CARD_ARM_KEY = "playroute-exp-cards";
-let _cardArm = null;
-function getCardArm(){
-  if(_cardArm) return _cardArm;
-  try{ _cardArm = localStorage.getItem(CARD_ARM_KEY); }catch(e){}
-  if(_cardArm!=="timeled" && _cardArm!=="control"){
-    _cardArm = Math.random() < 0.5 ? "timeled" : "control";
-    try{ localStorage.setItem(CARD_ARM_KEY, _cardArm); }catch(e){}
+function getCardArm(){ return getArm('cards'); }
+
+// ── A/B TEST REGISTRY ── add a test with ONE entry here; assignment, GA4
+// reporting (experiment_impression) and stopping all work off this list.
+//   key:    localStorage key (never rename a running test's key — it reshuffles users)
+//   arms:   variant names; first-time visitors are split evenly unless
+//           `weights` is given (same length as arms, any positive numbers)
+//   winner: null while running; set to an arm to end the test — everyone
+//           gets that arm and logging stops
+// Read a variant with variantFor('id') (respects winner). No GA4 admin
+// changes are needed per test. First-party D1 results (admin > Tests) still
+// need their own handler/table per test for now.
+const EXPERIMENTS = {
+  recommended: {key: EXP_ARM_KEY, arms: ["treatment","control"], winner: FEATURE_RECOMMENDED_ENABLED ? "treatment" : null},
+  cards:       {key: CARD_ARM_KEY, arms: ["timeled","control"], winner: CARD_TEST_WINNER},
+};
+const _arms = {};
+function getArm(id){
+  if(_arms[id]) return _arms[id];
+  const x = EXPERIMENTS[id];
+  let arm = null;
+  try{ arm = localStorage.getItem(x.key); }catch(e){}
+  if(!x.arms.includes(arm)){
+    const w = x.weights || x.arms.map(()=>1);
+    let r = Math.random() * w.reduce((a,b)=>a+b,0);
+    arm = x.arms[x.arms.length-1];
+    for(let i=0;i<w.length;i++){ if((r -= w[i]) < 0){ arm = x.arms[i]; break; } }
+    try{ localStorage.setItem(x.key, arm); }catch(e){}
   }
-  return _cardArm;
+  return (_arms[id] = arm);
 }
+function isExperimentRunning(id){ return !EXPERIMENTS[id].winner; }
+function variantFor(id){ return EXPERIMENTS[id].winner || getArm(id); }
+function runningExperiments(){ return Object.keys(EXPERIMENTS).filter(isExperimentRunning); }
 function isTimeledCards(){
   try{
     const ff = new URLSearchParams(location.search).get('ff_cards');
     if(ff==='timeled') return true;
     if(ff==='control') return false;
   }catch(e){}
-  if(CARD_TEST_WINNER) return CARD_TEST_WINNER==="timeled";
-  return getCardArm()==="timeled";
+  return variantFor('cards')==="timeled";
 }
 function cardExpPayload(){
   if(CARD_TEST_WINNER) return {};
@@ -2383,16 +2398,24 @@ function getRecommendedEvents(pool){
 // logging into GA4 so engagement shows up next to DAU/MAU. Never throws, and
 // no-ops if gtag is blocked. Param names must match the custom dimensions
 // registered in GA4 (Admin > Custom definitions) — see README "GA4 events".
-let _gaPropsSet = false;
+let _gaInit = false;
 function ga(name, params){
   try{
     if(typeof gtag!=='function') return;
-    if(!_gaPropsSet){
-      _gaPropsSet = true;
-      const props = {theme: document.documentElement.getAttribute('data-theme')||'light'};
-      if(!FEATURE_RECOMMENDED_ENABLED) props.rec_test_arm = getExpArm();
-      if(!CARD_TEST_WINNER) props.card_test_arm = getCardArm();
-      gtag('set','user_properties',props);
+    if(!_gaInit){
+      _gaInit = true;
+      gtag('set','user_properties',{theme: document.documentElement.getAttribute('data-theme')||'light'});
+      // One experiment_impression per running test per session. Generic
+      // params, so new tests need no GA4 admin setup: segment users on
+      // experiment_id + experiment_variant in Explore.
+      let seen = {};
+      try{ seen = JSON.parse(sessionStorage.getItem('playroute-ga-exp')||'{}'); }catch(e){}
+      runningExperiments().forEach(id=>{
+        if(seen[id]) return;
+        seen[id] = 1;
+        gtag('event','experiment_impression',{experiment_id:id, experiment_variant:getArm(id)});
+      });
+      try{ sessionStorage.setItem('playroute-ga-exp', JSON.stringify(seen)); }catch(e){}
     }
     gtag('event', name, params||{});
   }catch(e){}
