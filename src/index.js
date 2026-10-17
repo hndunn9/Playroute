@@ -4656,7 +4656,7 @@ function buildDigestHtml(byDay, spotlight, eventsDiscovered, unsubscribeUrl, pic
 
     ${DIGEST_KOFI_HTML}
 
-    <p style="text-align:center;font-size:11px;color:#b5a88f;font-family:-apple-system,sans-serif;padding-bottom:20px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a></p>
+    <p style="text-align:center;font-size:11px;color:#b5a88f;font-family:-apple-system,sans-serif;padding-bottom:20px;">You're getting this because you subscribed to Playroute's weekly digest. <a href="${unsubscribeUrl}" style="color:#b5a88f;">Unsubscribe</a><br>© ${new Date().getFullYear()} Playroute LLC</p>
   </div>`;
 }
 
