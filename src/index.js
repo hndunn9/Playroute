@@ -6415,7 +6415,7 @@ ${p.description ? `<div class="d">${e(p.description)}</div>` : ""}
 
 <h2>Terms</h2>
 <div class="box"><p><b>${price}</b> for a Playroute's Pick in the app and the weekly newsletter. Playroute is operated by <b>Playroute LLC</b>, and this agreement is between your business and Playroute LLC.</p><br>
-<p><b>Placement varies.</b> Playroute LLC decides where your Pick appears in the feed, how often it's shown and how it looks, and may change any of these during your run or show different versions to different visitors (for example, while testing layouts). We don't guarantee a specific position, number of views or clicks, or results. The newsletter isn't sent every week; your Pick is included in the issues sent during your run.</p><br>
+<p>We don't guarantee a number of clicks or conversions.</p><br>
 ${payBlock}<br>
 <p><a class="btn venmo" href="${e(venmo)}" target="_blank" rel="noopener">Pay ${amount ? "$" + e(amount) + " " : ""}with Venmo</a></p><p class="pay-note">Opens Venmo with the amount and note filled in. Or pay <b>@hnjames9</b> directly. If payment hasn't arrived by then, your start date moves back until it does.</p><br>
 <p>Content can be updated by request, once per month. Any change needs your approval again here before it runs. Questions: <a href="mailto:hndunn9@gmail.com">hndunn9@gmail.com</a>.</p></div>
