@@ -241,6 +241,24 @@ a.sp-item,.sp-item[role="link"]{cursor:pointer;}
   font-size:12px;font-weight:600;text-decoration:none;
 }
 .sp-btn:active{transform:scale(0.97);}
+/* About drawer (Oct 2026 refresh): stat chip, short story, two big tap targets
+   (Ko-fi filled, feedback outline), affiliate as the standard .sp-card. */
+.about-body{display:flex;flex-direction:column;gap:14px;padding-bottom:8px;}
+.about-stat{align-self:center;display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:4px 12px;border-radius:100px;background:var(--pill-neutral-bg);color:var(--ink);font-size:12.5px;font-weight:600;}
+.about-stat:empty{display:none;}
+.about-stat svg{width:14px;height:14px;}
+.about-story{margin:0;text-align:center;font-size:13.5px;line-height:1.55;color:var(--ink-soft);}
+.about-ctas{display:flex;flex-direction:column;gap:10px;}
+.about-cta{display:flex;align-items:center;gap:12px;min-height:60px;padding:10px 14px;border-radius:var(--radius-md);border:1.5px solid var(--clay);color:var(--ink);text-decoration:none;-webkit-tap-highlight-color:transparent;}
+.about-cta:active{transform:scale(0.98);}
+.about-cta.primary{background:var(--clay);color:var(--on-fill);}
+.about-cta-icon{font-size:22px;line-height:1;flex-shrink:0;}
+.about-cta-text{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.about-cta-text b{font-size:15px;font-weight:600;}
+.about-cta-text span{font-size:12px;opacity:.8;}
+.about-cta-arrow{font-size:24px;line-height:1;opacity:.7;}
+.about-aff .sp-body{display:block;}
+.about-aff .sp-label,.about-aff .sp-text{display:block;}
 .hero-wordmark{
   position:absolute;top:14px;left:14px;
   color:var(--on-fill);
@@ -1137,17 +1155,31 @@ footer{
   <div class="drawer" id="aboutDrawer" onclick="event.stopPropagation()">
     <div class="drawer-handle"></div>
     <div class="drawer-header">
-      <div class="drawer-title">About &amp; Feedback</div>
+      <div class="drawer-title">About Playroute</div>
     </div>
-    <div class="drawer-body" style="text-align:center;font-size:13px;color:var(--ink-soft);line-height:1.6;">
-      <div id="discoveryStat" style="font-size:14px;font-weight:600;color:var(--clay);margin-bottom:14px;min-height:20px;"></div>
-      Built by a mom of two in Boulder County who works in tech — married to the person who actually does the work of finding stuff to do with the kids every week. Playroute exists so she can get some of that mental load (and her evenings) back.
-      <br><br>
-      <a href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (About drawer)',category:'support',action:'support_click'})">☕ Buy my wife a coffee (she's earned it)</a>
-      <br><br>
-      <a href="https://keepthelittleswild.com/products/mountain-henley-green?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute2&variant=52798076092727" target="_blank" rel="noopener noreferrer sponsored" style="color:var(--ink-soft);text-decoration:underline;" onclick="trackClick('https://keepthelittleswild.com/products/mountain-henley-green',{title:'Keep the Littles Wild (About drawer)',category:'affiliate',action:'affiliate_click'})">🎒 Keep the Littles Wild (affiliate)</a>
-      <br><br>
-      <a href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A" style="color:var(--ink-soft);text-decoration:underline;">💬 Send feedback</a>
+    <div class="drawer-body about-body">
+      <div id="discoveryStat" class="about-stat"></div>
+      <p class="about-story">Built by a Boulder County mom of two who works in tech, for the spouse who does the real work of finding something to do with the kids every week.</p>
+      <div class="about-ctas">
+        <a class="about-cta primary" href="https://ko-fi.com/playroute" target="_blank" rel="noopener noreferrer" onclick="trackClick('https://ko-fi.com/playroute',{title:'Wife\'s Coffee Fund (About drawer)',category:'support',action:'support_click'})">
+          <span class="about-cta-icon" aria-hidden="true">☕</span>
+          <span class="about-cta-text"><b>Buy my wife a coffee</b><span>Tips keep Playroute free for families</span></span>
+          <span class="about-cta-arrow" aria-hidden="true">›</span>
+        </a>
+        <a class="about-cta" href="mailto:hndunn9@gmail.com?subject=Playroute%20feedback&body=Hi!%20I%20wanted%20to%20share%20some%20feedback%20about%20Playroute%3A%0A%0A" onclick="trackClick('mailto:feedback',{title:'Send feedback (About drawer)',category:'support',action:'feedback_click'})">
+          <span class="about-cta-icon" aria-hidden="true">💬</span>
+          <span class="about-cta-text"><b>Send feedback</b><span>Missing an event or spot a mistake? Tell me</span></span>
+          <span class="about-cta-arrow" aria-hidden="true">›</span>
+        </a>
+      </div>
+      <a class="sp-card sp-item about-aff" href="https://keepthelittleswild.com/products/mountain-henley-green?sca_ref=12113179.4RaQoQFcXXdl&sca_source=playroute2&variant=52798076092727" target="_blank" rel="noopener noreferrer sponsored" onclick="trackClick('https://keepthelittleswild.com/products/mountain-henley-green',{title:'Keep the Littles Wild (About drawer)',category:'affiliate',action:'affiliate_click'})">
+        <span class="sp-thumb"><img src="https://keepthelittleswild.com/cdn/shop/files/1813685A-A97A-4A03-9E66-AB2F43BE4993.jpg?v=1791368048&width=200" alt="Keep the Littles Wild" loading="lazy"></span>
+        <span class="sp-body">
+          <span class="sp-label">Affiliate</span>
+          <span class="sp-text"><b>Keep the Littles Wild</b> — gear for kids on the go.</span>
+          <span class="sp-btn">Shop now</span>
+        </span>
+      </a>
     </div>
   </div>
 </div>
@@ -1729,12 +1761,11 @@ function openAboutDrawer(){
   setTimeout(()=>document.getElementById('aboutDrawer').classList.add('open'),10);
   const statEl = document.getElementById('discoveryStat');
   if(statEl && !statEl.dataset.loaded){
-    statEl.textContent = 'Loading…';
     fetch(`${API_BASE}/api/public-stats`)
       .then(r=>r.json())
       .then(d=>{
         if(d && typeof d.events_discovered_all_time === 'number'){
-          statEl.innerHTML = `${ICONS.sparkle} ${d.events_discovered_all_time.toLocaleString()} events discovered through Playroute so far`;
+          statEl.innerHTML = `${ICONS.sparkle} ${d.events_discovered_all_time.toLocaleString()} events discovered so far`;
           statEl.dataset.loaded = '1';
         } else {
           statEl.textContent = '';
