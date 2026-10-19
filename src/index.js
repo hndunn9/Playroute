@@ -6307,11 +6307,8 @@ function partnerPreviewPageHtml(p) {
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex,nofollow"><title>Preview: ${e(p.business_name)} on Playroute</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600;700&display=swap">
-<script>try{var t=localStorage.getItem('playroute-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 <style>
-:root{--soil:#1B2B26;--bark:#3A4F45;--clay:#5B84A0;--cream:#F4F5F0;--parchment:#ECEEE8;--fog:#D7DBD3;--ink:#1E2622;--ink-soft:#5B6560;--sky:#46707E;--ember:#B2555A;--gold:#A88B3E;--radius-md:14px;--pill-green-bg:#D4EBC9;--pill-green-text:#3A5C2A;--brand:${color};}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--cream:#1D231F;--parchment:#12100F;--fog:#63726A;--ink:#EDEFE9;--ink-soft:#A7B0A4;--pill-green-bg:#2B3B2B;--pill-green-text:#A8D9A0;}}
-:root[data-theme="dark"]{--cream:#1D231F;--parchment:#12100F;--fog:#63726A;--ink:#EDEFE9;--ink-soft:#A7B0A4;--pill-green-bg:#2B3B2B;--pill-green-text:#A8D9A0;}
+:root{color-scheme:light;--soil:#1B2B26;--bark:#3A4F45;--clay:#5B84A0;--cream:#F4F5F0;--parchment:#ECEEE8;--fog:#D7DBD3;--ink:#1E2622;--ink-soft:#5B6560;--sky:#46707E;--ember:#B2555A;--gold:#A88B3E;--radius-md:14px;--pill-green-bg:#D4EBC9;--pill-green-text:#3A5C2A;--brand:${color};}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--cream);font-family:'DM Sans',sans-serif;color:var(--ink);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-wrap:anywhere}
 .page{max-width:560px;margin:0 auto;padding:18px 16px 56px}
