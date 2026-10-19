@@ -6168,7 +6168,7 @@ async function handlePartnerManagePage(env, token) {
 // pending_events or partners.
 // ---------------------------------------------------------------------
 const PICKS_PUBLIC = false;
-const PICK_CONTENT_FIELDS = ["business_name", "tagline", "description", "location", "ages", "cta_label", "email_cta_label", "link_url", "brand_color", "price_label", "go_live_date", "ends_on"];
+const PICK_CONTENT_FIELDS = ["business_name", "tagline", "description", "location", "ages", "cta_label", "email_cta_label", "badge", "chips", "note", "link_url", "brand_color", "price_label", "go_live_date", "ends_on"];
 
 function pickColor(p) {
   return /^#[0-9A-Fa-f]{6}$/.test(p.brand_color || "") ? p.brand_color : "#46707E";
@@ -6208,6 +6208,10 @@ function publicPick(p) {
     email_cta_label: p.email_cta_label || null,
     link_url: pickLinkUrl(p), brand_color: pickColor(p), logo_url: p.logo_url || null,
     bg_url: pickBgUrl(p),
+    // Visual card extras (pickcard test): a short badge, up to 3 chips from a
+    // comma-separated field, and a small note beside the button.
+    badge: p.badge || null, note: p.note || null,
+    chips: String(p.chips || "").split(",").map((c) => c.trim().slice(0, 30)).filter(Boolean).slice(0, 3),
     // Public id for impression/click counting. Never the token: the token
     // opens the partner's approval page.
     pick_id: pickSlug(p)
@@ -6316,6 +6320,19 @@ function partnerPreviewPageHtml(p) {
     ? `<img class="logo" src="${e(pp.logo_url)}" alt="">`
     : `<span class="logo ph">${e((p.business_name || "?").charAt(0).toUpperCase())}</span>`;
   const approved = p.status === "approved";
+  // Larger "visual" card from the pickcard test, so partners see both formats.
+  const vBadge = pp.badge
+    ? `<span style="display:inline-block;background:var(--brand);color:#fff;font-weight:700;font-size:13px;padding:5px 10px;border-radius:999px;${pp.bg_url ? "position:absolute;left:12px;bottom:10px;box-shadow:0 2px 6px rgba(20,24,22,.25)" : "margin-bottom:8px"}">${e(pp.badge)}</span>`
+    : "";
+  const vChips = (pp.chips || []).map((c) => `<span style="display:inline-block;font-size:11px;font-weight:500;padding:2px 8px;border-radius:6px;background:#E3E2DA;color:#3A4F45;margin:0 5px 4px 0">${e(c)}</span>`).join("");
+  const visualCard = `<div class="card" style="display:block;padding:0;overflow:hidden">
+${pp.bg_url ? `<div style="height:128px;position:relative;background:url('${e(pp.bg_url)}') center 32%/cover no-repeat,#E3E2DA">${vBadge}</div>` : ""}
+<div style="padding:12px 14px 14px">${pp.bg_url ? "" : vBadge}
+<div style="display:flex;gap:10px;align-items:center">${logo}<div style="min-width:0"><div class="t">${e(p.tagline || p.business_name)}</div><div class="m">${[p.business_name, p.location, p.ages].filter(Boolean).map(e).join(" · ")}</div></div></div>
+${p.description ? `<div class="d" style="margin-top:8px">${e(p.description)}</div>` : ""}
+${vChips ? `<div style="margin-top:9px">${vChips}</div>` : ""}
+<div style="display:flex;align-items:center;gap:8px;margin-top:11px">${pp.note ? `<span style="font-size:12px;color:var(--ink-soft)">${e(pp.note)}</span>` : ""}<span style="margin-left:auto;background:var(--brand);color:#fff;font-weight:700;font-size:13.5px;padding:9px 14px;border-radius:8px;white-space:nowrap">${e(pp.cta_label)} →</span></div>
+</div></div>`;
   const meta = [p.business_name, p.location, p.ages].filter(Boolean).map(e).join(" · ");
   const host = pickHost(p);
   const payBlock = goLive
@@ -6345,6 +6362,7 @@ h2{font-family:'Playfair Display',serif;font-weight:600;font-size:20px;margin:30
 .logo.ph{background:var(--brand);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center}
 .t{font-weight:600;font-size:14.5px;line-height:1.3}.m{font-size:12.5px;color:var(--ink-soft);margin-top:3px}
 .d{font-size:13px;margin-top:5px;line-height:1.45}
+.vlabel{font-size:12px;font-weight:700;color:var(--bark);margin:14px 0 6px}
 .tags{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:7px;align-items:center}
 .tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:var(--brand);color:#fff}
 .cta{font-size:12.5px;font-weight:700;color:var(--brand);text-decoration:none}
@@ -6370,29 +6388,34 @@ a{color:var(--sky)}
 <p class="sub">Check your name, logo, color, wording and link below. Nothing goes live until you approve it here and payment is received.</p>
 
 <h2>In the app</h2>
-<p class="sub">A small tagged card at the top of the events feed, labeled as a Playroute's Pick.</p>
+<p class="sub">A card in the events feed, labeled as a Playroute's Pick. We're testing two card formats, so families may see either one below, and the design can change during your run.</p>
+<p class="vlabel">Standard card</p>
 <div class="app"><div class="app-bar">Playroute</div><div class="app-main"><div class="sec">Playroute's Picks</div>
 <div class="card"${pp.bg_url ? ` style="background:linear-gradient(rgba(236,238,232,.85),rgba(236,238,232,.85)),url('${e(pp.bg_url)}') 70% 35%/cover no-repeat,var(--parchment)"` : ""}>${logo}<div style="min-width:0"><div class="t">${e(p.tagline || p.business_name)}</div><div class="m">${meta}</div>
 ${p.description ? `<div class="d">${e(p.description)}</div>` : ""}
 <div class="tags"><span class="tag">${e(p.business_name)}</span>${pp.link_url ? `<a class="cta" href="${e(pp.link_url)}" target="_blank" rel="noopener">${e(pp.cta_label)} →</a>` : `<span class="cta">${e(pp.cta_label)} →</span>`}</div></div></div><div class="sponsor">Promoted by a local partner</div></div></div>
-<a class="real" href="/?ff_picks=${tok}" target="_blank" rel="noopener">See it in the real Playroute app →</a>
+<a class="real" href="/?ff_picks=${tok}&amp;ff_pickcard=standard" target="_blank" rel="noopener">See the standard card in the real Playroute app →</a>
+<p class="vlabel">Larger photo card</p>
+<div class="app"><div class="app-bar">Playroute</div><div class="app-main"><div class="sec">Playroute's Picks</div>${visualCard}<div class="sponsor">Promoted by a local partner</div></div></div>
+<a class="real" href="/?ff_picks=${tok}&amp;ff_pickcard=visual" target="_blank" rel="noopener">See the larger card in the real Playroute app →</a>
 
 <h2>In the Sunday newsletter</h2>
-<p class="sub">Featured in each weekly email while your promotion runs.</p>
+<p class="sub">Included in the weekly emails sent during your run.</p>
 <div class="mail">${digestPicksHtml([p])}</div>
 <a class="real" href="/partners/preview/${tok}/newsletter" target="_blank" rel="noopener">See it in this week's full newsletter →</a>
 
 <h2>What Playroute is (and isn't)</h2>
 <p class="sub">Playroute is a text-first guide parents check to plan the week, not a social feed, so it works differently from Meta ads.</p>
 <ul class="cmp">
-<li><b>Small, native format.</b> A short headline, one or two sentences, a small logo and your brand color. No large banners or full-bleed photos.</li>
+<li><b>Native format.</b> A short headline, a sentence or two, your logo, your brand color and optionally a photo, styled to fit the rest of the feed.</li>
 <li><b>Sits alongside real events.</b> Families see your card in the same feed they already use, labeled as a Pick.</li>
 <li><b>One clear link.</b> Taps go to ${host ? `<b>${e(host)}</b>` : "your page"}, tagged with utm_source=playroute so visits show up in your own analytics.</li>
-<li><b>No targeting or bidding.</b> A flat price and a fixed placement for the run.</li>
+<li><b>No targeting or bidding.</b> A flat price for the run. Playroute decides where in the feed your Pick appears and how often.</li>
 </ul>
 
 <h2>Terms</h2>
-<div class="box"><p><b>${price}</b> for Playroute's Picks in the app and the weekly newsletter.</p><br>
+<div class="box"><p><b>${price}</b> for a Playroute's Pick in the app and the weekly newsletter. Playroute is operated by <b>Playroute LLC</b>, and this agreement is between your business and Playroute LLC.</p><br>
+<p><b>Placement varies.</b> Playroute LLC decides where your Pick appears in the feed, how often it's shown and how it looks, and may change any of these during your run or show different versions to different visitors (for example, while testing layouts). We don't guarantee a specific position, number of views or clicks, or results. The newsletter isn't sent every week; your Pick is included in the issues sent during your run.</p><br>
 ${payBlock}<br>
 <p><a class="btn venmo" href="${e(venmo)}" target="_blank" rel="noopener">Pay ${amount ? "$" + e(amount) + " " : ""}with Venmo</a></p><p class="pay-note">Opens Venmo with the amount and note filled in. Or pay <b>@hnjames9</b> directly. If payment hasn't arrived by then, your start date moves back until it does.</p><br>
 <p>Content can be updated by request, once per month. Any change needs your approval again here before it runs. Questions: <a href="mailto:hndunn9@gmail.com">hndunn9@gmail.com</a>.</p></div>
@@ -6401,7 +6424,7 @@ ${payBlock}<br>
 ${approved
   ? `<div class="done">Approved${p.approved_by ? " by " + e(p.approved_by) : ""}. Thank you! We'll confirm your start date by email once payment is in.</div>`
   : `<div class="field"><label for="nm">Your name</label><input type="text" id="nm" autocomplete="name"></div>
-<label class="chk"><input type="checkbox" id="ok"><span>I approve how ${e(p.business_name)} appears above and understand payment is due 24 hours before my desired start date.</span></label>
+<label class="chk"><input type="checkbox" id="ok"><span>I approve how ${e(p.business_name)} appears above, agree to the terms above with Playroute LLC, and understand payment is due 24 hours before my desired start date.</span></label>
 <button class="btn" id="go">Approve preview</button><p class="msg" id="msg"></p>`}
 </div>
 <script>
@@ -6503,10 +6526,11 @@ async function handlePickEvent(request, env) {
   try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
   const col = body.type === "impression" ? "impressions" : body.type === "click" ? "clicks" : null;
   const slug = String(body.pick || "").slice(0, 120);
+  const arm = body.arm === "visual" ? "visual" : "standard"; // pickcard test arm
   if (!col || !(await livePickSlugs(env)).has(slug)) return new Response(null, { status: 204 });
   await env.DB.prepare(
-    `INSERT INTO pick_stats (pick, day, ${col}) VALUES (?, ?, 1) ON CONFLICT(pick, day) DO UPDATE SET ${col} = ${col} + 1`
-  ).bind(slug, todayMT()).run();
+    `INSERT INTO pick_stats (pick, day, arm, ${col}) VALUES (?, ?, ?, 1) ON CONFLICT(pick, day, arm) DO UPDATE SET ${col} = ${col} + 1`
+  ).bind(slug, todayMT(), arm).run();
   return new Response(null, { status: 204 });
 }
 
@@ -6521,11 +6545,12 @@ async function handleAdminPicksStats(env, url) {
   const slug = pickSlug(p);
   const from = p.go_live_date || "2000-01-01";
   const to = pickEndsOn(p) || todayMT();
-  const [app, daily, nlClicks, nlOpens] = await env.DB.batch([
+  const [app, daily, nlClicks, nlOpens, byArm] = await env.DB.batch([
     env.DB.prepare(`SELECT COALESCE(SUM(impressions), 0) AS impressions, COALESCE(SUM(clicks), 0) AS clicks FROM pick_stats WHERE pick = ? AND day BETWEEN ? AND ?`).bind(slug, from, to),
-    env.DB.prepare(`SELECT day, impressions, clicks FROM pick_stats WHERE pick = ? AND day BETWEEN ? AND ? ORDER BY day`).bind(slug, from, to),
+    env.DB.prepare(`SELECT day, SUM(impressions) AS impressions, SUM(clicks) AS clicks FROM pick_stats WHERE pick = ? AND day BETWEEN ? AND ? GROUP BY day ORDER BY day`).bind(slug, from, to),
     env.DB.prepare(`SELECT COUNT(*) AS n FROM newsletter_events WHERE type = 'clicked' AND created_at >= ? AND created_at < date(?, '+8 days') AND link LIKE ?`).bind(from, to, `%utm_campaign=${slug}%`),
     env.DB.prepare(`SELECT COUNT(*) AS n FROM newsletter_events e JOIN newsletter_sends s ON s.resend_id = e.resend_id WHERE e.type = 'opened' AND s.sent_at >= ? AND s.sent_at < date(?, '+1 day')`).bind(from, to),
+    env.DB.prepare(`SELECT arm, SUM(impressions) AS impressions, SUM(clicks) AS clicks FROM pick_stats WHERE pick = ? AND day BETWEEN ? AND ? GROUP BY arm`).bind(slug, from, to),
   ]);
   const a = (app.results && app.results[0]) || { impressions: 0, clicks: 0 };
   return json({
@@ -6535,6 +6560,8 @@ async function handleAdminPicksStats(env, url) {
     newsletter_clicks: (nlClicks.results && nlClicks.results[0] || {}).n || 0,
     newsletter_opens: (nlOpens.results && nlOpens.results[0] || {}).n || 0,
     daily: daily.results || [],
+    // pickcard test: app impressions/clicks per card format.
+    by_arm: (byArm.results || []).map((r) => ({ ...r, ctr: r.impressions ? r.clicks / r.impressions : null })),
   });
 }
 async function handleAdminPicksList(env) {
