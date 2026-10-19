@@ -608,6 +608,19 @@ main{
 .picks-section{margin-bottom:8px;}
 .picks-heading{font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);margin:4px 0 10px;display:flex;justify-content:space-between;gap:8px;}
 .picks-heading .picks-preview-note{color:var(--gold);letter-spacing:0.04em;}
+/* "visual" arm of the pickcard test: photo banner + badge, short facts as chips, solid button. */
+.pick-card.pick-card-visual{display:block;padding:0;overflow:hidden;}
+.pick-banner{height:128px;background:var(--pick-bg) center 32%/cover no-repeat,var(--photo-bg);position:relative;}
+.pick-badge{display:inline-block;background:var(--pick-color,var(--sky));color:var(--on-fill);font-weight:700;font-size:13px;padding:5px 10px;border-radius:999px;}
+.pick-banner .pick-badge{position:absolute;left:12px;bottom:10px;box-shadow:0 2px 6px rgba(20,24,22,.25);}
+.pick-vbody{padding:12px 14px 14px;}
+.pick-vbody > .pick-badge{margin-bottom:8px;}
+.pick-vhead{display:flex;gap:10px;align-items:center;}
+.pick-vhead .pick-logo{width:34px;height:34px;}
+.pick-vfoot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:11px;}
+.pick-note{font-size:12px;color:var(--ink-soft);}
+.pick-btn{background:var(--pick-color,var(--sky));color:var(--on-fill);font-weight:700;font-size:13.5px;padding:9px 14px;border-radius:var(--radius-sm);white-space:nowrap;margin-left:auto;}
+.tag.pick-chip{background:var(--pill-neutral-bg);color:var(--pill-neutral-text);}
 .pick-card.has-bg{background:linear-gradient(var(--pick-wash),var(--pick-wash)),var(--pick-bg) 70% 35%/cover no-repeat,var(--parchment);}
 .pick-card{display:flex;gap:11px;align-items:flex-start;padding:13px 14px;margin-bottom:10px;background:var(--parchment);border:1px solid var(--pick-color,var(--sky));box-shadow:0 0 0 1px var(--pick-color,var(--sky)),0 2px 8px rgba(20,24,22,0.07);border-radius:var(--radius-md);text-decoration:none;color:inherit;-webkit-tap-highlight-color:transparent;}
 .pick-logo{width:40px;height:40px;border-radius:8px;flex-shrink:0;object-fit:contain;background:var(--photo-bg);}
@@ -2310,7 +2323,46 @@ function picksSeenOnEarlierVisit(){
 // count. Server-side counts only run while PICKS_PUBLIC is on.
 function sendPickEvent(p, type){
   if(p.preview || !p.pick_id) return;
-  try{ fetch(`${API_BASE}/api/pick-event`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({pick:p.pick_id,type})}).catch(()=>{}); }catch(e){}
+  try{ fetch(`${API_BASE}/api/pick-event`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({pick:p.pick_id,type,arm:pickCardVariant()})}).catch(()=>{}); }catch(e){}
+}
+// Pick card format test: "standard" (compact card, photo under a wash) vs
+// "visual" (photo banner, badge, chips, solid button). Registered in
+// EXPERIMENTS as `pickcard`; it only runs once Picks launch
+// (FEATURE_PICKS_ENABLED), until then everyone gets "standard" and nobody
+// is assigned. ?ff_pickcard=visual|standard previews one (not logged).
+function pickCardVariant(){
+  try{ const ff = new URLSearchParams(location.search).get('ff_pickcard'); if(ff==='visual'||ff==='standard') return ff; }catch(e){}
+  return variantFor('pickcard');
+}
+function buildVisualPickBody(card, p, logo){
+  card.classList.add("pick-card-visual");
+  const hasBg = /^\/api\/photos\/[A-Za-z0-9%._-]+$/.test(p.bg_url||"");
+  const badge = p.badge ? Object.assign(document.createElement("span"), {className:"pick-badge", textContent:p.badge}) : null;
+  if(hasBg){
+    const banner = document.createElement("div"); banner.className = "pick-banner";
+    banner.style.setProperty("--pick-bg", `url("${p.bg_url}")`);
+    if(badge) banner.appendChild(badge);
+    card.appendChild(banner);
+  }
+  const body = document.createElement("div"); body.className = "pick-vbody";
+  if(badge && !hasBg) body.appendChild(badge);
+  const head = document.createElement("div"); head.className = "pick-vhead";
+  head.appendChild(logo);
+  const hm = document.createElement("div"); hm.style.minWidth = "0";
+  const t = document.createElement("div"); t.className = "event-title"; t.textContent = p.tagline || p.business_name; hm.appendChild(t);
+  const m = document.createElement("div"); m.className = "event-meta"; m.textContent = [p.business_name, p.location, p.ages].filter(Boolean).join(" · "); hm.appendChild(m);
+  head.appendChild(hm); body.appendChild(head);
+  if(p.description){ const d = document.createElement("div"); d.className = "pick-desc"; d.style.marginTop = "8px"; d.textContent = p.description; body.appendChild(d); }
+  if(Array.isArray(p.chips) && p.chips.length){
+    const row = document.createElement("div"); row.className = "tag-row"; row.style.marginTop = "9px";
+    p.chips.forEach(c => { const s = document.createElement("span"); s.className = "tag pick-chip"; s.textContent = c; row.appendChild(s); });
+    body.appendChild(row);
+  }
+  const foot = document.createElement("div"); foot.className = "pick-vfoot";
+  if(p.note){ const n = document.createElement("span"); n.className = "pick-note"; n.textContent = p.note; foot.appendChild(n); }
+  const btn = document.createElement("span"); btn.className = "pick-btn"; btn.textContent = (p.cta_label || "Learn more") + " →"; foot.appendChild(btn);
+  body.appendChild(foot);
+  card.appendChild(body);
 }
 function observePickImpression(card, p){
   if(p.preview || !p.pick_id || !("IntersectionObserver" in window)) return;
@@ -2320,7 +2372,7 @@ function observePickImpression(card, p){
     if(!entries.some(en=>en.isIntersecting)) return;
     io.disconnect();
     try{ if(sessionStorage.getItem(key)) return; sessionStorage.setItem(key,"1"); localStorage.setItem(pickSeenBeforeKey(p),"1"); }catch(e){}
-    ga('partner_pick_impression',{partner_name:(p.business_name||'').slice(0,100),placement:picksLower?'lower':'top'});
+    ga('partner_pick_impression',{partner_name:(p.business_name||'').slice(0,100),placement:picksLower?'lower':'top',card_variant:pickCardVariant()});
     sendPickEvent(p, "impression");
   },{threshold:0.5});
   io.observe(card);
@@ -2343,11 +2395,12 @@ function buildPicksSection(){
     if(color) card.style.setProperty("--pick-color", color);
     // Optional partner photo behind the card, under a parchment wash so the
     // text stays readable. Only our own /api/photos/ paths (it goes in url()).
-    if(/^\/api\/photos\/[A-Za-z0-9%._-]+$/.test(p.bg_url||"")){ card.classList.add("has-bg"); card.style.setProperty("--pick-bg", `url("${p.bg_url}")`); }
+    const visual = pickCardVariant() === "visual";
+    if(!visual && /^\/api\/photos\/[A-Za-z0-9%._-]+$/.test(p.bg_url||"")){ card.classList.add("has-bg"); card.style.setProperty("--pick-bg", `url("${p.bg_url}")`); }
     if(p.link_url){
       card.href = p.link_url; card.target = "_blank"; card.rel = "noopener sponsored";
       if(!p.preview) card.addEventListener("click", ()=>{
-        ga('partner_pick_click',{partner_name:(p.business_name||'').slice(0,100)});
+        ga('partner_pick_click',{partner_name:(p.business_name||'').slice(0,100),card_variant:pickCardVariant()});
         sendPickEvent(p, "click");
         try{ fetch(`${API_BASE}/api/track-click`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:p.link_url,event_title:p.business_name,category:"partner",action:"pick_click"})}).catch(()=>{}); }catch(e){}
       });
@@ -2355,6 +2408,7 @@ function buildPicksSection(){
     let logo;
     if(p.logo_url){ logo = document.createElement("img"); logo.src = p.logo_url; logo.alt = ""; logo.className = "pick-logo"; }
     else { logo = document.createElement("span"); logo.className = "pick-logo ph"; logo.textContent = (p.business_name||"?").charAt(0).toUpperCase(); }
+    if(visual){ buildVisualPickBody(card, p, logo); section.appendChild(card); observePickImpression(card, p); return; }
     card.appendChild(logo);
     const main = document.createElement("div"); main.className = "pick-main";
     const t = document.createElement("div"); t.className = "event-title"; t.textContent = p.tagline || p.business_name; main.appendChild(t);
@@ -2413,6 +2467,7 @@ function sendExpExposureOnce(){
 // set CARD_TEST_WINNER to "timeled" or "control" (stops logging, shows it to all).
 // ?ff_cards=timeled / =control previews a variant (not logged).
 const CARD_TEST_WINNER = null;
+const PICKCARD_TEST_WINNER = null;
 const CARD_ARM_KEY = "playroute-exp-cards";
 function getCardArm(){ return getArm('cards'); }
 
@@ -2429,6 +2484,10 @@ function getCardArm(){ return getArm('cards'); }
 const EXPERIMENTS = {
   recommended: {key: EXP_ARM_KEY, arms: ["treatment","control"], winner: FEATURE_RECOMMENDED_ENABLED ? "treatment" : null},
   cards:       {key: CARD_ARM_KEY, arms: ["timeled","control"], winner: CARD_TEST_WINNER},
+  // Pick card format. Not running until Picks launch: with the flag off
+  // the winner is pinned to "standard", so nobody is assigned or logged.
+  // To end it after launch, set PICKCARD_TEST_WINNER to "standard" or "visual".
+  pickcard:    {key: "playroute-exp-pickcard", arms: ["standard","visual"], winner: FEATURE_PICKS_ENABLED ? PICKCARD_TEST_WINNER : "standard"},
 };
 const _arms = {};
 function getArm(id){

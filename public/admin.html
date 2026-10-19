@@ -572,10 +572,13 @@
       <div><label for="pk_ages">Ages</label><input type="text" id="pk_ages"></div>
       <div><label for="pk_cta_label">Button text</label><input type="text" id="pk_cta_label" placeholder="Learn more"></div>
       <div><label for="pk_email_cta_label">Newsletter button text <span>(blank = same)</span></label><input type="text" id="pk_email_cta_label"></div>
+      <div><label for="pk_badge">Badge <span>(larger card; e.g. First lesson free)</span></label><input type="text" id="pk_badge" maxlength="30"></div>
+      <div><label for="pk_note">Note by button <span>(larger card)</span></label><input type="text" id="pk_note" maxlength="60"></div>
       <div><label for="pk_brand_color">Brand color <span>(hex)</span></label><input type="text" id="pk_brand_color" placeholder="#46707E"></div>
       <div><label for="pk_go_live_date">Desired start date</label><input type="date" id="pk_go_live_date"></div>
       <div><label for="pk_ends_on">End date <span>(default +30 days)</span></label><input type="date" id="pk_ends_on"></div>
     </div>
+    <label for="pk_chips">Chips <span>(larger card; up to 3, comma-separated)</span></label><input type="text" id="pk_chips" placeholder="Weekly classes, $120 / 28 days, No experience needed">
     <label for="pk_link_url">Destination link <span>(UTM tags added automatically)</span></label><input type="url" id="pk_link_url" placeholder="https://">
     <label for="pk_price_label">Price</label><input type="text" id="pk_price_label" value="$75/month">
     <button style="margin-top:14px;" onclick="pkSave()">Save</button>
@@ -1972,7 +1975,7 @@ showView(location.hash.slice(1) || 'today');
 loadToday();
 
 // ── Partners (Playroute's Picks) ──
-const PK_FIELDS = ['business_name','tagline','description','location','ages','cta_label','email_cta_label','brand_color','go_live_date','ends_on','link_url','price_label'];
+const PK_FIELDS = ['business_name','tagline','description','location','ages','cta_label','email_cta_label','badge','chips','note','brand_color','go_live_date','ends_on','link_url','price_label'];
 let pkRows = [];
 function pkResult(text, ok){
   const el = document.getElementById('pkResult');
@@ -2109,7 +2112,8 @@ async function pkLoadStats(token, el){
     if(!res.ok) throw new Error(s.error || res.status);
     const n = (x) => Number(x || 0).toLocaleString();
     const ctr = s.app_ctr == null ? '–' : (s.app_ctr * 100).toFixed(1) + '%';
-    el.textContent = `${s.from} → ${s.to} · App: ${n(s.app_impressions)} impressions, ${n(s.app_clicks)} clicks (${ctr}) · Newsletter: ${n(s.newsletter_clicks)} clicks, ${n(s.newsletter_opens)} opens of issues sent in this window`;
+    const arms = (s.by_arm || []).map(a => `${a.arm === 'visual' ? 'Larger card' : 'Standard card'} ${n(a.impressions)} / ${n(a.clicks)} (${a.ctr == null ? '–' : (a.ctr * 100).toFixed(1) + '%'})`).join(', ');
+    el.textContent = `${s.from} → ${s.to} · App: ${n(s.app_impressions)} impressions, ${n(s.app_clicks)} clicks (${ctr})${arms ? ' · By format (impressions / clicks): ' + arms : ''} · Newsletter: ${n(s.newsletter_clicks)} clicks, ${n(s.newsletter_opens)} opens of issues sent in this window`;
   }catch(err){ el.textContent = 'Couldn\u2019t load stats: ' + (err.message || err); }
 }
 async function pkSetPaid(token, paid){

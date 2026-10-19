@@ -217,3 +217,10 @@ keep reads proportional to traffic:
   to 1400px JPEG first). App and partner page: photo under an 85% parchment wash (`--pick-wash`). Email: a 140px
   banner row across the top fading into white (a side panel squeezed text on phones). Only `/api/photos/` paths are
   accepted (`pickBgUrl`), since the URL lands in CSS `url()`.
+  **Card format A/B test** (`pickcard` in EXPERIMENTS, localStorage `playroute-exp-pickcard`): `standard` (compact card, photo
+  under a wash) vs `visual` (photo banner + `badge`, up to 3 `chips` from a comma list, `note` beside a solid button).
+  Pinned to `standard` with no assignment until `FEATURE_PICKS_ENABLED`; end it with `PICKCARD_TEST_WINNER`.
+  Preview `?ff_pickcard=visual|standard`. `pick_stats` is keyed (pick, day, arm); admin Stats shows CTR per format and
+  GA4 Pick events carry `card_variant` (compare feed engagement by `experiment_impression` there). The partner page
+  shows both formats. Its terms name **Playroute LLC** and say placement, frequency and design can vary, with no
+  guaranteed position or results. Don't add copy there that promises a fixed spot or format.
