@@ -210,3 +210,6 @@ keep reads proportional to traffic:
   and one click per tap (`/api/pick-event`, counted only while `PICKS_PUBLIC` is on and the Pick is live; previews never count).
   Newsletter clicks are matched by the Pick's `utm_campaign` in `newsletter_events.link`. Admin > Partners > Stats
   (`/api/admin/picks/stats`) reports the run window. GA4 also gets `partner_pick_impression` / `partner_pick_click`.
+  Placement: a Pick leads the feed until the browser has seen it once; on later visits it sits after the second day
+  group (end of list if fewer days). Decided once at load (`picksLower`), localStorage `pr_pickSeenBefore_<pick_id>`.
+  Previews always lead. GA4 impressions carry `placement: top|lower`.

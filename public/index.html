@@ -1960,7 +1960,7 @@ function renderFeed(){
   // showDate:true on each card since these are pulled out of their normal
   // day-heading grouping -- without it the date context that grouping
   // would have provided for free is just gone.
-  if(!activeSearch){ const picksEl = buildPicksSection(); if(picksEl) feed.appendChild(picksEl); }
+  if(!activeSearch && !picksLower){ const picksEl = buildPicksSection(); if(picksEl) feed.appendChild(picksEl); }
   const recommended = getRecommendedEvents(upcoming);
   lastSawRecommended = recommended.length > 0;
   if(recommended.length) sendExpExposureOnce(); // strip can first appear mid-visit, after the pageview beacon
@@ -1981,7 +1981,8 @@ function renderFeed(){
     feed.appendChild(section);
   }
 
-  let shown=0, lastHeading=null, affiliateInserted=false;
+  let shown=0, lastHeading=null, affiliateInserted=false, daysDone=0, picksPlaced=!picksLower || !!activeSearch;
+  const placePicks=()=>{ const el=buildPicksSection(); if(el) feed.appendChild(el); picksPlaced=true; };
   const dayCounts={};
   upcoming.forEach(ev=>{ dayCounts[ev.occurrence_label]=(dayCounts[ev.occurrence_label]||0)+1; });
   upcoming.forEach(ev=>{
@@ -1994,6 +1995,10 @@ function renderFeed(){
         feed.appendChild(renderAffiliateCloserCard());
         affiliateInserted=true;
       }
+      // Seen-before Picks: after the second day group (the affiliate
+      // closer already sits after the first).
+      if(lastHeading!==null) daysDone++;
+      if(!picksPlaced && daysDone===2) placePicks();
       const h=document.createElement("div");
       h.className="day-heading";
       h.id="day-"+heading.replace(/[^a-z0-9]/gi,"-");
@@ -2007,6 +2012,7 @@ function renderFeed(){
     feed.appendChild(card);
     wireInlineCalendar(ev, card);
   });
+  if(!picksPlaced && shown>0) placePicks(); // fewer than 3 days showing: end of the list
   document.getElementById("resultCount").textContent = activeSearch ? `${shown} upcoming · all dates` : `${shown} upcoming`;
   lastShownCount = shown;
   if(shown===0){
@@ -2280,6 +2286,21 @@ async function loadPicks(){
     const r = await fetch(tok ? `${API_BASE}/api/picks/preview?token=${encodeURIComponent(tok)}` : `${API_BASE}/api/picks`);
     if(r.ok){ const j = await r.json(); picks = Array.isArray(j) ? j : []; }
   }catch(e){ picks = []; }
+  picksLower = picksSeenOnEarlierVisit();
+}
+// Placement: a Pick leads the feed until this browser has seen it once
+// (impression on an earlier visit). After that it moves down to sit after
+// the second day of events, so returning families get their events first.
+// Decided once per visit, at load, so the card never jumps mid-visit.
+// Previews always show at the top. Remembered in localStorage per Pick.
+let picksLower = false;
+function pickSeenBeforeKey(p){ return "pr_pickSeenBefore_" + p.pick_id; }
+function picksSeenOnEarlierVisit(){
+  if(!picks.length) return false;
+  try{
+    return picks.every(p => !p.preview && p.pick_id &&
+      localStorage.getItem(pickSeenBeforeKey(p)) && !sessionStorage.getItem("pr_pickSeen_" + p.pick_id));
+  }catch(e){ return false; }
 }
 // One impression per visit per Pick, sent when the card is at least half on
 // screen (not just rendered), plus one per-Pick click count. Previews never
@@ -2295,8 +2316,8 @@ function observePickImpression(card, p){
   const io = new IntersectionObserver((entries)=>{
     if(!entries.some(en=>en.isIntersecting)) return;
     io.disconnect();
-    try{ if(sessionStorage.getItem(key)) return; sessionStorage.setItem(key,"1"); }catch(e){}
-    ga('partner_pick_impression',{partner_name:(p.business_name||'').slice(0,100)});
+    try{ if(sessionStorage.getItem(key)) return; sessionStorage.setItem(key,"1"); localStorage.setItem(pickSeenBeforeKey(p),"1"); }catch(e){}
+    ga('partner_pick_impression',{partner_name:(p.business_name||'').slice(0,100),placement:picksLower?'lower':'top'});
     sendPickEvent(p, "impression");
   },{threshold:0.5});
   io.observe(card);
