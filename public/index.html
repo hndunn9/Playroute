@@ -2281,6 +2281,26 @@ async function loadPicks(){
     if(r.ok){ const j = await r.json(); picks = Array.isArray(j) ? j : []; }
   }catch(e){ picks = []; }
 }
+// One impression per visit per Pick, sent when the card is at least half on
+// screen (not just rendered), plus one per-Pick click count. Previews never
+// count. Server-side counts only run while PICKS_PUBLIC is on.
+function sendPickEvent(p, type){
+  if(p.preview || !p.pick_id) return;
+  try{ fetch(`${API_BASE}/api/pick-event`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({pick:p.pick_id,type})}).catch(()=>{}); }catch(e){}
+}
+function observePickImpression(card, p){
+  if(p.preview || !p.pick_id || !("IntersectionObserver" in window)) return;
+  const key = "pr_pickSeen_" + p.pick_id;
+  try{ if(sessionStorage.getItem(key)) return; }catch(e){}
+  const io = new IntersectionObserver((entries)=>{
+    if(!entries.some(en=>en.isIntersecting)) return;
+    io.disconnect();
+    try{ if(sessionStorage.getItem(key)) return; sessionStorage.setItem(key,"1"); }catch(e){}
+    ga('partner_pick_impression',{partner_name:(p.business_name||'').slice(0,100)});
+    sendPickEvent(p, "impression");
+  },{threshold:0.5});
+  io.observe(card);
+}
 function buildPicksSection(){
   if(!picks.length) return null;
   const isPreview = picks.some(p=>p.preview);
@@ -2301,6 +2321,7 @@ function buildPicksSection(){
       card.href = p.link_url; card.target = "_blank"; card.rel = "noopener sponsored";
       if(!p.preview) card.addEventListener("click", ()=>{
         ga('partner_pick_click',{partner_name:(p.business_name||'').slice(0,100)});
+        sendPickEvent(p, "click");
         try{ fetch(`${API_BASE}/api/track-click`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:p.link_url,event_title:p.business_name,category:"partner",action:"pick_click"})}).catch(()=>{}); }catch(e){}
       });
     }
@@ -2318,6 +2339,7 @@ function buildPicksSection(){
     main.appendChild(tags);
     card.appendChild(main);
     section.appendChild(card);
+    observePickImpression(card, p);
   });
   const s = document.createElement("div"); s.className = "pick-sponsor"; s.textContent = "Promoted by a local partner";
   section.appendChild(s);

@@ -2005,13 +2005,16 @@ async function pkLoad(){
           <a href="/partners/preview/${encodeURIComponent(r.token)}/newsletter" target="_blank" rel="noopener">Newsletter</a>
           <button class="secondary" data-act="copy">Copy link</button>
           <button data-act="paid">${r.paid_at ? 'Mark unpaid' : 'Mark paid'}</button>
-        </div>`;
+          <button class="secondary" data-act="stats">Stats</button>
+        </div>
+        <div class="fine pk-stats" aria-live="polite"></div>`;
       row.querySelector('[data-act=edit]').addEventListener('click', () => pkEdit(i));
       row.querySelector('[data-act=copy]').addEventListener('click', async (e) => {
         try{ await navigator.clipboard.writeText(pkPreviewUrl(r)); e.target.textContent = 'Copied'; }
         catch(err){ prompt('Copy this link:', pkPreviewUrl(r)); }
       });
       row.querySelector('[data-act=paid]').addEventListener('click', () => pkSetPaid(r.token, !r.paid_at));
+      row.querySelector('[data-act=stats]').addEventListener('click', () => pkLoadStats(r.token, row.querySelector('.pk-stats')));
       list.appendChild(row);
     });
   }catch(err){
@@ -2056,6 +2059,17 @@ async function pkUploadLogo(){
     pkResult(j.reset ? 'Logo uploaded. Partner needs to approve again.' : 'Logo uploaded.', true);
     pkLoad();
   }catch(err){ pkResult('Error: ' + (err.message || err), false); }
+}
+async function pkLoadStats(token, el){
+  el.textContent = 'Loading stats…';
+  try{
+    const res = await fetch('/api/admin/picks/stats?token=' + encodeURIComponent(token));
+    const s = await res.json();
+    if(!res.ok) throw new Error(s.error || res.status);
+    const n = (x) => Number(x || 0).toLocaleString();
+    const ctr = s.app_ctr == null ? '–' : (s.app_ctr * 100).toFixed(1) + '%';
+    el.textContent = `${s.from} → ${s.to} · App: ${n(s.app_impressions)} impressions, ${n(s.app_clicks)} clicks (${ctr}) · Newsletter: ${n(s.newsletter_clicks)} clicks, ${n(s.newsletter_opens)} opens of issues sent in this window`;
+  }catch(err){ el.textContent = 'Couldn\u2019t load stats: ' + (err.message || err); }
 }
 async function pkSetPaid(token, paid){
   if(paid && !confirm('Confirm you received payment?')) return;

@@ -6201,7 +6201,10 @@ function publicPick(p) {
     business_name: p.business_name, tagline: p.tagline, description: p.description,
     location: p.location, ages: p.ages, cta_label: p.cta_label || "Learn more",
     email_cta_label: p.email_cta_label || null,
-    link_url: pickLinkUrl(p), brand_color: pickColor(p), logo_url: p.logo_url || null
+    link_url: pickLinkUrl(p), brand_color: pickColor(p), logo_url: p.logo_url || null,
+    // Public id for impression/click counting. Never the token: the token
+    // opens the partner's approval page.
+    pick_id: pickSlug(p)
   };
 }
 function todayMT() {
@@ -6467,8 +6470,58 @@ async function handlePicksPreview(env, url) {
   return json([{ ...publicPick(p), preview: true }]);
 }
 
+// ── Pick stats (D1 pick_stats: one row per pick per MT day). The app
+// sends one impression per visit, when a card is at least half on screen,
+// and one click per tap. Only counted while PICKS_PUBLIC is on and the
+// pick is live (previews never count). The live-slug set is cached per
+// isolate for 5 min, so a beacon costs one write and almost never a read.
+let _livePickSlugs = null, _livePickSlugsAt = 0;
+async function livePickSlugs(env) {
+  if (_livePickSlugs && Date.now() - _livePickSlugsAt < 300000) return _livePickSlugs;
+  _livePickSlugs = new Set((await getLivePicks(env)).map(pickSlug));
+  _livePickSlugsAt = Date.now();
+  return _livePickSlugs;
+}
+async function handlePickEvent(request, env) {
+  if (!PICKS_PUBLIC) return new Response(null, { status: 204 });
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+  const col = body.type === "impression" ? "impressions" : body.type === "click" ? "clicks" : null;
+  const slug = String(body.pick || "").slice(0, 120);
+  if (!col || !(await livePickSlugs(env)).has(slug)) return new Response(null, { status: 204 });
+  await env.DB.prepare(
+    `INSERT INTO pick_stats (pick, day, ${col}) VALUES (?, ?, 1) ON CONFLICT(pick, day) DO UPDATE SET ${col} = ${col} + 1`
+  ).bind(slug, todayMT()).run();
+  return new Response(null, { status: 204 });
+}
+
 // ── Admin (Partners view in admin.html). Same unlisted-URL model as the
 // rest of the admin endpoints.
+// Per-placement report for its run window: app impressions/clicks from
+// pick_stats, newsletter clicks on its link (matched by its utm_campaign),
+// and opens of the issues sent during the run. Loaded on a button, never polled.
+async function handleAdminPicksStats(env, url) {
+  const p = await getPreviewRow(env, url.searchParams.get("token"));
+  if (!p) return json({ error: "Not found" }, 404);
+  const slug = pickSlug(p);
+  const from = p.go_live_date || "2000-01-01";
+  const to = pickEndsOn(p) || todayMT();
+  const [app, daily, nlClicks, nlOpens] = await env.DB.batch([
+    env.DB.prepare(`SELECT COALESCE(SUM(impressions), 0) AS impressions, COALESCE(SUM(clicks), 0) AS clicks FROM pick_stats WHERE pick = ? AND day BETWEEN ? AND ?`).bind(slug, from, to),
+    env.DB.prepare(`SELECT day, impressions, clicks FROM pick_stats WHERE pick = ? AND day BETWEEN ? AND ? ORDER BY day`).bind(slug, from, to),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM newsletter_events WHERE type = 'clicked' AND created_at >= ? AND created_at < date(?, '+8 days') AND link LIKE ?`).bind(from, to, `%utm_campaign=${slug}%`),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM newsletter_events e JOIN newsletter_sends s ON s.resend_id = e.resend_id WHERE e.type = 'opened' AND s.sent_at >= ? AND s.sent_at < date(?, '+1 day')`).bind(from, to),
+  ]);
+  const a = (app.results && app.results[0]) || { impressions: 0, clicks: 0 };
+  return json({
+    pick: slug, from, to,
+    app_impressions: a.impressions, app_clicks: a.clicks,
+    app_ctr: a.impressions ? a.clicks / a.impressions : null,
+    newsletter_clicks: (nlClicks.results && nlClicks.results[0] || {}).n || 0,
+    newsletter_opens: (nlOpens.results && nlOpens.results[0] || {}).n || 0,
+    daily: daily.results || [],
+  });
+}
 async function handleAdminPicksList(env) {
   const { results } = await env.DB.prepare(`SELECT * FROM partner_previews ORDER BY created_at DESC LIMIT 100`).all();
   const today = todayMT();
@@ -7023,6 +7076,12 @@ const worker = {
       }
       if (url.pathname === "/api/admin/picks/save" && request.method === "POST") {
         return await handleAdminPicksSave(request, env);
+      }
+      if (url.pathname === "/api/pick-event" && request.method === "POST") {
+        return await handlePickEvent(request, env);
+      }
+      if (url.pathname === "/api/admin/picks/stats" && request.method === "GET") {
+        return await handleAdminPicksStats(env, url);
       }
       if (url.pathname === "/api/admin/picks/paid" && request.method === "POST") {
         return await handleAdminPicksPaid(request, env);
