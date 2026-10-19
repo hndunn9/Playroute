@@ -582,6 +582,10 @@
     <label for="pkLogo" style="margin-top:16px;">Logo <span>(PNG, JPEG or WebP; save first)</span></label>
     <input type="file" id="pkLogo" accept="image/png,image/jpeg,image/webp">
     <button class="secondary" onclick="pkUploadLogo()">Upload logo</button>
+    <label for="pkBg" style="margin-top:16px;">Background photo <span>(optional; resized before upload; save first)</span></label>
+    <input type="file" id="pkBg" accept="image/png,image/jpeg,image/webp">
+    <button class="secondary" onclick="pkUploadBg()">Upload photo</button>
+    <button class="secondary" onclick="pkUploadBg(true)">Remove photo</button>
     <div class="result" id="pkResult"></div>
   </div>
     </div>
@@ -2005,13 +2009,16 @@ async function pkLoad(){
           <a href="/partners/preview/${encodeURIComponent(r.token)}/newsletter" target="_blank" rel="noopener">Newsletter</a>
           <button class="secondary" data-act="copy">Copy link</button>
           <button data-act="paid">${r.paid_at ? 'Mark unpaid' : 'Mark paid'}</button>
-        </div>`;
+          <button class="secondary" data-act="stats">Stats</button>
+        </div>
+        <div class="fine pk-stats" aria-live="polite"></div>`;
       row.querySelector('[data-act=edit]').addEventListener('click', () => pkEdit(i));
       row.querySelector('[data-act=copy]').addEventListener('click', async (e) => {
         try{ await navigator.clipboard.writeText(pkPreviewUrl(r)); e.target.textContent = 'Copied'; }
         catch(err){ prompt('Copy this link:', pkPreviewUrl(r)); }
       });
       row.querySelector('[data-act=paid]').addEventListener('click', () => pkSetPaid(r.token, !r.paid_at));
+      row.querySelector('[data-act=stats]').addEventListener('click', () => pkLoadStats(r.token, row.querySelector('.pk-stats')));
       list.appendChild(row);
     });
   }catch(err){
@@ -2043,6 +2050,43 @@ async function pkSave(){
     pkLoad();
   }catch(err){ pkResult('Error: ' + (err.message || err), false); }
 }
+// Background photos come straight off phones (often 3–5MB) and load for
+// every visitor who sees the Pick, so shrink them in the browser first:
+// max 1400px on the long side, JPEG ~82%.
+function pkShrinkImage(file){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      c.toBlob(b => b ? resolve(new File([b], 'photo.jpg', {type:'image/jpeg'})) : reject(new Error('Could not process image')), 'image/jpeg', 0.82);
+    };
+    img.onerror = () => reject(new Error('Could not read image'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+async function pkUploadBg(remove){
+  const token = document.getElementById('pkToken').value;
+  if(!token){ pkResult('Save the placement first.', false); return; }
+  const fd = new FormData(); fd.append('token', token); fd.append('kind', 'bg');
+  try{
+    if(remove){ if(!confirm('Remove the background photo?')) return; fd.append('remove', '1'); }
+    else{
+      const file = document.getElementById('pkBg').files[0];
+      if(!file){ pkResult('Choose a photo.', false); return; }
+      fd.append('file', await pkShrinkImage(file));
+    }
+    const res = await fetch('/api/admin/picks/logo', {method:'POST', body: fd});
+    const j = await res.json();
+    if(!res.ok) throw new Error(j.error || res.status);
+    const what = remove ? 'Photo removed.' : 'Photo uploaded.';
+    pkResult(j.reset ? what + ' Partner needs to approve again.' : what, true);
+    pkLoad();
+  }catch(err){ pkResult('Error: ' + (err.message || err), false); }
+}
 async function pkUploadLogo(){
   const token = document.getElementById('pkToken').value;
   const file = document.getElementById('pkLogo').files[0];
@@ -2056,6 +2100,17 @@ async function pkUploadLogo(){
     pkResult(j.reset ? 'Logo uploaded. Partner needs to approve again.' : 'Logo uploaded.', true);
     pkLoad();
   }catch(err){ pkResult('Error: ' + (err.message || err), false); }
+}
+async function pkLoadStats(token, el){
+  el.textContent = 'Loading stats…';
+  try{
+    const res = await fetch('/api/admin/picks/stats?token=' + encodeURIComponent(token));
+    const s = await res.json();
+    if(!res.ok) throw new Error(s.error || res.status);
+    const n = (x) => Number(x || 0).toLocaleString();
+    const ctr = s.app_ctr == null ? '–' : (s.app_ctr * 100).toFixed(1) + '%';
+    el.textContent = `${s.from} → ${s.to} · App: ${n(s.app_impressions)} impressions, ${n(s.app_clicks)} clicks (${ctr}) · Newsletter: ${n(s.newsletter_clicks)} clicks, ${n(s.newsletter_opens)} opens of issues sent in this window`;
+  }catch(err){ el.textContent = 'Couldn\u2019t load stats: ' + (err.message || err); }
 }
 async function pkSetPaid(token, paid){
   if(paid && !confirm('Confirm you received payment?')) return;

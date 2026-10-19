@@ -80,6 +80,8 @@
   --sage:      #7A8B76;
   --cream:     #F4F5F0;
   --parchment: #ECEEE8;
+  /* Wash over a Pick's background photo; follows --parchment in dark mode. */
+  --pick-wash: color-mix(in srgb, var(--parchment) 85%, transparent);
   --fog:       #D7DBD3;
   --ink:       #1E2622;
   --ink-soft:  #5B6560;
@@ -606,6 +608,7 @@ main{
 .picks-section{margin-bottom:8px;}
 .picks-heading{font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);margin:4px 0 10px;display:flex;justify-content:space-between;gap:8px;}
 .picks-heading .picks-preview-note{color:var(--gold);letter-spacing:0.04em;}
+.pick-card.has-bg{background:linear-gradient(var(--pick-wash),var(--pick-wash)),var(--pick-bg) 70% 35%/cover no-repeat,var(--parchment);}
 .pick-card{display:flex;gap:11px;align-items:flex-start;padding:13px 14px;margin-bottom:10px;background:var(--parchment);border:1px solid var(--pick-color,var(--sky));box-shadow:0 0 0 1px var(--pick-color,var(--sky)),0 2px 8px rgba(20,24,22,0.07);border-radius:var(--radius-md);text-decoration:none;color:inherit;-webkit-tap-highlight-color:transparent;}
 .pick-logo{width:40px;height:40px;border-radius:8px;flex-shrink:0;object-fit:contain;background:var(--photo-bg);}
 .pick-logo.ph{background:var(--pick-color,var(--sky));color:var(--on-fill);font-weight:700;display:flex;align-items:center;justify-content:center;}
@@ -1960,7 +1963,7 @@ function renderFeed(){
   // showDate:true on each card since these are pulled out of their normal
   // day-heading grouping -- without it the date context that grouping
   // would have provided for free is just gone.
-  if(!activeSearch){ const picksEl = buildPicksSection(); if(picksEl) feed.appendChild(picksEl); }
+  if(!activeSearch && !picksLower){ const picksEl = buildPicksSection(); if(picksEl) feed.appendChild(picksEl); }
   const recommended = getRecommendedEvents(upcoming);
   lastSawRecommended = recommended.length > 0;
   if(recommended.length) sendExpExposureOnce(); // strip can first appear mid-visit, after the pageview beacon
@@ -1981,7 +1984,8 @@ function renderFeed(){
     feed.appendChild(section);
   }
 
-  let shown=0, lastHeading=null, affiliateInserted=false;
+  let shown=0, lastHeading=null, affiliateInserted=false, daysDone=0, picksPlaced=!picksLower || !!activeSearch;
+  const placePicks=()=>{ const el=buildPicksSection(); if(el) feed.appendChild(el); picksPlaced=true; };
   const dayCounts={};
   upcoming.forEach(ev=>{ dayCounts[ev.occurrence_label]=(dayCounts[ev.occurrence_label]||0)+1; });
   upcoming.forEach(ev=>{
@@ -1994,6 +1998,10 @@ function renderFeed(){
         feed.appendChild(renderAffiliateCloserCard());
         affiliateInserted=true;
       }
+      // Seen-before Picks: after the second day group (the affiliate
+      // closer already sits after the first).
+      if(lastHeading!==null) daysDone++;
+      if(!picksPlaced && daysDone===2) placePicks();
       const h=document.createElement("div");
       h.className="day-heading";
       h.id="day-"+heading.replace(/[^a-z0-9]/gi,"-");
@@ -2007,6 +2015,7 @@ function renderFeed(){
     feed.appendChild(card);
     wireInlineCalendar(ev, card);
   });
+  if(!picksPlaced && shown>0) placePicks(); // fewer than 3 days showing: end of the list
   document.getElementById("resultCount").textContent = activeSearch ? `${shown} upcoming · all dates` : `${shown} upcoming`;
   lastShownCount = shown;
   if(shown===0){
@@ -2280,6 +2289,41 @@ async function loadPicks(){
     const r = await fetch(tok ? `${API_BASE}/api/picks/preview?token=${encodeURIComponent(tok)}` : `${API_BASE}/api/picks`);
     if(r.ok){ const j = await r.json(); picks = Array.isArray(j) ? j : []; }
   }catch(e){ picks = []; }
+  picksLower = picksSeenOnEarlierVisit();
+}
+// Placement: a Pick leads the feed until this browser has seen it once
+// (impression on an earlier visit). After that it moves down to sit after
+// the second day of events, so returning families get their events first.
+// Decided once per visit, at load, so the card never jumps mid-visit.
+// Previews always show at the top. Remembered in localStorage per Pick.
+let picksLower = false;
+function pickSeenBeforeKey(p){ return "pr_pickSeenBefore_" + p.pick_id; }
+function picksSeenOnEarlierVisit(){
+  if(!picks.length) return false;
+  try{
+    return picks.every(p => !p.preview && p.pick_id &&
+      localStorage.getItem(pickSeenBeforeKey(p)) && !sessionStorage.getItem("pr_pickSeen_" + p.pick_id));
+  }catch(e){ return false; }
+}
+// One impression per visit per Pick, sent when the card is at least half on
+// screen (not just rendered), plus one per-Pick click count. Previews never
+// count. Server-side counts only run while PICKS_PUBLIC is on.
+function sendPickEvent(p, type){
+  if(p.preview || !p.pick_id) return;
+  try{ fetch(`${API_BASE}/api/pick-event`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({pick:p.pick_id,type})}).catch(()=>{}); }catch(e){}
+}
+function observePickImpression(card, p){
+  if(p.preview || !p.pick_id || !("IntersectionObserver" in window)) return;
+  const key = "pr_pickSeen_" + p.pick_id;
+  try{ if(sessionStorage.getItem(key)) return; }catch(e){}
+  const io = new IntersectionObserver((entries)=>{
+    if(!entries.some(en=>en.isIntersecting)) return;
+    io.disconnect();
+    try{ if(sessionStorage.getItem(key)) return; sessionStorage.setItem(key,"1"); localStorage.setItem(pickSeenBeforeKey(p),"1"); }catch(e){}
+    ga('partner_pick_impression',{partner_name:(p.business_name||'').slice(0,100),placement:picksLower?'lower':'top'});
+    sendPickEvent(p, "impression");
+  },{threshold:0.5});
+  io.observe(card);
 }
 function buildPicksSection(){
   if(!picks.length) return null;
@@ -2297,10 +2341,14 @@ function buildPicksSection(){
     const card = document.createElement(p.link_url ? "a" : "div");
     card.className = "pick-card";
     if(color) card.style.setProperty("--pick-color", color);
+    // Optional partner photo behind the card, under a parchment wash so the
+    // text stays readable. Only our own /api/photos/ paths (it goes in url()).
+    if(/^\/api\/photos\/[A-Za-z0-9%._-]+$/.test(p.bg_url||"")){ card.classList.add("has-bg"); card.style.setProperty("--pick-bg", `url("${p.bg_url}")`); }
     if(p.link_url){
       card.href = p.link_url; card.target = "_blank"; card.rel = "noopener sponsored";
       if(!p.preview) card.addEventListener("click", ()=>{
         ga('partner_pick_click',{partner_name:(p.business_name||'').slice(0,100)});
+        sendPickEvent(p, "click");
         try{ fetch(`${API_BASE}/api/track-click`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({source_url:p.link_url,event_title:p.business_name,category:"partner",action:"pick_click"})}).catch(()=>{}); }catch(e){}
       });
     }
@@ -2318,6 +2366,7 @@ function buildPicksSection(){
     main.appendChild(tags);
     card.appendChild(main);
     section.appendChild(card);
+    observePickImpression(card, p);
   });
   const s = document.createElement("div"); s.className = "pick-sponsor"; s.textContent = "Promoted by a local partner";
   section.appendChild(s);

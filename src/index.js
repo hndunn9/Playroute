@@ -6190,6 +6190,11 @@ function pickLinkUrl(p) {
     return u.toString();
   } catch { return null; }
 }
+// Optional background photo (uploaded in admin, stored in R2). Only our own
+// /api/photos/ paths are allowed, since it lands inside CSS url().
+function pickBgUrl(p) {
+  return /^\/api\/photos\/[A-Za-z0-9%._-]+$/.test(p.bg_url || "") ? p.bg_url : null;
+}
 function pickHost(p) {
   try { return new URL(p.link_url).hostname.replace(/^www\./, ""); } catch { return ""; }
 }
@@ -6201,7 +6206,11 @@ function publicPick(p) {
     business_name: p.business_name, tagline: p.tagline, description: p.description,
     location: p.location, ages: p.ages, cta_label: p.cta_label || "Learn more",
     email_cta_label: p.email_cta_label || null,
-    link_url: pickLinkUrl(p), brand_color: pickColor(p), logo_url: p.logo_url || null
+    link_url: pickLinkUrl(p), brand_color: pickColor(p), logo_url: p.logo_url || null,
+    bg_url: pickBgUrl(p),
+    // Public id for impression/click counting. Never the token: the token
+    // opens the partner's approval page.
+    pick_id: pickSlug(p)
   };
 }
 function todayMT() {
@@ -6247,9 +6256,18 @@ function digestPicksHtml(picks) {
         ? `<img src="${escapeHtml(absSiteUrl(p.logo_url))}" width="40" height="40" alt="" style="display:block;width:40px;height:40px;border-radius:8px;object-fit:contain;background:#ffffff;">`
         : `<div style="width:40px;height:40px;border-radius:8px;background:${color};color:#ffffff;font:700 17px/40px -apple-system,sans-serif;text-align:center;">${escapeHtml((p.business_name || "?").charAt(0).toUpperCase())}</div>`;
       const meta = [p.business_name, p.location, p.ages].filter(Boolean).map(escapeHtml).join(" · ");
+      // With a background photo: a banner row across the top of the card that
+      // fades into white, text full width below. Same layout at every width
+      // (a side panel squeezed the text on phones, and media queries aren't
+      // reliable in a body-only email). Outlook desktop drops background
+      // images, so the banner is kept short.
+      const bg = p.bg_url ? escapeHtml(absSiteUrl(p.bg_url)) : "";
+      const photoRow = bg
+        ? `<tr><td colspan="2" height="140" style="height:140px;font-size:0;line-height:0;background-color:#ffffff;background-image:linear-gradient(180deg,rgba(255,255,255,0) 50%,#ffffff 100%),url('${bg}');background-size:cover;background-position:center 30%;background-repeat:no-repeat;border-radius:0 13px 0 0;">&nbsp;</td></tr>`
+        : "";
       const inner = `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:#ffffff;border:1px solid #D3D8C8;border-left:4px solid ${color};border-radius:14px;">
-        <tr>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#ffffff" style="width:100%;background:#ffffff;border:1px solid #D3D8C8;border-left:4px solid ${color};border-radius:14px;">
+        ${photoRow}<tr>
           <td width="54" style="padding:14px 0 14px 14px;vertical-align:top;">${logo}</td>
           <td style="padding:14px 14px 14px 10px;font-family:-apple-system,sans-serif;">
             <div style="font-weight:700;font-size:15px;color:#1F2A22;line-height:1.3;">${escapeHtml(p.tagline || p.business_name)}</div>
@@ -6354,7 +6372,7 @@ a{color:var(--sky)}
 <h2>In the app</h2>
 <p class="sub">A small tagged card at the top of the events feed, labeled as a Playroute's Pick.</p>
 <div class="app"><div class="app-bar">Playroute</div><div class="app-main"><div class="sec">Playroute's Picks</div>
-<div class="card">${logo}<div style="min-width:0"><div class="t">${e(p.tagline || p.business_name)}</div><div class="m">${meta}</div>
+<div class="card"${pp.bg_url ? ` style="background:linear-gradient(rgba(236,238,232,.85),rgba(236,238,232,.85)),url('${e(pp.bg_url)}') 70% 35%/cover no-repeat,var(--parchment)"` : ""}>${logo}<div style="min-width:0"><div class="t">${e(p.tagline || p.business_name)}</div><div class="m">${meta}</div>
 ${p.description ? `<div class="d">${e(p.description)}</div>` : ""}
 <div class="tags"><span class="tag">${e(p.business_name)}</span>${pp.link_url ? `<a class="cta" href="${e(pp.link_url)}" target="_blank" rel="noopener">${e(pp.cta_label)} →</a>` : `<span class="cta">${e(pp.cta_label)} →</span>`}</div></div></div><div class="sponsor">Promoted by a local partner</div></div></div>
 <a class="real" href="/?ff_picks=${tok}" target="_blank" rel="noopener">See it in the real Playroute app →</a>
@@ -6467,8 +6485,58 @@ async function handlePicksPreview(env, url) {
   return json([{ ...publicPick(p), preview: true }]);
 }
 
+// ── Pick stats (D1 pick_stats: one row per pick per MT day). The app
+// sends one impression per visit, when a card is at least half on screen,
+// and one click per tap. Only counted while PICKS_PUBLIC is on and the
+// pick is live (previews never count). The live-slug set is cached per
+// isolate for 5 min, so a beacon costs one write and almost never a read.
+let _livePickSlugs = null, _livePickSlugsAt = 0;
+async function livePickSlugs(env) {
+  if (_livePickSlugs && Date.now() - _livePickSlugsAt < 300000) return _livePickSlugs;
+  _livePickSlugs = new Set((await getLivePicks(env)).map(pickSlug));
+  _livePickSlugsAt = Date.now();
+  return _livePickSlugs;
+}
+async function handlePickEvent(request, env) {
+  if (!PICKS_PUBLIC) return new Response(null, { status: 204 });
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+  const col = body.type === "impression" ? "impressions" : body.type === "click" ? "clicks" : null;
+  const slug = String(body.pick || "").slice(0, 120);
+  if (!col || !(await livePickSlugs(env)).has(slug)) return new Response(null, { status: 204 });
+  await env.DB.prepare(
+    `INSERT INTO pick_stats (pick, day, ${col}) VALUES (?, ?, 1) ON CONFLICT(pick, day) DO UPDATE SET ${col} = ${col} + 1`
+  ).bind(slug, todayMT()).run();
+  return new Response(null, { status: 204 });
+}
+
 // ── Admin (Partners view in admin.html). Same unlisted-URL model as the
 // rest of the admin endpoints.
+// Per-placement report for its run window: app impressions/clicks from
+// pick_stats, newsletter clicks on its link (matched by its utm_campaign),
+// and opens of the issues sent during the run. Loaded on a button, never polled.
+async function handleAdminPicksStats(env, url) {
+  const p = await getPreviewRow(env, url.searchParams.get("token"));
+  if (!p) return json({ error: "Not found" }, 404);
+  const slug = pickSlug(p);
+  const from = p.go_live_date || "2000-01-01";
+  const to = pickEndsOn(p) || todayMT();
+  const [app, daily, nlClicks, nlOpens] = await env.DB.batch([
+    env.DB.prepare(`SELECT COALESCE(SUM(impressions), 0) AS impressions, COALESCE(SUM(clicks), 0) AS clicks FROM pick_stats WHERE pick = ? AND day BETWEEN ? AND ?`).bind(slug, from, to),
+    env.DB.prepare(`SELECT day, impressions, clicks FROM pick_stats WHERE pick = ? AND day BETWEEN ? AND ? ORDER BY day`).bind(slug, from, to),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM newsletter_events WHERE type = 'clicked' AND created_at >= ? AND created_at < date(?, '+8 days') AND link LIKE ?`).bind(from, to, `%utm_campaign=${slug}%`),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM newsletter_events e JOIN newsletter_sends s ON s.resend_id = e.resend_id WHERE e.type = 'opened' AND s.sent_at >= ? AND s.sent_at < date(?, '+1 day')`).bind(from, to),
+  ]);
+  const a = (app.results && app.results[0]) || { impressions: 0, clicks: 0 };
+  return json({
+    pick: slug, from, to,
+    app_impressions: a.impressions, app_clicks: a.clicks,
+    app_ctr: a.impressions ? a.clicks / a.impressions : null,
+    newsletter_clicks: (nlClicks.results && nlClicks.results[0] || {}).n || 0,
+    newsletter_opens: (nlOpens.results && nlOpens.results[0] || {}).n || 0,
+    daily: daily.results || [],
+  });
+}
 async function handleAdminPicksList(env) {
   const { results } = await env.DB.prepare(`SELECT * FROM partner_previews ORDER BY created_at DESC LIMIT 100`).all();
   const today = todayMT();
@@ -6522,23 +6590,35 @@ async function handleAdminPicksLogo(request, env) {
   let form;
   try { form = await request.formData(); } catch { return json({ error: "Expected multipart/form-data body" }, 400); }
   const file = form.get("file");
+  const isBg = form.get("kind") === "bg"; // background photo instead of logo
   const p = await getPreviewRow(env, form.get("token"));
   if (!p) return json({ error: "Not found" }, 404);
+  if (isBg && form.get("remove") === "1") {
+    const old = p.bg_url ? decodeURIComponent(p.bg_url.replace(/^\/api\/photos\//, "")) : null;
+    if (old && old.startsWith("partner-photos/")) await env.PHOTOS.delete(old).catch(() => {});
+    const reset = p.status === "approved" && !!p.bg_url;
+    await env.DB.prepare(
+      `UPDATE partner_previews SET bg_url = NULL${reset ? ", status = 'draft', approved_at = NULL, approved_by = NULL" : ""} WHERE token = ?`
+    ).bind(p.token).run();
+    return json({ ok: true, bg_url: null, reset });
+  }
   if (!(file instanceof File)) return json({ error: "file is required" }, 400);
   const ALLOWED_TYPES = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
   const ext = ALLOWED_TYPES[file.type];
   if (!ext) return json({ error: `Unsupported file type: ${file.type || "unknown"}. Use PNG, JPEG or WebP (export SVGs to PNG).` }, 400);
   if (file.size > 4 * 1024 * 1024) return json({ error: "File too large (4MB max)" }, 400);
-  const key = `partner-logos/pick-${p.token}-${Date.now()}.${ext}`;
+  const prefix = isBg ? "partner-photos" : "partner-logos";
+  const col = isBg ? "bg_url" : "logo_url";
+  const key = `${prefix}/pick-${p.token}-${Date.now()}.${ext}`;
   await env.PHOTOS.put(key, file, { httpMetadata: { contentType: file.type } });
-  const oldKey = p.logo_url ? decodeURIComponent(p.logo_url.replace(/^\/api\/photos\//, "")) : null;
-  if (oldKey && oldKey !== key && oldKey.startsWith("partner-logos/")) await env.PHOTOS.delete(oldKey).catch(() => {});
-  const logoUrl = `/api/photos/${encodeURIComponent(key)}`;
+  const oldKey = p[col] ? decodeURIComponent(p[col].replace(/^\/api\/photos\//, "")) : null;
+  if (oldKey && oldKey !== key && oldKey.startsWith(prefix + "/")) await env.PHOTOS.delete(oldKey).catch(() => {});
+  const url = `/api/photos/${encodeURIComponent(key)}`;
   const reset = p.status === "approved";
   await env.DB.prepare(
-    `UPDATE partner_previews SET logo_url = ?${reset ? ", status = 'draft', approved_at = NULL, approved_by = NULL" : ""} WHERE token = ?`
-  ).bind(logoUrl, p.token).run();
-  return json({ ok: true, logo_url: logoUrl, reset });
+    `UPDATE partner_previews SET ${col} = ?${reset ? ", status = 'draft', approved_at = NULL, approved_by = NULL" : ""} WHERE token = ?`
+  ).bind(url, p.token).run();
+  return json({ ok: true, [col]: url, reset });
 }
 
 // Body-carried token (not URL-path) -- consistent with handlePartnerSubmit
@@ -7023,6 +7103,12 @@ const worker = {
       }
       if (url.pathname === "/api/admin/picks/save" && request.method === "POST") {
         return await handleAdminPicksSave(request, env);
+      }
+      if (url.pathname === "/api/pick-event" && request.method === "POST") {
+        return await handlePickEvent(request, env);
+      }
+      if (url.pathname === "/api/admin/picks/stats" && request.method === "GET") {
+        return await handleAdminPicksStats(env, url);
       }
       if (url.pathname === "/api/admin/picks/paid" && request.method === "POST") {
         return await handleAdminPicksPaid(request, env);

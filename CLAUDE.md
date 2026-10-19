@@ -206,3 +206,14 @@ keep reads proportional to traffic:
   `go_live_date`..`ends_on`. It is **feature-flagged off**: `PICKS_PUBLIC` (src/index.js, app API + newsletter)
   and `FEATURE_PICKS_ENABLED` (public/index.html). Flip both in one PR to launch. Previews work with the flag off:
   `/?ff_picks=<token>` (app) and `/partners/preview/<token>/newsletter`. Editing content after approval resets it to draft.
+  Stats: D1 `pick_stats` (pick slug + MT day). The app sends one impression per visit when a card is ≥50% on screen
+  and one click per tap (`/api/pick-event`, counted only while `PICKS_PUBLIC` is on and the Pick is live; previews never count).
+  Newsletter clicks are matched by the Pick's `utm_campaign` in `newsletter_events.link`. Admin > Partners > Stats
+  (`/api/admin/picks/stats`) reports the run window. GA4 also gets `partner_pick_impression` / `partner_pick_click`.
+  Placement: a Pick leads the feed until the browser has seen it once; on later visits it sits after the second day
+  group (end of list if fewer days). Decided once at load (`picksLower`), localStorage `pr_pickSeenBefore_<pick_id>`.
+  Previews always lead. GA4 impressions carry `placement: top|lower`.
+  Optional background photo (`bg_url`, R2 `partner-photos/`, uploaded in admin > Partners and shrunk in the browser
+  to 1400px JPEG first). App and partner page: photo under an 85% parchment wash (`--pick-wash`). Email: a 140px
+  banner row across the top fading into white (a side panel squeezed text on phones). Only `/api/photos/` paths are
+  accepted (`pickBgUrl`), since the URL lands in CSS `url()`.
