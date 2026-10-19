@@ -222,5 +222,5 @@ keep reads proportional to traffic:
   Pinned to `standard` with no assignment until `FEATURE_PICKS_ENABLED`; end it with `PICKCARD_TEST_WINNER`.
   Preview `?ff_pickcard=visual|standard`. `pick_stats` is keyed (pick, day, arm); admin Stats shows CTR per format and
   GA4 Pick events carry `card_variant` (compare feed engagement by `experiment_impression` there). The partner page
-  shows both formats. Its terms name **Playroute LLC** and say placement, frequency and design can vary, with no
-  guaranteed position or results. Don't add copy there that promises a fixed spot or format.
+  shows both formats. Its terms name **Playroute LLC** and say clicks and conversions aren't
+  guaranteed. Don't add copy there that promises a fixed spot or format.
