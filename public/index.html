@@ -551,7 +551,8 @@ main{
 .tl-rail{width:50px;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-start;}
 .tl-rail .blaze{width:20px;height:20px;margin:0 0 3px;}
 .tl-start{font-family:'DM Sans',sans-serif;font-size:15px;font-weight:600;color:var(--ink);line-height:1.2;white-space:nowrap;}
-.tl-start-text{white-space:normal;font-size:13px;overflow-wrap:anywhere;}
+.tl-start-text{white-space:normal;font-size:13px;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;}
+.tl-more{font-weight:600;color:var(--ink);}
 .tl-dur{font-size:11.5px;color:var(--ink-soft);line-height:1.3;white-space:nowrap;}
 .tl-chip{display:inline-block;margin-top:4px;font-size:10.5px;font-weight:600;padding:1px 5px;border-radius:100px;background:var(--wheat);color:var(--soil);white-space:nowrap;}
 .tl-chip.now{background:var(--pill-green-bg);color:var(--pill-green-text);}
@@ -1788,18 +1789,34 @@ function parseClock(label){
   return { h: +m[1], mm: m[2]||"00", ap: m[3] ? m[3].toUpperCase() : null };
 }
 function clockMinutes(c, ap){ return ((c.h % 12) + (ap==="P" ? 12 : 0)) * 60 + (+c.mm); }
+// The rail shows ONE start time. Labels like "8:30–10, 10:30–12, … (90-min
+// sessions, reservation required)" used to be dumped whole into the 50px rail
+// (Oct 2026), so: drop "(…)" notes (a "(90 min)" note still gives the
+// duration), split sessions on , & "and", read the first, and return how many
+// more there are. The full label still shows in the expanded drawer.
 function timeledTimeParts(displayTime){
-  const parts = String(displayTime||"").split(/\s*[–—-]\s*/);
+  const raw = String(displayTime||"");
+  const durNote = /\((\d{2,3})\s*-?\s*min/i.exec(raw);
+  const sessions = raw.replace(/\([^)]*\)/g, " ").split(/\s*(?:,|&|\band\b)\s*/i).filter((s) => /\d/.test(s));
+  if(!sessions.length) return null;
+  const parts = sessions[0].split(/\s*[–—-]\s*(?=\d)/);
   const a = parseClock(parts[0]), b = parts.length > 1 ? parseClock(parts[1]) : null;
-  if(!a || (!a.ap && !(b && b.ap))) return null;
-  let apA = a.ap || b.ap, dur = null;
-  if(b && b.ap){
-    const endM = clockMinutes(b, b.ap);
+  if(!a) return null;
+  let apA = a.ap || (b && b.ap);
+  // Multi-session lists often skip AM/PM entirely ("8:30–10, 10:30–12");
+  // read 7–11 as morning, 12 and 1–6 as afternoon.
+  if(!apA && sessions.length > 1) apA = a.h >= 7 && a.h <= 11 ? "A" : "P";
+  if(!apA) return null;
+  let dur = null;
+  if(b){
+    const apB = b.ap || (b.h < a.h || b.h === 12 ? "P" : apA);
+    const endM = clockMinutes(b, apB);
     if(!a.ap && clockMinutes(a, apA) > endM) apA = "A";
     const d = endM - clockMinutes(a, apA);
     if(d > 0 && d < 12*60) dur = d;
   }
-  return { start: `${a.h}:${a.mm}`, ampm: apA + "M", dur };
+  if(!dur && durNote) dur = +durNote[1];
+  return { start: `${a.h}:${a.mm}`, ampm: apA + "M", dur, more: sessions.length - 1 };
 }
 function fmtDuration(mins){
   if(!mins) return "";
@@ -1824,7 +1841,7 @@ function timeledSummaryHTML(ev, showDate){
   // Every card's rail stacks the same way at the same sizes: category icon,
   // "10:00", "AM", "4 hr" -- one narrow column so the title gets the width. Unparseable labels ("All day") use the same top-line style.
   const rail = t
-    ? `<div class="tl-start">${t.start}</div><div class="tl-dur">${t.ampm}</div>${t.dur ? `<div class="tl-dur">${fmtDuration(t.dur)}</div>` : ""}`
+    ? `<div class="tl-start">${t.start}</div><div class="tl-dur">${t.ampm}</div>${t.dur ? `<div class="tl-dur">${fmtDuration(t.dur)}</div>` : ""}${t.more ? `<div class="tl-dur tl-more">+${t.more} more</div>` : ""}`
     : `<div class="tl-start tl-start-text">${ev.display_time||""}</div>`;
   const badges = ev.badge==="trending" ? `<span class="tag badge-trending">${ICONS.trendUp} Trending</span>`
     : ev.badge==="popular" ? `<span class="tag badge-popular">${ICONS.star} Popular</span>`
