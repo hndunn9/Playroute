@@ -213,3 +213,7 @@ keep reads proportional to traffic:
   Placement: a Pick leads the feed until the browser has seen it once; on later visits it sits after the second day
   group (end of list if fewer days). Decided once at load (`picksLower`), localStorage `pr_pickSeenBefore_<pick_id>`.
   Previews always lead. GA4 impressions carry `placement: top|lower`.
+  Optional background photo (`bg_url`, R2 `partner-photos/`, uploaded in admin > Partners and shrunk in the browser
+  to 1400px JPEG first). App and partner page: photo under an 85% parchment wash (`--pick-wash`). Email: a 140px
+  banner row across the top fading into white (a side panel squeezed text on phones). Only `/api/photos/` paths are
+  accepted (`pickBgUrl`), since the URL lands in CSS `url()`.

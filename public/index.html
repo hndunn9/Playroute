@@ -80,6 +80,8 @@
   --sage:      #7A8B76;
   --cream:     #F4F5F0;
   --parchment: #ECEEE8;
+  /* Wash over a Pick's background photo; follows --parchment in dark mode. */
+  --pick-wash: color-mix(in srgb, var(--parchment) 85%, transparent);
   --fog:       #D7DBD3;
   --ink:       #1E2622;
   --ink-soft:  #5B6560;
@@ -606,6 +608,7 @@ main{
 .picks-section{margin-bottom:8px;}
 .picks-heading{font-family:'DM Sans',sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--bark);margin:4px 0 10px;display:flex;justify-content:space-between;gap:8px;}
 .picks-heading .picks-preview-note{color:var(--gold);letter-spacing:0.04em;}
+.pick-card.has-bg{background:linear-gradient(var(--pick-wash),var(--pick-wash)),var(--pick-bg) 70% 35%/cover no-repeat,var(--parchment);}
 .pick-card{display:flex;gap:11px;align-items:flex-start;padding:13px 14px;margin-bottom:10px;background:var(--parchment);border:1px solid var(--pick-color,var(--sky));box-shadow:0 0 0 1px var(--pick-color,var(--sky)),0 2px 8px rgba(20,24,22,0.07);border-radius:var(--radius-md);text-decoration:none;color:inherit;-webkit-tap-highlight-color:transparent;}
 .pick-logo{width:40px;height:40px;border-radius:8px;flex-shrink:0;object-fit:contain;background:var(--photo-bg);}
 .pick-logo.ph{background:var(--pick-color,var(--sky));color:var(--on-fill);font-weight:700;display:flex;align-items:center;justify-content:center;}
@@ -2338,6 +2341,9 @@ function buildPicksSection(){
     const card = document.createElement(p.link_url ? "a" : "div");
     card.className = "pick-card";
     if(color) card.style.setProperty("--pick-color", color);
+    // Optional partner photo behind the card, under a parchment wash so the
+    // text stays readable. Only our own /api/photos/ paths (it goes in url()).
+    if(/^\/api\/photos\/[A-Za-z0-9%._-]+$/.test(p.bg_url||"")){ card.classList.add("has-bg"); card.style.setProperty("--pick-bg", `url("${p.bg_url}")`); }
     if(p.link_url){
       card.href = p.link_url; card.target = "_blank"; card.rel = "noopener sponsored";
       if(!p.preview) card.addEventListener("click", ()=>{
