@@ -6290,6 +6290,10 @@ function partnerPreviewPageHtml(p) {
   const endsOn = fmtLongDate(pickEndsOn(p));
   const dueDay = p.go_live_date ? fmtLongDate(addDays(p.go_live_date, -1)) : null;
   const price = e(p.price_label || "$75/month");
+  // Venmo pay link: opens the app on phones (web on desktop) with the
+  // amount and a note prefilled, so partners don't have to type anything.
+  const amount = (String(p.price_label || "$75/month").match(/\$\s*([0-9]+(?:\.[0-9]{1,2})?)/) || [])[1] || "";
+  const venmo = "https://venmo.com/hnjames9?" + new URLSearchParams({ txn: "pay", ...(amount ? { amount } : {}), note: `Playroute's Pick: ${p.business_name || "partner"}` }).toString();
   const logo = pp.logo_url
     ? `<img class="logo" src="${e(pp.logo_url)}" alt="">`
     : `<span class="logo ph">${e((p.business_name || "?").charAt(0).toUpperCase())}</span>`;
@@ -6342,6 +6346,7 @@ a{color:var(--sky)}
 .chk{display:flex;gap:10px;align-items:flex-start;font-size:14px;margin:12px 0}.chk input{margin-top:4px;width:18px;height:18px;accent-color:var(--sky);flex-shrink:0}
 .btn{padding:12px 22px;border-radius:6px;border:0;background:var(--sky);color:#fff;font:inherit;font-weight:600;cursor:pointer;min-height:44px}
 .btn:disabled{opacity:.6;cursor:not-allowed}
+.btn.venmo{display:inline-flex;align-items:center;background:#0074DE;text-decoration:none}.pay-note{font-size:13px;color:var(--ink-soft);margin-top:8px}
 .msg{font-size:14px;margin-top:10px}.msg.err{color:var(--ember)}.done{padding:14px;border-radius:10px;background:var(--pill-green-bg);color:var(--pill-green-text);font-weight:600}
 </style></head><body><div class="page">
 <div class="wordmark">Playroute</div>
@@ -6374,7 +6379,7 @@ ${p.description ? `<div class="d">${e(p.description)}</div>` : ""}
 <h2>Terms</h2>
 <div class="box"><p><b>${price}</b> for Playroute's Picks in the app and the weekly newsletter.</p><br>
 ${payBlock}<br>
-<p>Pay by Venmo to <b>@hnjames9</b>. If payment hasn't arrived by then, your start date moves back until it does.</p><br>
+<p><a class="btn venmo" href="${e(venmo)}" target="_blank" rel="noopener">Pay ${amount ? "$" + e(amount) + " " : ""}with Venmo</a></p><p class="pay-note">Opens Venmo with the amount and note filled in. Or pay <b>@hnjames9</b> directly. If payment hasn't arrived by then, your start date moves back until it does.</p><br>
 <p>Content can be updated by request, once per month. Any change needs your approval again here before it runs. Questions: <a href="mailto:hndunn9@gmail.com">hndunn9@gmail.com</a>.</p></div>
 
 <h2>Approve</h2>
