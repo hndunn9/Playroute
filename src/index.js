@@ -6168,7 +6168,7 @@ async function handlePartnerManagePage(env, token) {
 // pending_events or partners.
 // ---------------------------------------------------------------------
 const PICKS_PUBLIC = false;
-const PICK_CONTENT_FIELDS = ["business_name", "tagline", "description", "location", "ages", "cta_label", "link_url", "brand_color", "price_label", "go_live_date", "ends_on"];
+const PICK_CONTENT_FIELDS = ["business_name", "tagline", "description", "location", "ages", "cta_label", "email_cta_label", "link_url", "brand_color", "price_label", "go_live_date", "ends_on"];
 
 function pickColor(p) {
   return /^#[0-9A-Fa-f]{6}$/.test(p.brand_color || "") ? p.brand_color : "#46707E";
@@ -6200,6 +6200,7 @@ function publicPick(p) {
   return {
     business_name: p.business_name, tagline: p.tagline, description: p.description,
     location: p.location, ages: p.ages, cta_label: p.cta_label || "Learn more",
+    email_cta_label: p.email_cta_label || null,
     link_url: pickLinkUrl(p), brand_color: pickColor(p), logo_url: p.logo_url || null
   };
 }
@@ -6254,7 +6255,7 @@ function digestPicksHtml(picks) {
             <div style="font-weight:700;font-size:15px;color:#1F2A22;line-height:1.3;">${escapeHtml(p.tagline || p.business_name)}</div>
             <div style="font-size:12px;color:#6B7268;margin-top:3px;">${meta}</div>
             ${p.description ? `<div style="font-size:13px;color:#3A4F45;margin-top:6px;line-height:1.45;">${escapeHtml(p.description)}</div>` : ""}
-            <div style="font-size:13px;font-weight:700;color:${color};margin-top:8px;">${escapeHtml(p.cta_label)} →</div>
+            <div style="font-size:13px;font-weight:700;color:${color};margin-top:8px;">${escapeHtml(p.email_cta_label || p.cta_label)} →</div>
           </td>
         </tr>
       </table>
