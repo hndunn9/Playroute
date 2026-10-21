@@ -6168,7 +6168,7 @@ async function handlePartnerManagePage(env, token) {
 // pending_events or partners.
 // ---------------------------------------------------------------------
 const PICKS_PUBLIC = false;
-const PICK_CONTENT_FIELDS = ["business_name", "tagline", "description", "location", "ages", "cta_label", "email_cta_label", "badge", "chips", "note", "link_url", "brand_color", "price_label", "go_live_date", "ends_on"];
+const PICK_CONTENT_FIELDS = ["business_name", "tagline", "description", "location", "ages", "cta_label", "email_cta_label", "email_description", "badge", "chips", "note", "link_url", "brand_color", "price_label", "go_live_date", "ends_on"];
 
 function pickColor(p) {
   return /^#[0-9A-Fa-f]{6}$/.test(p.brand_color || "") ? p.brand_color : "#46707E";
@@ -6229,6 +6229,23 @@ function pickEndsOn(p) {
   if (p.ends_on) return p.ends_on;
   return /^\d{4}-\d{2}-\d{2}$/.test(p.go_live_date || "") ? addDays(p.go_live_date, 30) : null;
 }
+// What a Pick has cost the partner so far, read from the price label.
+// "$75/month" is prorated at price x days/30 over the run so far (capped at
+// the run window); any other "$N" is a flat fee once the run has started.
+// Null when the label has no dollar amount or there is no go-live date.
+function pickCostSoFar(p, today = todayMT()) {
+  const m = /\$\s*([\d,]+(?:\.\d+)?)/.exec(p.price_label || "");
+  if (!m || !/^\d{4}-\d{2}-\d{2}$/.test(p.go_live_date || "")) return null;
+  const amount = parseFloat(m[1].replace(/,/g, ""));
+  const span = (a, b) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 86400000);
+  const windowDays = Math.max(1, span(p.go_live_date, pickEndsOn(p)));
+  const elapsed = Math.min(Math.max(span(p.go_live_date, today) + 1, 0), windowDays);
+  if (elapsed === 0) return { cost: 0, basis: "Not started yet" };
+  if (/month/i.test(p.price_label)) {
+    return { cost: (amount * elapsed) / 30, basis: `${p.price_label}, prorated over ${elapsed} day${elapsed === 1 ? "" : "s"}` };
+  }
+  return { cost: amount, basis: `${p.price_label}, flat fee` };
+}
 function pickRunState(p, today = todayMT()) {
   if (!p.go_live_date) return "unscheduled";
   if (today < p.go_live_date) return "scheduled";
@@ -6255,6 +6272,11 @@ function digestPicksHtml(picks) {
     <p style="padding:22px 24px 8px;margin:0;font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:#3C5548;font-family:-apple-system,sans-serif;">Playroute's Picks</p>
     ${picks.map((raw) => {
       const p = publicPick(raw);
+      // Newsletter-only blurb when the partner supplied one (blank lines kept
+      // as paragraph breaks); otherwise the same description as the app card.
+      const emailText = String(raw.email_description || p.description || "").trim();
+      // <br> rather than white-space:pre-line, which Outlook desktop ignores.
+      const emailTextHtml = escapeHtml(emailText).replace(/\r?\n/g, "<br>");
       const color = p.brand_color;
       const logo = p.logo_url
         ? `<img src="${escapeHtml(absSiteUrl(p.logo_url))}" width="40" height="40" alt="" style="display:block;width:40px;height:40px;border-radius:8px;object-fit:contain;background:#ffffff;">`
@@ -6276,7 +6298,7 @@ function digestPicksHtml(picks) {
           <td style="padding:14px 14px 14px 10px;font-family:-apple-system,sans-serif;">
             <div style="font-weight:700;font-size:15px;color:#1F2A22;line-height:1.3;">${escapeHtml(p.tagline || p.business_name)}</div>
             <div style="font-size:12px;color:#6B7268;margin-top:3px;">${meta}</div>
-            ${p.description ? `<div style="font-size:13px;color:#3A4F45;margin-top:6px;line-height:1.45;">${escapeHtml(p.description)}</div>` : ""}
+            ${emailText ? `<div style="font-size:13px;color:#3A4F45;margin-top:6px;line-height:1.45;">${emailTextHtml}</div>` : ""}
             <div style="font-size:13px;font-weight:700;color:${color};margin-top:8px;">${escapeHtml(p.email_cta_label || p.cta_label)} →</div>
           </td>
         </tr>
@@ -6553,12 +6575,25 @@ async function handleAdminPicksStats(env, url) {
     env.DB.prepare(`SELECT arm, SUM(impressions) AS impressions, SUM(clicks) AS clicks FROM pick_stats WHERE pick = ? AND day BETWEEN ? AND ? GROUP BY arm`).bind(slug, from, to),
   ]);
   const a = (app.results && app.results[0]) || { impressions: 0, clicks: 0 };
+  const nlClickCount = (nlClicks.results && nlClicks.results[0] || {}).n || 0;
+  const nlOpenCount = (nlOpens.results && nlOpens.results[0] || {}).n || 0;
+  // Effective CPM / cost per click against what the partner has paid so far.
+  // CPM (app) counts card impressions only; the blended CPM adds newsletter
+  // opens (an upper bound: Apple Mail privacy opens inflate them).
+  const cost = pickCostSoFar(p);
+  const per = (num, den, mult) => (cost && den > 0 ? (num / den) * mult : null);
   return json({
     pick: slug, from, to,
+    picks_public: PICKS_PUBLIC,
     app_impressions: a.impressions, app_clicks: a.clicks,
     app_ctr: a.impressions ? a.clicks / a.impressions : null,
-    newsletter_clicks: (nlClicks.results && nlClicks.results[0] || {}).n || 0,
-    newsletter_opens: (nlOpens.results && nlOpens.results[0] || {}).n || 0,
+    newsletter_clicks: nlClickCount,
+    newsletter_opens: nlOpenCount,
+    cost_so_far: cost ? Math.round(cost.cost * 100) / 100 : null,
+    cost_basis: cost ? cost.basis : null,
+    cpm_app: per(cost && cost.cost, a.impressions, 1000),
+    cpm_blended: per(cost && cost.cost, a.impressions + nlOpenCount, 1000),
+    cost_per_click: per(cost && cost.cost, a.clicks + nlClickCount, 1),
     daily: daily.results || [],
     // pickcard test: app impressions/clicks per card format.
     by_arm: (byArm.results || []).map((r) => ({ ...r, ctr: r.impressions ? r.clicks / r.impressions : null })),
@@ -6576,7 +6611,7 @@ async function handleAdminPicksSave(request, env) {
   const clean = {};
   for (const f of PICK_CONTENT_FIELDS) {
     const v = body[f] === undefined || body[f] === null ? "" : String(body[f]).trim();
-    clean[f] = v ? v.slice(0, f === "description" ? 400 : 200) : null;
+    clean[f] = v ? v.slice(0, f === "email_description" ? 700 : f === "description" ? 400 : 200) : null;
   }
   if (!clean.business_name) return json({ error: "Business name is required" }, 400);
   if (clean.brand_color && !/^#[0-9A-Fa-f]{6}$/.test(clean.brand_color)) return json({ error: "Brand color must be a hex like #D9622B" }, 400);

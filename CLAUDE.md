@@ -11,7 +11,9 @@ when a rule here turns out wrong, fix it in the same PR.
 - **Database changes are not in PRs.** Data edits run directly against D1
   (`playroute-db`, id `f5da3542-a8fa-449a-9827-37d1104dd940`). Put schema or
   `scrape_sources` changes that depend on new code in `migrations/` and run them
-  after the PR is merged.
+  after the PR is merged. **Exception: an additive column the new code reads or writes
+  (e.g. `ALTER TABLE … ADD COLUMN`) runs BEFORE the merge**, or saves fail between deploy
+  and migration. Say so in the migration's header.
 - `wrangler.jsonc` is the source of truth for bindings. `keep_vars: true` keeps
   dashboard variables across deploys; prefer bindings over dashboard vars.
 - Cron triggers are capped at **5** on this account (see `wrangler.jsonc`).
@@ -209,7 +211,12 @@ keep reads proportional to traffic:
   Stats: D1 `pick_stats` (pick slug + MT day). The app sends one impression per visit when a card is ≥50% on screen
   and one click per tap (`/api/pick-event`, counted only while `PICKS_PUBLIC` is on and the Pick is live; previews never count).
   Newsletter clicks are matched by the Pick's `utm_campaign` in `newsletter_events.link`. Admin > Partners > Stats
-  (`/api/admin/picks/stats`) reports the run window. GA4 also gets `partner_pick_impression` / `partner_pick_click`.
+  (`/api/admin/picks/stats`) reports the run window as stat tiles, including effective CPM and cost per click.
+  Cost comes from `price_label` (`pickCostSoFar`): "$75/month" is prorated at price × days/30 over the run so
+  far (capped at the run window); any other "$N" is a flat fee once started; no $ or no go-live date = no cost metrics.
+  CPM (app) = cost ÷ app impressions × 1000; blended CPM also counts newsletter opens (inflated by Apple Mail privacy).
+  GA4 also gets `partner_pick_impression` / `partner_pick_click`.
+  `email_description` is optional newsletter-only text (blank = `description`); blank lines render as paragraph breaks (<br>).
   Placement: a Pick leads the feed until the browser has seen it once; on later visits it sits after the second day
   group (end of list if fewer days). Decided once at load (`picksLower`), localStorage `pr_pickSeenBefore_<pick_id>`.
   Previews always lead. GA4 impressions carry `placement: top|lower`.

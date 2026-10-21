@@ -296,6 +296,11 @@
   .pk-chip.good{background:#e8f0e0;color:#3a5a2a;}
   .pk-chip.warn{background:#F6EBCB;color:#7A5B12;}
   .pk-chip.bad{background:#f5e0e0;color:#7a2a2a;}
+  .pk-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:8px;margin:8px 0;}
+  .pk-stat{background:#F6F0E2;border:1px solid #E6DCC8;border-radius:8px;padding:8px 10px;}
+  .pk-stat b{display:block;font-size:17px;color:#2C1F14;line-height:1.2;}
+  .pk-stat span{display:block;font-size:11px;color:#7A6650;margin-top:2px;}
+  .pk-stat-note{font-size:12px;color:#7A6650;margin:4px 0;line-height:1.4;}
   .pk-actions{display:flex;flex-wrap:wrap;gap:6px;}
   .pk-actions button,.pk-actions a{width:auto;flex:none;margin:0;padding:7px 12px;font-size:12px;border-radius:7px;min-height:36px;}
   .pk-actions a{display:inline-flex;align-items:center;background:#ECE4D4;color:#2C1F14;text-decoration:none;font-weight:600;}
@@ -567,6 +572,7 @@
     <label for="pk_business_name">Business name</label><input type="text" id="pk_business_name">
     <label for="pk_tagline">Headline <span>(about 60 characters)</span></label><input type="text" id="pk_tagline" maxlength="90">
     <label for="pk_description">Description <span>(1–2 sentences)</span></label><textarea id="pk_description" maxlength="400"></textarea>
+    <label for="pk_email_description">Newsletter text <span>(blank = same as description; blank lines become paragraph breaks)</span></label><textarea id="pk_email_description" maxlength="700"></textarea>
     <div class="pk-grid">
       <div><label for="pk_location">Town</label><input type="text" id="pk_location"></div>
       <div><label for="pk_ages">Ages</label><input type="text" id="pk_ages"></div>
@@ -1975,7 +1981,7 @@ showView(location.hash.slice(1) || 'today');
 loadToday();
 
 // ── Partners (Playroute's Picks) ──
-const PK_FIELDS = ['business_name','tagline','description','location','ages','cta_label','email_cta_label','badge','chips','note','brand_color','go_live_date','ends_on','link_url','price_label'];
+const PK_FIELDS = ['business_name','tagline','description','email_description','location','ages','cta_label','email_cta_label','badge','chips','note','brand_color','go_live_date','ends_on','link_url','price_label'];
 let pkRows = [];
 function pkResult(text, ok){
   const el = document.getElementById('pkResult');
@@ -2111,9 +2117,23 @@ async function pkLoadStats(token, el){
     const s = await res.json();
     if(!res.ok) throw new Error(s.error || res.status);
     const n = (x) => Number(x || 0).toLocaleString();
-    const ctr = s.app_ctr == null ? '–' : (s.app_ctr * 100).toFixed(1) + '%';
-    const arms = (s.by_arm || []).map(a => `${a.arm === 'visual' ? 'Larger card' : 'Standard card'} ${n(a.impressions)} / ${n(a.clicks)} (${a.ctr == null ? '–' : (a.ctr * 100).toFixed(1) + '%'})`).join(', ');
-    el.textContent = `${s.from} → ${s.to} · App: ${n(s.app_impressions)} impressions, ${n(s.app_clicks)} clicks (${ctr})${arms ? ' · By format (impressions / clicks): ' + arms : ''} · Newsletter: ${n(s.newsletter_clicks)} clicks, ${n(s.newsletter_opens)} opens of issues sent in this window`;
+    const pct = (x) => x == null ? '–' : (x * 100).toFixed(1) + '%';
+    const usd = (x, d) => x == null ? '–' : '$' + Number(x).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
+    const arms = (s.by_arm || []).map(a => `${a.arm === 'visual' ? 'Larger card' : 'Standard card'} ${n(a.impressions)} / ${n(a.clicks)} (${pct(a.ctr)})`).join(', ');
+    const tile = (value, label) => `<div class="pk-stat"><b>${escapeHtml(value)}</b><span>${escapeHtml(label)}</span></div>`;
+    const tiles = [
+      tile(n(s.app_impressions), 'App impressions'), tile(n(s.app_clicks), 'App clicks'), tile(pct(s.app_ctr), 'App CTR'),
+      tile(usd(s.cpm_app, 2), 'CPM (app only)'), tile(usd(s.cpm_blended, 2), 'CPM (app + newsletter opens)'),
+      tile(usd(s.cost_per_click, 2), 'Cost per click (app + newsletter)'),
+      tile(n(s.newsletter_opens), 'Newsletter opens'), tile(n(s.newsletter_clicks), 'Newsletter clicks'),
+    ].join('');
+    const notes = [
+      `${s.from} → ${s.to}. Cost so far: ${usd(s.cost_so_far, 2)}${s.cost_basis ? ' (' + s.cost_basis + ')' : ' (set a $ price and go-live date to see cost metrics)'}.`,
+      s.picks_public ? '' : 'Picks are behind the feature flag, so impressions and clicks are not counted yet.',
+      'Newsletter opens count every issue sent in the window and include Apple Mail privacy opens, so blended CPM is a floor.',
+      arms ? 'By format (impressions / clicks): ' + arms : '',
+    ].filter(Boolean).map(t => `<div class="pk-stat-note">${escapeHtml(t)}</div>`).join('');
+    el.innerHTML = `<div class="pk-stat-grid">${tiles}</div>${notes}`;
   }catch(err){ el.textContent = 'Couldn\u2019t load stats: ' + (err.message || err); }
 }
 async function pkSetPaid(token, paid){
