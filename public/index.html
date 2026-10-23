@@ -2466,7 +2466,7 @@ function sendExpExposureOnce(){
 // Primary metric = sessions that click through to a source. To end the test,
 // set CARD_TEST_WINNER to "timeled" or "control" (stops logging, shows it to all).
 // ?ff_cards=timeled / =control previews a variant (not logged).
-const CARD_TEST_WINNER = null;
+const CARD_TEST_WINNER = "timeled";
 const PICKCARD_TEST_WINNER = null;
 const CARD_ARM_KEY = "playroute-exp-cards";
 function getCardArm(){ return getArm('cards'); }
