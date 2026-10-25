@@ -1965,15 +1965,46 @@ function cleanIClassProTitle(name) {
   // "10/10: Ages 6+: All Levels Tumbling Clinic" -> "All Levels Tumbling Clinic"
   return String(name || "").replace(/^\s*\d{1,2}\/\d{1,2}(?:\s*[-–]\s*\d{1,2}\/\d{1,2})?:\s*/, "").replace(/^\s*Ages?\s*[\d+–-]+\s*:\s*/i, "").trim();
 }
-async function fetchAndScanAthleticAdventures() {
+// iClassPro's edge started returning 403 to Worker fetches (Oct 2026) while the
+// same URL works from a browser. Send the headers the portal sends; if still
+// blocked, load the JSON through Browser Run (different egress) and read the
+// <pre> Chrome wraps it in.
+const ICLASSPRO_HEADERS = {
+  Accept: "application/json, text/plain, */*",
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+  Origin: "https://portal.iclasspro.com",
+  Referer: "https://portal.iclasspro.com/athleticadventures/"
+};
+async function fetchIClassProJson(env, url) {
+  const res = await fetch(url, { headers: ICLASSPRO_HEADERS });
+  if (res.ok) return res.json();
+  if (res.status !== 403 && res.status !== 429) throw new Error(`HTTP ${res.status}`);
+  let html;
+  try {
+    html = String(await browserRun(env, "content", { url }) || "");
+  } catch (e) {
+    throw new Error(`HTTP ${res.status}; Browser Run fallback failed: ${e.message}`);
+  }
+  const body = html.replace(/^[\s\S]*?<pre[^>]*>/i, "").replace(/<\/pre>[\s\S]*$/i, "").replace(/<[^>]+>/g, "")
+    .replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error(`HTTP ${res.status}; Browser Run returned non-JSON: ${body.slice(0, 200)}`);
+  }
+}
+async function fetchAndScanAthleticAdventures(env) {
   const out = [];
+  const errors = [];
   const today = toMountainDateStr(new Date());
   for (const t of ATHLETIC_ADVENTURES_DROPIN_TYPES) {
-    const res = await fetch(`${ATHLETIC_ADVENTURES_API}/camps?locationId=${ATHLETIC_ADVENTURES_LOCATION_ID}&typeId=${t.typeId}`, {
-      headers: { Accept: "application/json", "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
-    });
-    if (!res.ok) throw new Error(`Athletic Adventures API ${res.status} for type ${t.typeId}`);
-    const data = await res.json();
+    let data;
+    try {
+      data = await fetchIClassProJson(env, `${ATHLETIC_ADVENTURES_API}/camps?locationId=${ATHLETIC_ADVENTURES_LOCATION_ID}&typeId=${t.typeId}`);
+    } catch (e) {
+      errors.push(`type ${t.typeId}: ${e.message}`);
+      continue; // one blocked type shouldn't drop the others
+    }
     for (const c of data.data || []) {
       if (!c.startDate || c.startDate !== c.endDate) continue; // single-day drop-ins only
       if (c.startDate < today) continue;
@@ -2000,9 +2031,11 @@ async function fetchAndScanAthleticAdventures() {
       });
     }
   }
+  if (errors.length === ATHLETIC_ADVENTURES_DROPIN_TYPES.length) throw new Error(`Athletic Adventures API failed for every type: ${errors.join("; ")}`);
+  if (errors.length) console.warn(`Athletic Adventures partial: ${errors.join("; ")}`);
   return out;
 }
-SOURCE_RUNNERS.athletic_adventures = async () => fetchAndScanAthleticAdventures();
+SOURCE_RUNNERS.athletic_adventures = async (env) => fetchAndScanAthleticAdventures(env);
 
 // --- Warrior Playground (Longmont) -- monthly drop-in nights ---
 // Their Pike13 schedule has no public feed (API returns 401), so this reads
