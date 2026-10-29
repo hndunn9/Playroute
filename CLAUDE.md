@@ -17,6 +17,8 @@ when a rule here turns out wrong, fix it in the same PR.
 - `wrangler.jsonc` is the source of truth for bindings. `keep_vars: true` keeps
   dashboard variables across deploys; prefer bindings over dashboard vars.
 - Cron triggers are capped at **5** on this account (see `wrangler.jsonc`).
+  Cloudflare weekdays are **1 = Sunday … 7 = Saturday** (not 0/7 = Sunday). Use `SUN`-style names;
+  `* * 7` silently ran the "Sunday" newsletter and weekly scrapers on Saturday until 2026-10.
 
 ## D1 read budget
 Workers Paid since 2026-10-02 (25B rows read/month included, then billed per million). On
