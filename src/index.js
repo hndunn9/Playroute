@@ -6954,7 +6954,7 @@ const EDGE_CACHE_TTLS = {
 const worker = {
   // Cron Trigger entry point — configured in wrangler.jsonc
   async scheduled(event, env, ctx) {
-    if (event.cron === "0 18 * * 7") {
+    if (event.cron === "0 18 * * SUN") {
       // Fixed at noon MDT / 11am MST year-round -- was previously two
       // separate cron entries (0 18 and 0 19 UTC) with an isNearNoonMountain()
       // gate deciding which one actually did anything each week, as a way to
@@ -7000,12 +7000,12 @@ const worker = {
       );
       return;
     }
-    if (event.cron === "0 20 * * 7") {
+    if (event.cron === "0 20 * * SUN") {
       // Group B -- 2 hours after group A, its own fresh invocation.
       ctx.waitUntil(runSourcesFannedOut(env, "weekly-b"));
       return;
     }
-    if (event.cron === "0 22 * * 7") {
+    if (event.cron === "0 22 * * SUN") {
       // Group C -- last of the three. Runs the pending-review email here
       // (not on A or B) so you still get ONE consolidated Sunday email
       // covering all three groups' results, not three separate ones --
