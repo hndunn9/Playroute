@@ -1584,6 +1584,7 @@ function dismissThemeCoachmark(e){
 function clearSearch(){
   document.getElementById("searchInput").value = "";
   activeSearch = "";
+  searchCorrection = null;
   document.getElementById("searchClear").classList.remove("show");
   document.getElementById("searchBtn").classList.remove("active");
   renderFeed(); renderPlaygrounds(); renderHikes();
@@ -1594,7 +1595,21 @@ let searchTrackTimer = null;
 
 function handleSearchInput(){
   const val = document.getElementById("searchInput").value;
-  activeSearch = val.trim().toLowerCase();
+  const raw = val.trim().toLowerCase();
+  activeSearch = normalizeSearch(raw);
+  searchCorrection = activeSearch !== raw ? {to: activeSearch} : null;
+  // Typo rescue: only when nothing at all matches (ignoring filters), try the
+  // closest words from the site's own titles/venues/cities ("raisinf" ->
+  // "raising"), and keep the correction only if it finds something.
+  if(activeSearch.length >= 4 && !anySearchMatch()){
+    const fixed = correctSearch(activeSearch);
+    if(fixed){
+      const prev = activeSearch;
+      activeSearch = fixed;
+      if(anySearchMatch()) searchCorrection = {to: fixed};
+      else activeSearch = prev;
+    }
+  }
   document.getElementById("searchClear").classList.toggle("show", activeSearch.length>0);
   document.getElementById("searchBtn").classList.toggle("active", activeSearch.length>0);
   renderFeed(); renderPlaygrounds(); renderHikes();
@@ -1607,11 +1622,11 @@ function handleSearchInput(){
   if(activeSearch.length < 2) return; // too short to be a meaningful query
   searchTrackTimer = setTimeout(()=>{
     const n = lastShownCount + lastParkMatches + lastHikeMatches;
-    ga('search', {search_term: activeSearch.slice(0,100), results_count: n, zero_results: n===0});
+    ga('search', {search_term: raw.slice(0,100), results_count: n, zero_results: n===0, corrected_to: searchCorrection ? searchCorrection.to.slice(0,100) : undefined});
     fetch(`${API_BASE}/api/track-search`,{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({query:activeSearch, resultsCount:lastShownCount + lastParkMatches + lastHikeMatches}),
+      body:JSON.stringify({query:raw, resultsCount:n}),
       keepalive:true
     }).catch(()=>{});
   }, 800);
@@ -1628,6 +1643,69 @@ function handleSearchInput(){
 // "library" or "saturday" work, and a few plain-English synonyms map to
 // how things are actually labeled.
 const SEARCH_SYNONYMS = {hike:"hike hiking trail walk", hikes:"hike", park:"park playground", playground:"playground park", museum:"museum", farmers:"farmers_market farmers market", market:"farmers_market market", outdoor:"outdoor outside"};
+// Places and nicknames people type that the data spells differently.
+// Zip codes map to the town; "north boulder" is how NoBo Library is listed.
+const SEARCH_ALIASES = [
+  [/\bnorth boulder\b/g, "nobo"],
+  [/\b8050[1-4]\b/g, "longmont"], [/\b80026\b/g, "lafayette"], [/\b80516\b/g, "erie"],
+  [/\b80027\b/g, "louisville"], [/\b8002[03]\b/g, "broomfield"], [/\b803(0[1-5]|10)\b/g, "boulder"],
+  [/\b80542\b/g, "mead"], [/\b80540\b/g, "lyons"], [/\b800(3[01]|21)\b/g, "westminster"],
+  [/\b8000[1-5]\b/g, "arvada"], [/\b80(229|233|241|260|602)\b/g, "thornton"]
+];
+let searchCorrection = null; // {to} when the query was rewritten (alias or typo fix)
+function normalizeSearch(q){
+  let out = q;
+  for(const [re, to] of SEARCH_ALIASES) out = out.replace(re, to);
+  return out;
+}
+function anySearchMatch(){
+  return events.some(ev=>ev.occurrence && matchesSearch(ev)) || playgrounds.some(matchesPlaygroundSearch) || hikes.some(matchesHikeSearch);
+}
+let searchVocab = null, searchVocabKey = "";
+function getSearchVocab(){
+  const key = `${events.length}|${playgrounds.length}|${hikes.length}`;
+  if(searchVocab && searchVocabKey === key) return searchVocab;
+  const words = new Set();
+  const add = t => String(t||"").toLowerCase().split(/[^a-z0-9áéíóúñü]+/).forEach(w=>{ if(w.length >= 4) words.add(w); });
+  events.forEach(ev=>{ add(ev.title); add(ev.source); add(ev.city); });
+  playgrounds.forEach(pg=>{ add(pg.name); add(pg.city); });
+  hikes.forEach(h=>{ add(h.name); add(h.city); });
+  searchVocab = [...words]; searchVocabKey = key;
+  return searchVocab;
+}
+// Levenshtein distance, giving up early once it exceeds max.
+function editDistance(a, b, max){
+  if(Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({length: b.length + 1}, (_, j) => j);
+  for(let i = 1; i <= a.length; i++){
+    const cur = [i];
+    let rowMin = i;
+    for(let j = 1; j <= b.length; j++){
+      cur[j] = Math.min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+      if(cur[j] < rowMin) rowMin = cur[j];
+    }
+    if(rowMin > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+function correctSearch(q){
+  const vocab = getSearchVocab();
+  if(!vocab.length) return null;
+  let changed = false;
+  const out = q.split(/\s+/).map(w=>{
+    if(w.length < 4 || vocab.some(v=>v.includes(w))) return w;
+    const max = w.length >= 7 ? 2 : 1;
+    let best = null, bestD = max + 1;
+    for(const v of vocab){
+      const d = editDistance(w, v, max);
+      if(d < bestD){ bestD = d; best = v; }
+    }
+    if(best){ changed = true; return best; }
+    return w;
+  });
+  return changed ? out.join(" ") : null;
+}
 function matchesSearchText(text){
   if(!activeSearch) return true;
   const hay = String(text||"").toLowerCase();
@@ -2029,7 +2107,7 @@ function renderFeed(){
     wireInlineCalendar(ev, card);
   });
   if(!picksPlaced && shown>0) placePicks(); // fewer than 3 days showing: end of the list
-  document.getElementById("resultCount").textContent = activeSearch ? `${shown} upcoming · all dates` : `${shown} upcoming`;
+  document.getElementById("resultCount").textContent = activeSearch ? `${shown} upcoming · all dates${searchCorrection ? ` · showing results for “${searchCorrection.to}”` : ""}` : `${shown} upcoming`;
   lastShownCount = shown;
   if(shown===0){
     if(activeSearch){

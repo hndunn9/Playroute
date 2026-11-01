@@ -213,6 +213,10 @@ keep reads proportional to traffic:
   `newsletter_sends` (Resend id + variant, no emails); `/api/resend-webhook` (Svix-signed, `RESEND_WEBHOOK_SECRET`)
   writes delivered/opened/clicked to `newsletter_events`. Judge tests on click rate, read at 80% like the app test.
   Run `node src/newsletter-agent-eval.js` after changing the helpers.
+- **Search** (`public/index.html`): `SEARCH_ALIASES` rewrites zip codes to towns and "north boulder" to "nobo". When a
+  query matches nothing at all (ignoring filters), `correctSearch` swaps each unknown word for the closest word in the
+  site's own titles/venues/cities (edit distance 1, or 2 for 7+ letters) and keeps it only if that finds results. The
+  count line says "showing results for …". `/api/track-search` still logs what the visitor typed.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
 - **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
   A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within
