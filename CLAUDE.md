@@ -152,6 +152,10 @@ keep reads proportional to traffic:
 - **Review learning** (`pipeline.js`): before queuing, `contentFilter` drops placeholder titles
   (DRAFT/TBD), "…Buddies – Register" series, ages 9+ or teen/tween titles (unless the title says
   family/all ages), and adult topics without a kid signal. Titles are HTML-entity-decoded.
+  Nov 2026 (golden set): `ADULT_PROGRAM_RE` drops civic meetings/commissions, open or office hours, adult hobby groups
+  (embroidery, crochet, D&D, MTG, birding…), services (helpline, childhood screening), `Closing…`/`Hold for…` notices,
+  and garbled titles (>140 chars or card text like `Description:`). Kid/family words still win. Bingo, symphony and
+  plain "screening" were left out on purpose: live festival/concert/movie events use them.
   Also dropped (Oct 2026, from rejection history): placeholders ("?", "???", "test event"), titles naming a
   later year than the event's date ("Yoga en español 2027"), and not-public/not-kids programs
   (`NOT_PUBLIC_KIDS_RE`: outreach, school/class visits, kinder class, prenatal). Anythink needs a

@@ -502,6 +502,16 @@ const NOT_PUBLIC_KIDS_RE = /\b(outreach|school visit|class visit|kinder class|pr
 const REGISTRATION_SERIES_RE = /\bbuddies\b.*\bregister\b|[-–—:]\s*register\s*$/i;
 const ADULT_TOPIC_RE = /\b(tech tuesday|orientation|book group|board meeting|genealogy|virtual training|book club|brew(ing|ery)|pints?|wine|beer|cocktails?|an evening with|lecture|ballots?|voters?|elections?|seed swap|tea of the month|grow your business|small business|resumes?|job search|medicare|retirement|estate planning|taxes)\b/i;
 
+// Added 2026-11 from the golden set (evals/golden/pipeline-golden.json):
+// civic meetings, open/office hours, adult hobby groups and services that
+// library feeds tag with a default all-ages range. Same rule as above: any
+// kid/family word in the title wins, so "Kids Chess Club" still gets through.
+const ADULT_PROGRAM_RE = /\b(meetings?|commission|helpline|open hours|office hours|master gardeners?|genealog\w*|memory caf[eé]|lobby only|choir|embroidery|macram[eé]|cross ?stitch|crochet|knitting|sew(ing)?|textiles?|outerwear|yo ?yo club|baseball club|birding|meditation|thrift|water treatment|reception|friends of the library|discussion group|chess night|board game night|tabletop|dungeons|d ?& ?d|magic the gathering|your dog|(early )?childhood screening)\b|^hold for\b|^closing\b/i;
+// Scraper parse failures: a whole card's text (description, age group,
+// program type, "View Details") landed in the title field.
+const GARBLED_TITLE_RE = /\b(description:|view details|age group:|program type:|location:\s)/i;
+const MAX_TITLE_LENGTH = 140;
+
 function decodeEntities(str) {
   if (!str || !/&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(str)) return str;
   const named = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "–", mdash: "—", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", hellip: "…" };
@@ -515,6 +525,7 @@ function decodeEntities(str) {
 function contentFilter(ev) {
   const title = String(ev.title || "");
   if (PLACEHOLDER_TITLE_RE.test(title)) return "placeholder-title";
+  if (title.length > MAX_TITLE_LENGTH || GARBLED_TITLE_RE.test(title)) return "garbled-title";
   // Next year's template copied onto this year's date ("Yoga en español 2027"
   // on an Oct 2026 event, "2027 Crafternoon: ?").
   const years = title.match(/\b20\d{2}\b/g);
@@ -525,6 +536,7 @@ function contentFilter(ev) {
   if (!familySignal && typeof ev.age_min === "number" && ev.age_min >= 9) return "teen-tween-ages";
   if (!familySignal && TEEN_TITLE_RE.test(title)) return "teen-tween-title";
   if (!KID_SIGNAL_RE.test(title) && ADULT_TOPIC_RE.test(title)) return "adult-topic";
+  if (!KID_SIGNAL_RE.test(title) && ADULT_PROGRAM_RE.test(title)) return "adult-program";
   return null;
 }
 
