@@ -163,6 +163,11 @@ keep reads proportional to traffic:
   min 6 chars). `review_rules.action` is `skip` (exact title key) or
   `skip_contains` (key substring). Learned skips count only rejections after the latest approval.
   The admin review queue groups repeats (same source, title, start time) into one card.
+- **Golden set** (`evals/golden/pipeline-golden.json`, built 2026-11 from review decisions): one keep/drop case per
+  source+title. `node evals/pipeline-golden-eval.js` runs the real `contentFilter` + `validateCandidate` on it and
+  exits 1 if a case in `baseline.json` stops passing. Run it after touching either; `--misses` lists rejects that
+  still reach review; `--update-baseline` after a fix. Approved items must stay at 100% kept. Add a row whenever
+  you reject something for a content reason. It doesn't cover learned `review_rules` or runner-level filters.
 - Verification flags "possibly cancelled" and "time changed". It skips sources
   that return 0 events and matches titles loosely (`sameEventTitle`). It prefers a fresh
   session at the same time (programs can run twice a day, e.g. TinkerTots 10:00 and 2:00),
