@@ -84,6 +84,25 @@ if (args.has("--misses")) {
   }
 }
 
+// Verification flags (Possibly cancelled / Time changed). Labeled data only
+// for now: judging them needs the fresh feed and live events, which aren't
+// stored. Reported so precision is visible and future verifier changes have
+// a target. False alarms = flags you rejected.
+const golden = JSON.parse(readFileSync(DATA, "utf8"));
+if (golden.verification) {
+  const vf = golden.verification_fields;
+  const vr = golden.verification.map((c) => Object.fromEntries(vf.map((f, i) => [f, c[i]])));
+  console.log("\nVerification flags you reviewed:");
+  for (const type of ["cancelled", "time_changed"]) {
+    const all = vr.filter((r) => r.change_type === type);
+    const ok = all.filter((r) => r.expect === "accept").length;
+    console.log(`  ${type.padEnd(13)} ${ok}/${all.length} accepted (${pct(ok, all.length).trim()} precision)`);
+  }
+  for (const r of vr.filter((x) => x.expect === "reject")) {
+    console.log(`  false alarm #${r.pending_id} [${r.source_key}] ${r.change_type}: ${r.title} (${r.reason})`);
+  }
+}
+
 // Baseline regression gate.
 const passing = results.filter((r) => r.pass).map((r) => r.pending_id).sort((a, b) => a - b);
 if (args.has("--update-baseline")) {
