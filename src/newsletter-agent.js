@@ -163,7 +163,7 @@ Your job each week:
 5. last_issue_readout: 1-3 plain sentences on the most recent sent issue's results from history. Results are directional only (small list; opens are inflated by Apple Mail, so judge clicks). Don't call a winner unless the provided verdict says so. Say "no sent issues yet" if history is empty.
 6. rationale: 2-4 sentences explaining your choices for the owner, who approves the draft.
 
-Reply with only a JSON object:
+Submit with the submit_draft tool. Fields (same as this JSON shape):
 {"subject_a":"","subject_b":"","intro":"","intro_b":"","spotlight_ids":[],"test":{"variable":"subject|intro|none","hypothesis":""},"last_issue_readout":"","rationale":""}`;
   const user = `Issue goes out Sunday ${input.send_date} (covers ${input.week_label}).
 
