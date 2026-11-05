@@ -4373,7 +4373,9 @@ async function getWeekAheadEvents(env, asOf = new Date()) {
   // week would merge every week's digest into one ever-growing thread,
   // collapsing all but the latest behind "Show trimmed/quoted content."
   const startLabel = windowStart.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
-  const endLabel = cutoff.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
+  // cutoff is midnight AFTER the last day, so label the day before it
+  // (Mon–Sun reads "Nov 9–15", not "Nov 9–16").
+  const endLabel = new Date(cutoff.getTime() - 12 * 36e5).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: TZ });
   // Only abbreviate the end date to just a day number when both dates
   // share a month (e.g. "Aug 3-9") -- across a month boundary, spelling
   // out both months avoids a confusing "Jul 31-7" with no month on the "7".
@@ -5191,12 +5193,45 @@ async function callNewsletterAgent(env, input) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: NEWSLETTER_MODEL, max_tokens: 2000, system, messages: [{ role: "user", content: user }] })
+    // Forced tool call: the API hands back the draft as parsed JSON, so a stray
+    // quote in an event title can't break it. (Nov 5 2026: a free-text reply
+    // with an unescaped quote failed JSON.parse and the week fell back to the
+    // rules-only draft.) Text parsing stays as a fallback.
+    body: JSON.stringify({
+      model: NEWSLETTER_MODEL, max_tokens: 2000, system,
+      tools: [NEWSLETTER_DRAFT_TOOL], tool_choice: { type: "tool", name: NEWSLETTER_DRAFT_TOOL.name },
+      messages: [{ role: "user", content: user }]
+    })
   });
   if (!res.ok) throw new Error(`Anthropic API error ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
+  const call = (data.content || []).find((c) => c.type === "tool_use" && c.name === NEWSLETTER_DRAFT_TOOL.name);
+  if (call && call.input && typeof call.input === "object") return call.input;
   return parseAgentReply((data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n"));
 }
+
+const NEWSLETTER_DRAFT_TOOL = {
+  name: "submit_draft",
+  description: "Submit this week's newsletter draft.",
+  input_schema: {
+    type: "object",
+    properties: {
+      subject_a: { type: "string" },
+      subject_b: { type: "string", description: "Empty unless testing the subject." },
+      intro: { type: "string" },
+      intro_b: { type: "string", description: "Empty unless testing the intro." },
+      spotlight_ids: { type: "array", items: { type: "integer" }, maxItems: 3 },
+      test: {
+        type: "object",
+        properties: { variable: { type: "string", enum: ["subject", "intro", "none"] }, hypothesis: { type: "string" } },
+        required: ["variable", "hypothesis"]
+      },
+      last_issue_readout: { type: "string" },
+      rationale: { type: "string" }
+    },
+    required: ["subject_a", "intro", "spotlight_ids", "test", "last_issue_readout", "rationale"]
+  }
+};
 
 // Drafts (or redrafts) the issue for sendDate. Never touches an issue that's
 // already approved-and-sent or skipped unless force is set by the admin.
