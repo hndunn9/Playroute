@@ -1333,7 +1333,8 @@ async function loadData(){
   // that can only be known once renderFeed() has actually run and decided
   // whether the recommended section had anything to show. lastSawRecommended
   // is set inside renderFeed() itself, right where the section is built.
-  const _newsletterSrc = new URLSearchParams(location.search).get("src") === "newsletter" ? "newsletter" : null;
+  const _srcParam = new URLSearchParams(location.search).get("src");
+  const _newsletterSrc = ["newsletter", "today-page"].includes(_srcParam) ? _srcParam : null;
   fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, ...expPayload(), ...cardExpPayload()})}).catch(()=>{});
 }
 

@@ -217,6 +217,12 @@ keep reads proportional to traffic:
   query matches nothing at all (ignoring filters), `correctSearch` swaps each unknown word for the closest word in the
   site's own titles/venues/cities (edit distance 1, or 2 for 7+ letters) and keeps it only if that finds results. The
   count line says "showing results for …". `/api/track-search` still logs what the visitor typed.
+- **Crawlable day pages** (Nov 2026, `handleSeoDayPage` in src/index.js): `/today`, `/tomorrow`, `/this-weekend` and
+  `/<city-slug>/<same>` are server-rendered HTML with schema.org Event JSON-LD, because the app renders in the browser
+  and search engines / AI answer tools see an empty shell at `/`. One D1 query per render (all non-irregular events in
+  the window), edge-cached 15 min (`SEO_PAGE_TTL`). `/sitemap.xml` and `/llms.txt` are generated from the city list
+  (the old static copies in `public/` were removed; static assets win over the Worker). Links back carry
+  `?src=today-page`, which the pageview beacon records as `source`.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
 - **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
   A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within

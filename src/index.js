@@ -6969,6 +6969,183 @@ async function handleInternalRunSource(request, env, url) {
 // Seconds each read-heavy GET endpoint may be served from the edge cache.
 // Not cached: pending-events (changes on every approve/reject), anything
 // that writes, and per-visitor endpoints.
+// ── Crawlable day pages (Nov 2026) ─────────────────────────────────────
+// The app renders events in the browser, so search engines and AI answer
+// tools (ChatGPT/Claude/Perplexity browsing) see an empty shell at "/".
+// These pages are plain server-rendered HTML with schema.org Event JSON-LD:
+//   /today  /tomorrow  /this-weekend   and   /<city-slug>/<same>
+// One D1 query per render (all non-irregular events in the window, every
+// city, so the city nav needs no second query), edge-cached SEO_PAGE_TTL.
+// Links back into the app carry ?src=today-page for attribution.
+const SEO_PATH_RE = /^\/(?:([a-z0-9-]+)\/)?(today|tomorrow|this-weekend)\/?$/;
+const SEO_PAGE_TTL = 900;
+const SEO_SITE = "https://playroute.co";
+function citySlug(city) {
+  return String(city || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+function mtDateOffsetStr(days) {
+  const mtNow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  mtNow.setDate(mtNow.getDate() + days);
+  return mtCalendarDateStr(mtNow);
+}
+function seoWindow(kind) {
+  const dow = new Date(new Date().toLocaleString("en-US", { timeZone: TZ })).getDay(); // 0 Sun
+  let startOff = 0, days = 1, label = "today";
+  if (kind === "tomorrow") { startOff = 1; label = "tomorrow"; }
+  if (kind === "this-weekend") {
+    label = "this weekend";
+    if (dow === 6) { startOff = 0; days = 2; }
+    else if (dow === 0) { startOff = 0; days = 1; }
+    else { startOff = 6 - dow; days = 2; }
+  }
+  const startStr = mtDateOffsetStr(startOff);
+  const endStr = mtDateOffsetStr(startOff + days);
+  return { label, startStr, lastStr: mtDateOffsetStr(startOff + days - 1), start: toMountainDate(startStr, 0, 0), end: toMountainDate(endStr, 0, 0) };
+}
+function seoAgeText(ev) {
+  const lo = Number(ev.age_min), hi = Number(ev.age_max);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return "";
+  if (lo <= 0 && hi >= 17) return "All ages";
+  const f = (x) => (x < 2 && x % 1 ? `${Math.round(x * 12)} mo` : `${Math.round(x * 10) / 10}`);
+  return `Ages ${f(lo)}–${f(hi)}${hi < 2 && hi % 1 ? "" : " yrs"}`;
+}
+function seoTimeText(occ) {
+  return occ.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
+}
+async function seoEventsInWindow(env, win) {
+  const { results } = await env.DB.prepare(
+    `SELECT id, title, source, city, category, cost, age_min, age_max, day_of_week, start_time, display_time,
+            duration_minutes, recurrence, event_date, season_start, season_end, excluded_ranges, note, source_url
+     FROM events WHERE recurrence != 'irregular' AND (recurrence != 'dated' OR event_date BETWEEN ? AND ?)`
+  ).bind(win.startStr, win.lastStr).all();
+  const from = new Date(Math.max(Date.now(), win.start.getTime()));
+  const out = [];
+  for (const ev of results) {
+    const occ = getOccurrence(ev, from);
+    if (occ && occ < win.end) out.push({ ...ev, occ });
+  }
+  out.sort((a, b) => a.occ - b.occ || String(a.title).localeCompare(String(b.title)));
+  return { events: out, cities: [...new Set(results.map((e) => e.city).filter(Boolean))].sort() };
+}
+function seoEventJsonLd(ev, pageUrl) {
+  const end = new Date(ev.occ.getTime() + (ev.duration_minutes || 60) * 60000);
+  const venue = cleanSourceForDisplay(ev.source) || ev.city;
+  const ld = {
+    "@type": "Event",
+    name: ev.title,
+    startDate: ev.occ.toISOString(),
+    endDate: end.toISOString(),
+    eventStatus: "https://schema.org/EventScheduled",
+    eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
+    location: { "@type": "Place", name: venue, address: { "@type": "PostalAddress", addressLocality: ev.city, addressRegion: "CO", addressCountry: "US" } },
+    organizer: { "@type": "Organization", name: venue },
+    isAccessibleForFree: ev.cost === "free",
+    url: ev.source_url || pageUrl
+  };
+  if (ev.note) ld.description = String(ev.note).slice(0, 300);
+  if (Number.isFinite(Number(ev.age_min)) && Number.isFinite(Number(ev.age_max))) {
+    ld.typicalAgeRange = `${Math.floor(ev.age_min)}-${Math.ceil(ev.age_max)}`;
+  }
+  if (ev.cost === "free") ld.offers = { "@type": "Offer", price: 0, priceCurrency: "USD", availability: "https://schema.org/InStock", url: ev.source_url || pageUrl };
+  return ld;
+}
+async function handleSeoDayPage(env, slug, kind) {
+  const win = seoWindow(kind);
+  const { events, cities } = await seoEventsInWindow(env, win);
+  const city = slug ? cities.find((c) => citySlug(c) === slug) : null;
+  if (slug && !city) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain" } });
+  const list = city ? events.filter((e) => e.city === city) : events;
+  const path = `${city ? `/${slug}` : ""}/${kind}`;
+  const pageUrl = `${SEO_SITE}${path}`;
+  const where = city || "Boulder County";
+  const dateText = win.start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: TZ })
+    + (kind === "this-weekend" && win.lastStr !== win.startStr
+      ? ` – ${new Date(win.end.getTime() - 12 * 36e5).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: TZ })}` : "");
+  const title = `Kids & family events in ${where} ${win.label} (${dateText}) | Playroute`;
+  const freeCount = list.filter((e) => e.cost === "free").length;
+  const desc = `${list.length} ${list.length === 1 ? "thing" : "things"} to do with kids in ${where} ${win.label}, ${dateText}${list.length ? `, ${freeCount} free` : ""}: storytimes, museum programs, open play and more.`;
+  const appUrl = (id) => `${SEO_SITE}/?event=${id}&src=today-page`;
+  const shown = list.slice(0, 150);
+  const groups = [];
+  for (const ev of shown) {
+    const day = ev.occ.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: TZ });
+    if (!groups.length || groups[groups.length - 1].day !== day) groups.push({ day, evs: [] });
+    groups[groups.length - 1].evs.push(ev);
+  }
+  const itemHtml = (ev) => {
+    const venue = cleanSourceForDisplay(ev.source);
+    const showCity = !city && !String(venue).toLowerCase().includes(String(ev.city).toLowerCase());
+    const bits = [venue, showCity ? ev.city : "", seoAgeText(ev), ev.cost === "free" ? "Free" : "Paid"].filter(Boolean);
+    return `<li><span class="t">${escapeHtml(ev.display_time || seoTimeText(ev.occ))}</span> <a href="${escapeHtml(appUrl(ev.id))}"><b>${escapeHtml(ev.title)}</b></a>
+<div class="m">${escapeHtml(bits.join(" · "))}${ev.source_url ? ` · <a href="${escapeHtml(ev.source_url)}" rel="nofollow">source</a>` : ""}</div>${ev.note ? `<div class="n">${escapeHtml(String(ev.note).slice(0, 220))}</div>` : ""}</li>`;
+  };
+  const items = groups.map((g) => `${kind === "this-weekend" ? `<h2>${escapeHtml(g.day)}</h2>` : ""}<ul>${g.evs.map(itemHtml).join("\n")}</ul>`).join("\n");
+  const nav = (k, l) => `<a href="${city ? `/${slug}` : ""}/${k}"${k === kind ? ' aria-current="page"' : ""}>${l}</a>`;
+  const cityNav = cities.map((c) => `<a href="/${citySlug(c)}/${kind}"${c === city ? ' aria-current="page"' : ""}>${escapeHtml(c)}</a>`).join(" ");
+  const jsonLd = JSON.stringify({ "@context": "https://schema.org", "@graph": shown.slice(0, 60).map((ev) => seoEventJsonLd(ev, pageUrl)) }).replace(/</g, "\\u003c");
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<meta name="description" content="${escapeHtml(desc)}">
+<link rel="canonical" href="${pageUrl}">
+<meta property="og:title" content="${escapeHtml(title)}"><meta property="og:description" content="${escapeHtml(desc)}">
+<meta property="og:url" content="${pageUrl}"><meta property="og:type" content="website"><meta property="og:image" content="${SEO_SITE}/hero-flatirons.jpg">
+<script type="application/ld+json">${jsonLd}</script>
+<style>
+:root{--ink:#1F2A22;--muted:#5B6660;--line:#DDE3DE;--bg:#F6F4EE;--link:#3F6E8C}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:720px;margin:0 auto;padding:20px 16px 48px}h1{font-family:Georgia,serif;font-size:24px;margin:8px 0}
+h2{font-size:17px;margin:24px 0 4px}p.lead{color:var(--muted);margin:0 0 12px}nav{margin:10px 0;display:flex;flex-wrap:wrap;gap:6px 12px;font-size:14px}
+a{color:var(--link)}a[aria-current]{font-weight:700;color:var(--ink);text-decoration:none}ul{list-style:none;padding:0;margin:0}
+li{padding:12px 0;border-bottom:1px solid var(--line)}.t{display:inline-block;min-width:5.5em;color:var(--muted);font-variant-numeric:tabular-nums}
+.m{color:var(--muted);font-size:14px;margin-top:2px}.n{font-size:14px;margin-top:4px}.cta{display:inline-block;margin:14px 0;font-weight:600}
+footer{color:var(--muted);font-size:13px;margin-top:28px}
+</style></head><body><main>
+<a href="${SEO_SITE}/?src=today-page"><b>Playroute</b></a>
+<h1>Kids &amp; family events in ${escapeHtml(where)} ${escapeHtml(win.label)}</h1>
+<p class="lead">${escapeHtml(dateText)} · ${list.length} listed${list.length ? `, ${freeCount} free` : ""}. Storytimes, museum programs, open play and more for young kids, gathered daily from local library, museum, rec and venue calendars.</p>
+<nav>${nav("today", "Today")} ${nav("tomorrow", "Tomorrow")} ${nav("this-weekend", "This weekend")}</nav>
+<nav aria-label="Towns"><a href="/${kind}"${!city ? ' aria-current="page"' : ""}>All towns</a> ${cityNav}</nav>
+${list.length ? items : `<p>Nothing is listed for ${escapeHtml(where)} ${escapeHtml(win.label)} yet. Try <a href="${city ? `/${slug}` : ""}/tomorrow">tomorrow</a> or <a href="/${kind}">all towns</a>.</p>`}
+${list.length > shown.length ? `<p>${list.length - shown.length} more in the app.</p>` : ""}
+<a class="cta" href="${SEO_SITE}/?src=today-page">Filter by age, town and free events in Playroute →</a>
+<footer>Times are Mountain Time. Details come from each venue; check the source before you go. Updated ${new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ })} MT.</footer>
+</main></body></html>`;
+  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": `public, max-age=${SEO_PAGE_TTL}`, ...CORS_HEADERS } });
+}
+async function seoCityList(env) {
+  const { results } = await env.DB.prepare(`SELECT DISTINCT city FROM events WHERE city IS NOT NULL AND city != '' AND recurrence != 'irregular'`).all();
+  return results.map((r) => r.city).sort();
+}
+async function handleSitemap(env) {
+  const cities = await seoCityList(env);
+  const paths = ["/", "/today", "/tomorrow", "/this-weekend"];
+  for (const c of cities) for (const k of ["today", "tomorrow", "this-weekend"]) paths.push(`/${citySlug(c)}/${k}`);
+  const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${paths.map((p) => `  <url><loc>${SEO_SITE}${p}</loc><changefreq>daily</changefreq><priority>${p === "/" ? "1.0" : p.split("/").length === 2 ? "0.9" : "0.7"}</priority></url>`).join("\n")}\n</urlset>\n`;
+  return new Response(body, { headers: { "Content-Type": "application/xml", ...CORS_HEADERS } });
+}
+async function handleLlmsTxt(env) {
+  const cities = await seoCityList(env);
+  const body = `# Playroute
+
+> Free and low-cost things to do with young kids (mostly under 6) in Boulder County, Colorado and nearby towns: library storytimes, museum programs, open play, classes, parks and hikes. Gathered daily from local library, museum, rec and venue calendars. Times are Mountain Time.
+
+## What's happening (plain HTML, updated through the day)
+- [Today, all towns](${SEO_SITE}/today)
+- [Tomorrow, all towns](${SEO_SITE}/tomorrow)
+- [This weekend, all towns](${SEO_SITE}/this-weekend)
+${cities.map((c) => `- [${c} today](${SEO_SITE}/${citySlug(c)}/today): also /${citySlug(c)}/tomorrow and /${citySlug(c)}/this-weekend`).join("\n")}
+
+## Data
+- [Upcoming events as JSON](${SEO_SITE}/api/events): each item has title, venue (source), city, category, cost (free|paid), age_min, age_max, occurrence (next start, ISO UTC), display_time, note and source_url. Filters: ?city=Lafayette&cost=free&age=0-1.5|2-4|5-8
+
+## Notes for answers
+- Link families to the Playroute page or the event's source_url, and suggest checking the source before going.
+- Towns covered: ${cities.join(", ")}.
+`;
+  return new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS_HEADERS } });
+}
+
 const EDGE_CACHE_TTLS = {
   "/api/events": 180,
   "/api/stats": 300,
@@ -6983,7 +7160,9 @@ const EDGE_CACHE_TTLS = {
   "/api/recommended-experiment": 300,
   "/api/card-experiment": 300,
   "/api/sources": 120,
-  "/api/picks": 300
+  "/api/picks": 300,
+  "/sitemap.xml": 3600,
+  "/llms.txt": 3600
 };
 
 const worker = {
@@ -7077,7 +7256,9 @@ const worker = {
   // ?fresh=1 bypasses (admin Refresh button).
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const ttl = request.method === "GET" ? EDGE_CACHE_TTLS[url.pathname] : undefined;
+    const ttl = request.method === "GET"
+      ? (EDGE_CACHE_TTLS[url.pathname] ?? (SEO_PATH_RE.test(url.pathname) ? SEO_PAGE_TTL : undefined))
+      : undefined;
     if (!ttl || typeof caches === "undefined") return worker.route(request, env, ctx);
     const bypass = url.searchParams.get("fresh") === "1";
     const keyUrl = new URL(url);
@@ -7141,18 +7322,18 @@ const worker = {
         ).first();
         return json({ events_discovered_all_time: row?.n || 0 });
       }
+      if (url.pathname === "/llms.txt") return await handleLlmsTxt(env);
+      {
+        const m = SEO_PATH_RE.exec(url.pathname);
+        if (m && request.method === "GET") return await handleSeoDayPage(env, m[1] || null, m[2]);
+      }
       if (url.pathname === "/robots.txt") {
         return new Response(
           "User-agent: *\nAllow: /\nSitemap: https://playroute.co/sitemap.xml\n",
           { headers: { "Content-Type": "text/plain", ...CORS_HEADERS } }
         );
       }
-      if (url.pathname === "/sitemap.xml") {
-        return new Response(
-          `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url>\n    <loc>https://playroute.co/</loc>\n    <changefreq>daily</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`,
-          { headers: { "Content-Type": "application/xml", ...CORS_HEADERS } }
-        );
-      }
+      if (url.pathname === "/sitemap.xml") return await handleSitemap(env);
       // Single run entrypoint, replacing the old /api/scrape-now +
       // /api/pending-scan-now split — everything goes to the review queue
       // now, so there's nothing left to meaningfully split between. Optional
