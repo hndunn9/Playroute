@@ -20,14 +20,15 @@
     var t = localStorage.getItem('playroute-theme');
     if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
   } catch (e) {}
-  // Seasonal header: pumpkin fall theme Sep 1 – Oct 31, harvest & thanks Nov 1 – Dec 31
-  // (harvest builds on the fall layout and swaps colors + the wordmark badge).
-  // Preview with ?season=fall, ?season=harvest or ?season=off.
+  // Seasonal header: pumpkin fall Sep 1 – Oct 31, harvest & thanks Nov 1 – 30
+  // (harvest builds on the fall layout), winter (snow + Santa) Dec 1 – 31.
+  // Preview with ?season=fall | harvest | winter | off.
   try {
     var sp = new URLSearchParams(location.search).get('season');
     var mo = new Date().getMonth();
     var cl = document.documentElement.classList;
-    if (sp === 'harvest' || (!sp && mo >= 10)) { cl.add('season-fall'); cl.add('season-harvest'); }
+    if (sp === 'winter' || (!sp && mo === 11)) cl.add('season-winter');
+    else if (sp === 'harvest' || (!sp && mo === 10)) { cl.add('season-fall'); cl.add('season-harvest'); }
     else if (sp === 'fall' || (!sp && mo >= 8 && mo <= 9)) cl.add('season-fall');
   } catch (e) {}
 </script>
@@ -123,7 +124,26 @@
   --fall-cream:  #F4E6CF;
   --fall-button: #A4521F;
 }
-/* Harvest & thanks (Nov–Dec): honey/gold take over the fall tokens. */
+/* Winter (Dec): snow day + Santa's on his way. */
+:root.season-winter{
+  --winter-plate:    #141A24;
+  --winter-accent:   #C8453B;
+  --winter-active:   #A8332B;
+  --winter-button:   #2F6B4A;
+  --winter-tab-bg:   #EEF2F6;
+  --winter-filter-bg:#F5F8FB;
+  --winter-line:     #DCE4EB;
+  --winter-ink-soft: #4C5964;
+  --winter-chip-bg:  #C8453B;
+  --winter-snow:     #FFFFFF;
+  --winter-scrim:    linear-gradient(120deg,rgba(14,22,34,0.80) 0%,rgba(26,40,60,0.40) 40%,rgba(80,112,144,0.12) 65%,rgba(200,222,240,0.20) 100%);
+  --winter-frost:    linear-gradient(180deg,rgba(235,244,252,0.36) 0%,rgba(235,244,252,0.10) 35%,transparent 55%);
+}
+@media (prefers-color-scheme: dark) {
+  :root.season-winter:not([data-theme="light"]) { --winter-active:#E8776E; --winter-tab-bg:var(--parchment); --winter-filter-bg:var(--cream); --winter-line:var(--fog); --winter-ink-soft:var(--ink-soft); }
+}
+:root.season-winter[data-theme="dark"] { --winter-active:#E8776E; --winter-tab-bg:var(--parchment); --winter-filter-bg:var(--cream); --winter-line:var(--fog); --winter-ink-soft:var(--ink-soft); }
+/* Harvest & thanks (Nov): honey/gold take over the fall tokens. */
 :root.season-harvest{
   --fall-plate:  #22180C;
   --fall-cream:  #F4EBD4;
@@ -950,6 +970,42 @@ footer{
 .season-harvest .fall-leaf:nth-child(3n+2) path:first-child{fill:var(--harvest-leaf-2);}
 .season-harvest .fall-leaf:nth-child(3n) path:first-child{fill:var(--harvest-leaf-3);}
 .season-harvest .fall-leaf path:last-child{stroke:var(--harvest-stem);}
+
+/* ── SEASONAL: WINTER (Dec, html.season-winter) ── */
+.winter-only{display:none;}
+.season-winter .winter-fx{display:block;position:absolute;inset:0;z-index:1;pointer-events:none;}
+.season-winter .hero::after{background:var(--winter-scrim);}
+.season-winter .hero-wordmark{background:var(--winter-plate);border-left-color:var(--winter-accent);overflow:visible;z-index:3;}
+.winter-frost{position:absolute;inset:0;background:var(--winter-frost);}
+.winter-snowbank{position:absolute;left:0;right:0;bottom:-2px;width:100%;height:22px;}
+.winter-flake{position:absolute;top:0;opacity:0;animation:winterSnow linear infinite;}
+.winter-sleigh{position:absolute;left:0;top:8px;width:120px;opacity:0;animation:winterSleigh 7s ease-in-out .8s 1 both;}
+.season-winter-after .winter-sleigh{display:none;}
+.season-winter .winter-hat{display:block;position:absolute;top:-14px;right:-11px;width:28px;height:28px;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.45));}
+.season-winter .winter-chip{display:inline-flex;position:absolute;z-index:3;left:14px;top:84px;align-items:center;gap:4px;
+  font:700 11.5px 'DM Sans',sans-serif;letter-spacing:.02em;padding:4px 10px;border-radius:999px;
+  background:var(--winter-chip-bg);color:var(--on-fill);box-shadow:0 2px 8px rgba(0,0,0,0.35);}
+@keyframes winterSnow{
+  0%{transform:translate(0,-12px);opacity:0}
+  10%{opacity:.95}
+  100%{transform:translate(-10px,140px);opacity:0}
+}
+@keyframes winterSleigh{
+  0%{transform:translate(-140px,14px);opacity:0}
+  10%{opacity:1}
+  85%{opacity:1}
+  100%{transform:translate(520px,-8px);opacity:0}
+}
+@media (prefers-reduced-motion: reduce){
+  .winter-flake{animation:none;opacity:.85;}
+  .winter-sleigh{display:none;}
+}
+.season-winter .section-tabs{background:var(--winter-tab-bg);border-bottom-color:var(--winter-line);}
+.season-winter .section-tab .tab-icon,.season-winter .section-tab .tab-label{color:var(--winter-ink-soft);}
+.season-winter .section-tab.active .tab-icon,.season-winter .section-tab.active .tab-label{color:var(--winter-active);}
+.season-winter .tab-active-dot{background:var(--winter-active);}
+.season-winter .about-btn{background:var(--winter-button);}
+.season-winter .filters{background:var(--winter-filter-bg);border-bottom-color:var(--winter-line);}
 @keyframes fallLeaf{
   0%{transform:translate(0,-24px) rotate(0deg);opacity:0}
   10%{opacity:1}
@@ -975,6 +1031,20 @@ footer{
 <!-- ── HEADER ── -->
 <header>
   <div class="hero">
+    <div class="winter-only winter-fx" aria-hidden="true">
+      <div class="winter-frost"></div>
+      <svg class="winter-flake" style="left:55%;width:12px;height:12px;animation-duration:8s;animation-delay:-1s" viewBox="0 0 20 20"><g stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round"><path d="M10 2v16M3 6l14 8M17 6 3 14"/></g></svg>
+      <svg class="winter-flake" style="left:68%;width:9px;height:9px;animation-duration:10s;animation-delay:-4s" viewBox="0 0 20 20"><g stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round"><path d="M10 2v16M3 6l14 8M17 6 3 14"/></g></svg>
+      <svg class="winter-flake" style="left:81%;width:14px;height:14px;animation-duration:9s;animation-delay:-2.5s" viewBox="0 0 20 20"><g stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round"><path d="M10 2v16M3 6l14 8M17 6 3 14"/></g></svg>
+      <svg class="winter-flake" style="left:92%;width:10px;height:10px;animation-duration:11s;animation-delay:-6s" viewBox="0 0 20 20"><g stroke="#FFFFFF" stroke-width="1.7" stroke-linecap="round"><path d="M10 2v16M3 6l14 8M17 6 3 14"/></g></svg>
+      <svg class="winter-flake" style="left:61%;width:6px;height:6px;animation-duration:7s;animation-delay:-3s" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#FFFFFF"/></svg>
+      <svg class="winter-flake" style="left:74%;width:5px;height:5px;animation-duration:9s;animation-delay:-5s" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#FFFFFF"/></svg>
+      <svg class="winter-flake" style="left:86%;width:5px;height:5px;animation-duration:8s;animation-delay:-1.5s" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#FFFFFF"/></svg>
+      <svg class="winter-flake" style="left:97%;width:6px;height:6px;animation-duration:10s;animation-delay:-7s" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#FFFFFF"/></svg>
+      <svg class="winter-flake" style="left:48%;width:4px;height:4px;animation-duration:9s;animation-delay:-2s" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#FFFFFF"/></svg>
+      <svg class="winter-sleigh" viewBox="0 0 120 30"><g fill="#F6EFE6"><path d="M6 20c6 3 22 3 28-1l3-6h-6l-3 4H12l-3-5H5z"/><circle cx="30" cy="9" r="3.4"/><path d="M27 12h6l1 5h-8z"/><path d="M54 14c3-2 9-2 12 0l3-3 1 2-2 3 2 4h-2l-2-3h-8l-2 3h-2l1-4z"/><path d="M76 13c3-2 9-2 12 0l3-3 1 2-2 3 2 4h-2l-2-3h-8l-2 3h-2l1-4z"/><path d="M98 12c3-2 9-2 12 0l3-3 1 2-2 3 2 4h-2l-2-3h-8l-2 3h-2l1-4z"/></g><g stroke="#F6EFE6" stroke-width="1" fill="none"><path d="M37 17 55 16"/><path d="M68 9l2-3m-1 3 3-2"/><path d="M90 9l2-3m-1 3 3-2"/><path d="M112 8l2-3m-1 3 3-2"/></g><circle cx="114" cy="8" r="1.6" fill="#E8463C"/></svg>
+      <svg class="winter-snowbank" viewBox="0 0 390 22" preserveAspectRatio="none"><path d="M0 12C30 4 60 6 90 11s70 7 105-2 70-6 100 1 60 7 95-3V22H0Z" fill="#F7FAFD"/><path d="M0 16c40-4 80-2 120 1s90 2 140-2 90-1 130 2V22H0Z" fill="#E4EEF6"/></svg>
+    </div>
     <div class="fall-leaves fall-only" aria-hidden="true">
       <svg class="fall-leaf" style="left:56%;width:16px;height:16px;animation-duration:7s;animation-delay:-1s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#C2763A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
       <svg class="fall-leaf" style="left:67%;width:12px;height:12px;animation-duration:9s;animation-delay:-4s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#A8582E"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
@@ -983,7 +1053,27 @@ footer{
       <svg class="fall-leaf" style="left:46%;width:11px;height:11px;animation-duration:8.5s;animation-delay:-5s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#D4A04A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
       <svg class="fall-leaf" style="left:94%;width:15px;height:15px;animation-duration:7.5s;animation-delay:-3s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#C2763A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
     </div>
-    <h1 class="hero-wordmark">Playroute <span class="hero-beta">Beta</span><svg class="fall-pumpkin fall-only" viewBox="0 0 22 22" aria-hidden="true"><ellipse cx="7.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="14.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="11" cy="13" rx="4.2" ry="6" fill="#D08546"/><path d="M11 7.5 C11 5.5 11.5 3.8 13 2.8" stroke="#6B7A45" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><svg class="fall-pumpkin harvest-wheat" viewBox="0 0 22 22" aria-hidden="true"><path d="M11 21V6" stroke="#B8862F" stroke-width="1.5" stroke-linecap="round"/><g fill="#E0BA62"><ellipse cx="11" cy="4" rx="1.6" ry="2.6"/><ellipse cx="8.3" cy="8" rx="1.5" ry="2.5" transform="rotate(-30 8.3 8)"/><ellipse cx="13.7" cy="8" rx="1.5" ry="2.5" transform="rotate(30 13.7 8)"/><ellipse cx="8.3" cy="12" rx="1.5" ry="2.5" transform="rotate(-30 8.3 12)"/><ellipse cx="13.7" cy="12" rx="1.5" ry="2.5" transform="rotate(30 13.7 12)"/></g></svg></h1>
+    <h1 class="hero-wordmark">Playroute <span class="hero-beta">Beta</span><svg class="fall-pumpkin fall-only" viewBox="0 0 22 22" aria-hidden="true"><ellipse cx="7.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="14.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="11" cy="13" rx="4.2" ry="6" fill="#D08546"/><path d="M11 7.5 C11 5.5 11.5 3.8 13 2.8" stroke="#6B7A45" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><svg class="fall-pumpkin harvest-wheat" viewBox="0 0 22 22" aria-hidden="true"><path d="M11 21V6" stroke="#B8862F" stroke-width="1.5" stroke-linecap="round"/><g fill="#E0BA62"><ellipse cx="11" cy="4" rx="1.6" ry="2.6"/><ellipse cx="8.3" cy="8" rx="1.5" ry="2.5" transform="rotate(-30 8.3 8)"/><ellipse cx="13.7" cy="8" rx="1.5" ry="2.5" transform="rotate(30 13.7 8)"/><ellipse cx="8.3" cy="12" rx="1.5" ry="2.5" transform="rotate(-30 8.3 12)"/><ellipse cx="13.7" cy="12" rx="1.5" ry="2.5" transform="rotate(30 13.7 12)"/></g></svg><svg class="winter-only winter-hat" viewBox="0 0 28 28" aria-hidden="true"><path d="M3 20C6 10 13 5 21 7c3 1 4 5 3 9" fill="#C8453B"/><rect x="1.5" y="18.5" width="20" height="5" rx="2.5" fill="#F6F1EA"/><circle cx="24" cy="17" r="3" fill="#F6F1EA"/></svg></h1>
+    <span class="winter-only winter-chip" id="winterChip"></span>
+    <script>
+      // Decorative December countdown (text only, not a link). After Christmas the
+      // sleigh stops and the chip says Happy holidays.
+      (function(){
+        try {
+          var el = document.getElementById('winterChip');
+          var now = new Date(), d = now.getDate();
+          var forced = new URLSearchParams(location.search).get('season') === 'winter';
+          if (now.getMonth() !== 11 && !forced) return;
+          if (now.getMonth() !== 11) d = 7; // preview outside December
+          var txt;
+          if (d <= 23) { var n = 25 - d; txt = '\uD83C\uDF85 ' + n + ' sleeps till Santa'; }
+          else if (d === 24) txt = '\uD83C\uDF85 Santa comes tonight!';
+          else if (d === 25) txt = '\uD83C\uDF84 Merry Christmas!';
+          else { txt = '\u2744 Happy holidays'; document.documentElement.classList.add('season-winter-after'); }
+          el.textContent = txt;
+        } catch (e) {}
+      })();
+    </script>
     <p class="sr-only">Find things to do with kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado — storytimes, playgrounds, hikes, farmers markets, and family events updated daily.</p>
   </div>
 
