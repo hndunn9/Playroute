@@ -223,6 +223,12 @@ keep reads proportional to traffic:
   the window), edge-cached 15 min (`SEO_PAGE_TTL`). `/sitemap.xml` and `/llms.txt` are generated from the city list
   (the old static copies in `public/` were removed; static assets win over the Worker). Links back carry
   `?src=today-page`, which the pageview beacon records as `source`.
+- **Seasonal hero** (head script in `public/index.html`): `season-fall` (pumpkin + orange leaves) Sep 1–Oct 31;
+  Nov adds `season-harvest` on top of it (wheat sprig, gold leaves, honey `--harvest-*` tokens); Dec is
+  `season-winter` (frost, snowbank, snowfall, a sleigh that flies across once per load, Santa hat, `--winter-*` tokens)
+  with a decorative countdown chip (`#winterChip`, text only): "N sleeps till Santa" through the 23rd, "Santa comes
+  tonight!" on the 24th, "Happy holidays!" on the 25th (kept religion-neutral on purpose), then "Happy holidays" and no sleigh (`season-winter-after`).
+  Reduced motion hides the sleigh and freezes snow. No theme Jan–Aug. Preview `?season=fall|harvest|winter|off`.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
 - **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
   A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within
