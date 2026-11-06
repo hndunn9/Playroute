@@ -217,6 +217,9 @@ keep reads proportional to traffic:
   query matches nothing at all (ignoring filters), `correctSearch` swaps each unknown word for the closest word in the
   site's own titles/venues/cities (edit distance 1, or 2 for 7+ letters) and keeps it only if that finds results. The
   count line says "showing results for …". `/api/track-search` still logs what the visitor typed.
+- **Seasonal hero** (head script in `public/index.html`): `season-fall` (pumpkin + orange leaves) Sep 1–Oct 31;
+  Nov 1–Dec 31 adds `season-harvest` on top of it (wheat sprig instead of the pumpkin, gold leaves, honey tokens
+  `--harvest-*`). Preview `?season=fall|harvest|off`. A winter theme would replace harvest in December.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
 - **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
   A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within

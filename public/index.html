@@ -20,11 +20,15 @@
     var t = localStorage.getItem('playroute-theme');
     if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
   } catch (e) {}
-  // Seasonal header: fall theme runs Sep 1 – Nov 30. Preview with ?season=fall or ?season=off.
+  // Seasonal header: pumpkin fall theme Sep 1 – Oct 31, harvest & thanks Nov 1 – Dec 31
+  // (harvest builds on the fall layout and swaps colors + the wordmark badge).
+  // Preview with ?season=fall, ?season=harvest or ?season=off.
   try {
     var sp = new URLSearchParams(location.search).get('season');
     var mo = new Date().getMonth();
-    if (sp === 'fall' || (sp !== 'off' && mo >= 8 && mo <= 10)) document.documentElement.classList.add('season-fall');
+    var cl = document.documentElement.classList;
+    if (sp === 'harvest' || (!sp && mo >= 10)) { cl.add('season-fall'); cl.add('season-harvest'); }
+    else if (sp === 'fall' || (!sp && mo >= 8 && mo <= 9)) cl.add('season-fall');
   } catch (e) {}
 </script>
 <title>Playroute — Things to Do with Kids in Boulder, Lafayette, Erie, Louisville, Longmont & More</title>
@@ -118,6 +122,17 @@
   --fall-plate:  #211510;
   --fall-cream:  #F4E6CF;
   --fall-button: #A4521F;
+}
+/* Harvest & thanks (Nov–Dec): honey/gold take over the fall tokens. */
+:root.season-harvest{
+  --fall-plate:  #22180C;
+  --fall-cream:  #F4EBD4;
+  --fall-button: #8E6420;
+  --harvest-leaf-1: #D1A34A;
+  --harvest-leaf-2: #B8862F;
+  --harvest-leaf-3: #E0BA62;
+  --harvest-stem:   #B8862F;
+  --harvest-scrim:  linear-gradient(120deg,rgba(40,26,10,0.80) 0%,rgba(66,42,14,0.42) 40%,rgba(140,98,30,0.14) 65%,rgba(206,160,60,0.22) 100%);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -916,6 +931,25 @@ footer{
 .fall-leaves{position:absolute;inset:0;z-index:1;pointer-events:none;}
 .fall-leaf{position:absolute;top:0;opacity:0;animation:fallLeaf linear infinite;}
 .season-fall .hero-wordmark{z-index:2;}
+.season-harvest{
+  --fall-accent:#D1A34A;
+  --fall-deep:#8E6420;
+  --fall-tab-bg:#F4EEDF;
+  --fall-filter-bg:#FBF8EF;
+  --fall-line:#E4DAC2;
+}
+@media (prefers-color-scheme: dark) {
+  :root.season-harvest:not([data-theme="light"]) { --fall-deep:#E3B75E; --fall-tab-bg:var(--parchment); --fall-filter-bg:var(--cream); --fall-line:var(--fog); }
+}
+:root.season-harvest[data-theme="dark"] { --fall-deep:#E3B75E; --fall-tab-bg:var(--parchment); --fall-filter-bg:var(--cream); --fall-line:var(--fog); }
+.season-harvest .hero::after{background:var(--harvest-scrim);}
+.season-harvest .fall-pumpkin:not(.harvest-wheat){display:none;}
+.harvest-wheat{display:none;}
+.season-harvest .harvest-wheat{display:block;}
+.season-harvest .fall-leaf path:first-child{fill:var(--harvest-leaf-1);}
+.season-harvest .fall-leaf:nth-child(3n+2) path:first-child{fill:var(--harvest-leaf-2);}
+.season-harvest .fall-leaf:nth-child(3n) path:first-child{fill:var(--harvest-leaf-3);}
+.season-harvest .fall-leaf path:last-child{stroke:var(--harvest-stem);}
 @keyframes fallLeaf{
   0%{transform:translate(0,-24px) rotate(0deg);opacity:0}
   10%{opacity:1}
@@ -949,7 +983,7 @@ footer{
       <svg class="fall-leaf" style="left:46%;width:11px;height:11px;animation-duration:8.5s;animation-delay:-5s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#D4A04A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
       <svg class="fall-leaf" style="left:94%;width:15px;height:15px;animation-duration:7.5s;animation-delay:-3s" viewBox="0 0 22 22"><path d="M18.5 3.5 C10 3.5 4 8 4 14.5 C4 16 4.4 17.2 5 18 C12.5 18 18.5 12.5 18.5 3.5 Z" fill="#C2763A"/><path d="M3 19.5 C7 15 10.5 11 15 7" stroke="#6B4A2E" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>
     </div>
-    <h1 class="hero-wordmark">Playroute <span class="hero-beta">Beta</span><svg class="fall-pumpkin fall-only" viewBox="0 0 22 22" aria-hidden="true"><ellipse cx="7.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="14.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="11" cy="13" rx="4.2" ry="6" fill="#D08546"/><path d="M11 7.5 C11 5.5 11.5 3.8 13 2.8" stroke="#6B7A45" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></h1>
+    <h1 class="hero-wordmark">Playroute <span class="hero-beta">Beta</span><svg class="fall-pumpkin fall-only" viewBox="0 0 22 22" aria-hidden="true"><ellipse cx="7.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="14.5" cy="13" rx="4.5" ry="5.5" fill="#C2763A"/><ellipse cx="11" cy="13" rx="4.2" ry="6" fill="#D08546"/><path d="M11 7.5 C11 5.5 11.5 3.8 13 2.8" stroke="#6B7A45" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><svg class="fall-pumpkin harvest-wheat" viewBox="0 0 22 22" aria-hidden="true"><path d="M11 21V6" stroke="#B8862F" stroke-width="1.5" stroke-linecap="round"/><g fill="#E0BA62"><ellipse cx="11" cy="4" rx="1.6" ry="2.6"/><ellipse cx="8.3" cy="8" rx="1.5" ry="2.5" transform="rotate(-30 8.3 8)"/><ellipse cx="13.7" cy="8" rx="1.5" ry="2.5" transform="rotate(30 13.7 8)"/><ellipse cx="8.3" cy="12" rx="1.5" ry="2.5" transform="rotate(-30 8.3 12)"/><ellipse cx="13.7" cy="12" rx="1.5" ry="2.5" transform="rotate(30 13.7 12)"/></g></svg></h1>
     <p class="sr-only">Find things to do with kids in Boulder, Lafayette, Erie, Louisville, Longmont, Superior, Broomfield, and Mead, Colorado — storytimes, playgrounds, hikes, farmers markets, and family events updated daily.</p>
   </div>
 
