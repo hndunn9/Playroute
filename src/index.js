@@ -1017,17 +1017,22 @@ const JCPL_BRANCH = "ARBA";
 const JCPL_HORIZON_DAYS = 30;
 const JCPL_MAX_PAGES = 80;
 
-async function fetchAndScanJcplArvada() {
+// Through Browser Run each page costs ~11 s (1 request / 10 s), so a blocked run
+// reads only the first pages (soonest events) instead of all ~80.
+const JCPL_MAX_PAGES_VIA_BROWSER = 8;
+async function fetchAndScanJcplArvada(env) {
   const today = toMountainDateStr(new Date());
   const horizon = toMountainDateStr(new Date(Date.now() + JCPL_HORIZON_DAYS * 864e5));
-  const headers = { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)", Accept: "application/json" };
+  const headers = { Accept: "application/json", Origin: "https://jeffcolibrary.bibliocommons.com", Referer: "https://jeffcolibrary.bibliocommons.com/v2/events" };
+  let viaBrowser = false;
   const getPage = async (page) => {
-    const res = await fetch(`${JCPL_GATEWAY}&page=${page}`, { headers, signal: AbortSignal.timeout(15000) });
-    if (!res.ok) throw new Error(`JCPL events API failed: ${res.status}`);
-    return res.json();
+    const r = await fetchTextWithFallback(env, `${JCPL_GATEWAY}&page=${page}`, headers, "JCPL events API");
+    if (r.viaBrowser) viaBrowser = true;
+    try { return JSON.parse(r.text); } catch { throw new Error(`JCPL events API returned non-JSON: ${r.text.slice(0, 200)}`); }
   };
   const first = await getPage(1);
-  const pages = Math.min((first.events && first.events.pagination && first.events.pagination.pages) || 1, JCPL_MAX_PAGES);
+  const pages = Math.min((first.events && first.events.pagination && first.events.pagination.pages) || 1,
+    viaBrowser ? JCPL_MAX_PAGES_VIA_BROWSER : JCPL_MAX_PAGES);
   const audienceNames = {};
   const all = [];
   let branchEvents = 0;
@@ -1038,8 +1043,10 @@ async function fetchAndScanJcplArvada() {
   };
   take(first);
   const rest = Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2);
-  for (let i = 0; i < rest.length; i += 6) {
-    const batch = await Promise.all(rest.slice(i, i + 6).map((p) => getPage(p).catch(() => null)));
+  // Browser Run is serialized anyway (one request per ~11 s), so go one page at a time there.
+  const step = viaBrowser ? 1 : 6;
+  for (let i = 0; i < rest.length; i += step) {
+    const batch = await Promise.all(rest.slice(i, i + step).map((p) => getPage(p).catch(() => null)));
     batch.forEach((d) => d && take(d));
   }
 
@@ -1082,7 +1089,7 @@ async function fetchAndScanJcplArvada() {
   return out;
 }
 
-SOURCE_RUNNERS.jcpl_arvada = async () => fetchAndScanJcplArvada();
+SOURCE_RUNNERS.jcpl_arvada = async (env) => fetchAndScanJcplArvada(env);
 
 // --- Longmont Public Library (WordPress "Events Calendar"-family plugin) --
 // Source: https://longmontcolorado.gov/events/category/library/
@@ -1975,6 +1982,27 @@ const ICLASSPRO_HEADERS = {
   Origin: "https://portal.iclasspro.com",
   Referer: "https://portal.iclasspro.com/athleticadventures/"
 };
+// Feeds that started blocking Worker traffic (Nov 2026: Boulder Communico 451,
+// JCPL BiblioCommons 403). Try a normal browser-like request first; on a block
+// status, load the URL through Browser Run (different egress) and return the
+// page text. Chrome wraps JSON in <pre>; XML comes back as the document source.
+const BLOCK_STATUSES = new Set([401, 403, 429, 451]);
+const BROWSERLIKE_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+async function fetchTextWithFallback(env, url, headers = {}, label = "feed") {
+  const res = await fetch(url, { headers: { "User-Agent": BROWSERLIKE_UA, ...headers }, signal: AbortSignal.timeout(20000) });
+  if (res.ok) return { text: await res.text(), viaBrowser: false };
+  if (!BLOCK_STATUSES.has(res.status)) throw new Error(`${label} returned ${res.status}`);
+  let html;
+  try {
+    html = String(await browserRun(env, "content", { url }) || "");
+  } catch (e) {
+    throw new Error(`${label} returned ${res.status}; Browser Run fallback failed: ${e.message}`);
+  }
+  const pre = html.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i);
+  const text = pre ? pre[1].replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&amp;/g, "&") : html;
+  if (!text.trim()) throw new Error(`${label} returned ${res.status}; Browser Run fallback came back empty`);
+  return { text, viaBrowser: true };
+}
 async function fetchIClassProJson(env, url) {
   const res = await fetch(url, { headers: ICLASSPRO_HEADERS });
   if (res.ok) return res.json();
@@ -2047,7 +2075,7 @@ SOURCE_RUNNERS.athletic_adventures = async (env) => fetchAndScanAthleticAdventur
 const WARRIOR_EVENTS_URL = "https://www.warriorplayground.com/events";
 const WARRIOR_DROPINS = [
   { title: "Parents Night Out", nameRe: /parents?['’]?\s*night\s*out/i, ages: [5, 13], defaultTime: "18:00", url: "https://warriorplayground.pike13.com/group_classes/305466" },
-  { title: "Community Night", nameRe: /community\s*(course\s*)?night|compunity/i, ages: [5, 18], defaultTime: "18:00", url: WARRIOR_EVENTS_URL }
+  { title: "Community Night", nameRe: /community\s*(course\s*)?night|compunity/i, ages: [5, 18], defaultTime: "18:00", url: "https://www.warriorplayground.com/" }
 ];
 const ORDINAL_WORDS = { "1st": "first", first: "first", "2nd": "second", second: "second", "3rd": "third", third: "third", "4th": "fourth", fourth: "fourth", last: "last" };
 function parseTimeLabel(txt) {
@@ -2059,10 +2087,24 @@ function parseTimeLabel(txt) {
   if (ap === "a" && h === 12) h = 0;
   return `${String(h).padStart(2, "0")}:${m[2] || "00"}`;
 }
+// The /events page 404'd on Nov 8 2026 (site redesign). Read every page that
+// still answers and search them all for the drop-in names; only error if none load.
+const WARRIOR_PAGES = [WARRIOR_EVENTS_URL, "https://www.warriorplayground.com/", "https://www.warriorplayground.com/calendar",
+  "https://www.warriorplayground.com/special-events", "https://warriorplayground.pike13.com/group_classes/305466"];
 async function fetchAndScanWarriorPlayground() {
-  const res = await fetch(WARRIOR_EVENTS_URL, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" } });
-  if (!res.ok) throw new Error(`Warrior Playground events page: ${res.status}`);
-  const text = stripHtmlToText(await res.text());
+  const statuses = [];
+  const texts = await Promise.all(WARRIOR_PAGES.map(async (u) => {
+    try {
+      const r = await fetch(u, { headers: { "User-Agent": BROWSERLIKE_UA }, signal: AbortSignal.timeout(15000) });
+      statuses.push(`${u.replace(/^https:\/\//, "")} ${r.status}`);
+      return r.ok ? stripHtmlToText(await r.text()) : "";
+    } catch (e) { statuses.push(`${u.replace(/^https:\/\//, "")} ${e.message}`); return ""; }
+  }));
+  const text = texts.filter(Boolean).join("\n");
+  if (!text) throw new Error(`Warrior Playground: no page loaded (${statuses.join("; ")})`);
+  if (!WARRIOR_DROPINS.some((p) => p.nameRe.test(text))) {
+    throw new Error(`Warrior Playground: pages load but none mention Parents Night Out or Community Night (${statuses.join("; ")})`);
+  }
   const out = [];
   const now = new Date();
   for (const p of WARRIOR_DROPINS) {
@@ -2075,8 +2117,8 @@ async function fetchAndScanWarriorPlayground() {
         source: "Warrior Playground", city: "Longmont", category: "rec", cost: "paid",
         age_min: p.ages[0], age_max: p.ages[1], day_of_week: "Friday",
         start_time: p.defaultTime, display_time: "See note", recurrence: "weekly",
-        note: `The events page no longer says which week ${p.title} runs. Check ${WARRIOR_EVENTS_URL} and add it by hand.`,
-        source_url: WARRIOR_EVENTS_URL, raw_excerpt: chunk.slice(0, 300) || text.slice(0, 300)
+        note: `The events page no longer says which week ${p.title} runs. Check https://www.warriorplayground.com/ and add it by hand.`,
+        source_url: "https://www.warriorplayground.com/", raw_excerpt: chunk.slice(0, 300) || text.slice(0, 300)
       });
       continue;
     }
@@ -3905,7 +3947,7 @@ function boulderBranchUrl(location) {
   return `https://calendar.boulderlibrary.org/events/?l=${encodeURIComponent(location || "Main Library").replace(/%20/g, "+")}`;
 }
 
-async function fetchBoulderCommunico() {
+async function fetchBoulderCommunico(env) {
   const now = new Date();
   const today = toMountainDateStr(now);
   const horizon = toMountainDateStr(new Date(now.getTime() + BOULDER_HORIZON_DAYS * 864e5));
@@ -3914,11 +3956,9 @@ async function fetchBoulderCommunico() {
   for (const offset of BOULDER_WINDOW_STARTS) {
     if (furthestSeen >= horizon) break; // earlier window already reached the horizon
     const start = toMountainDateStr(new Date(now.getTime() + offset * 864e5));
-    const res = await fetch(`${BOULDER_COMMUNICO_URL}?start=${start}`, {
-      headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" }
-    });
-    if (!res.ok) throw new Error(`Boulder Communico export returned ${res.status} (start=${start})`);
-    const xml = await res.text();
+    const { text: xml } = await fetchTextWithFallback(env, `${BOULDER_COMMUNICO_URL}?start=${start}`,
+      { Accept: "application/xml,text/xml;q=0.9,*/*;q=0.8", Referer: "https://calendar.boulderlibrary.org/" },
+      `Boulder Communico export (start=${start})`);
     const eventRe = /<event>([\s\S]*?)<\/event>/g;
     let m;
     while ((m = eventRe.exec(xml)) !== null) {
@@ -3975,8 +4015,8 @@ async function fetchBoulderCommunico() {
   if (candidates.length === 0) throw new Error("Boulder Communico export returned no kid events across all windows");
   return candidates;
 }
-SOURCE_RUNNERS.boulder_ical = async () => fetchBoulderCommunico();
-SOURCE_RUNNERS.boulder_communico = async () => fetchBoulderCommunico();
+SOURCE_RUNNERS.boulder_ical = async (env) => fetchBoulderCommunico(env);
+SOURCE_RUNNERS.boulder_communico = async (env) => fetchBoulderCommunico(env);
 SOURCE_RUNNERS.erie_ical = async () => {
   const lib = ICAL_LIBRARIES.find((l) => l.city === "Erie");
   return fetchAndNormalizeICalFeed(lib.url, lib.city, { trustSourceFilter: lib.trustSourceFilter });

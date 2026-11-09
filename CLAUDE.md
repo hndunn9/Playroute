@@ -145,6 +145,12 @@ keep reads proportional to traffic:
   (`wlExtractWithCloudflareAI`, `env.AI` binding, else Browser Run `/json`), one week section per
   call; one call over all weeks returned a single session with no time. The reason is logged
   and included in any error. If no clock times render, the error quotes what the browser saw.
+- **Blocked feeds** (Nov 2026): Boulder Communico started returning 451 and the JCPL BiblioCommons gateway 403 to
+  Worker fetches. Both now go through `fetchTextWithFallback(env, url, headers, label)`: browser-like headers first,
+  then Browser Run `/content` on 401/403/429/451 (JSON is unwrapped from Chrome's `<pre>`). Through Browser Run JCPL
+  reads at most `JCPL_MAX_PAGES_VIA_BROWSER` (8) pages, one at a time, so a blocked week covers the soonest events.
+  Warrior Playground's `/events` page 404'd; the runner now reads every page in `WARRIOR_PAGES` that loads (homepage,
+  calendar, Pike13 class page) and only errors when none load or none mention the drop-ins.
 - **Subrequest budget:** `runSources` preloads seen dedup keys and a live-events index once per
   run (`preloadIngestIndex`) and checks duplicates in memory, so a run costs ~1 D1 call per NEW
   item instead of ~5 per candidate. Verification only judges live events up to the feed's
