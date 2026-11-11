@@ -28,7 +28,9 @@ keep reads proportional to traffic:
   when a view opens; refresh on a button.
 - **Cache read-heavy GETs.** New aggregate/report endpoints go in `EDGE_CACHE_TTLS`
   (`src/index.js`). `?fresh=1` bypasses. Don't cache endpoints that must reflect a write
-  immediately (`/api/pending-events`).
+  immediately (`/api/pending-events`, `/api/sources`: a new source must show its Run button right away).
+- **New `scrape_sources` rows for a new runner go in BEFORE the merge** (a Run before deploy just says
+  "no runner"; scheduled runs wait for their cadence), so the Run button is there as soon as the code ships.
 - **Index what you filter on.** Any new `WHERE`/`JOIN` on a growing table (page_views,
   link_clicks, events, pending_events, search_queries) needs an index; add it to a migration.
   Existing ones: `migrations/2026-10-02-read-indexes.sql`.

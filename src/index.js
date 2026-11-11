@@ -7236,7 +7236,6 @@ const EDGE_CACHE_TTLS = {
   "/api/manual-source-gaps": 900,
   "/api/recommended-experiment": 300,
   "/api/card-experiment": 300,
-  "/api/sources": 120,
   "/api/picks": 300,
   "/sitemap.xml": 3600,
   "/llms.txt": 3600
