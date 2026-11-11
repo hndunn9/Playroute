@@ -2188,6 +2188,20 @@ const WELLNESSLIVING_STUDIOS = {
     familyOnly: false, // everything they run is family programming
     linkFallback: "https://raisingparentsco.com/calendar",
     pageWeeks: 5 // the widget shows one week at a time; page through ~a month
+  },
+  // Sawyer (hisawyer.com) is a JS-rendered booking widget with no public API,
+  // so it goes through the same render-then-extract path. The widget URL is
+  // the page itself (no iframe lookup). Open play is sold in time slots, so
+  // slots with the same title on one day merge into one listing.
+  little_grove: {
+    url: "https://www.hisawyer.com/little-grove-1/schedules/widget_calendar?schedule_id=drop-ins",
+    source: "Little Grove",
+    city: "Erie",
+    familyOnly: false,
+    direct: true,
+    mergeDailySlots: true,
+    ages: [0, 7],
+    linkFallback: "https://www.hisawyer.com/little-grove-1/schedules/widget_calendar?schedule_id=drop-ins"
   }
 };
 // Only kid/caregiver offerings belong on Playroute; this studio's list is
@@ -2497,7 +2511,7 @@ async function wlExtractWithCloudflareAI(env, markdown, today) {
 async function scrapeWellnessLivingStudio(env, key) {
   const cfg = WELLNESSLIVING_STUDIOS[key];
   if (!env) throw new Error("env required for Browser Run");
-  const { frameUrl } = await findWellnessLivingFrame(env, cfg.url);
+  const { frameUrl } = cfg.direct ? { frameUrl: null } : await findWellnessLivingFrame(env, cfg.url);
   const target = cfg.frameUrl || frameUrl || cfg.url;
   const today = toMountainDateStr(new Date());
   // Render the widget to Markdown (deterministic, no AI). The widget fetches
@@ -2542,6 +2556,7 @@ async function scrapeWellnessLivingStudio(env, key) {
     items = await wlExtractWithCloudflareAI(env, markdown, today);
     extractNote += ` Cloudflare AI read ${items.length} session(s).`;
   }
+  if (cfg.mergeDailySlots) items = mergeDailySlots(items);
   if (items.length === 0) {
     throw new Error(`Schedule rendered at ${target.slice(0, 120)} but no sessions were extracted. ${extractNote} ${pagerNote} Browser saw: ${wlSnippet(markdown)}`);
   }
@@ -2562,7 +2577,7 @@ async function scrapeWellnessLivingStudio(env, key) {
     const end = wlParseTime(it.end_time);
     const firstDay = DAY_NAMES[new Date(`${it.first_date}T12:00:00Z`).getUTCDay()];
     const isSeries = last !== it.first_date;
-    const [ageMin, ageMax] = wlAgeRange(blob);
+    const [ageMin, ageMax] = cfg.ages || wlAgeRange(blob);
     const price = String(it.price || "").trim();
     const isFree = /\bfree\b/i.test(price) && !/\$\s*[1-9]/.test(price);
     const note = [String(it.description || "").trim(), price].filter(Boolean).join(" ");
@@ -2597,6 +2612,28 @@ async function scrapeWellnessLivingStudio(env, key) {
 }
 SOURCE_RUNNERS.louisville_community_yoga = async (env) => runWellnessLivingStudio(env, "louisville_community_yoga");
 SOURCE_RUNNERS.raising_parents = async (env) => runWellnessLivingStudio(env, "raising_parents");
+SOURCE_RUNNERS.little_grove = async (env) => runWellnessLivingStudio(env, "little_grove");
+
+// Booking widgets list open play as back-to-back slots (9:00, 10:00, ...).
+// One listing per title per day: earliest start to latest end.
+function mergeDailySlots(items) {
+  const groups = new Map();
+  for (const it of items) {
+    const title = String(it.title || "").trim();
+    const start = wlParseTime(it.start_time);
+    if (!title || !start || !it.first_date || (it.last_date && it.last_date !== it.first_date)) {
+      groups.set(Symbol(), it);
+      continue;
+    }
+    const k = `${title.toLowerCase()}|${it.first_date}`;
+    const g = groups.get(k);
+    const end = wlParseTime(it.end_time);
+    if (!g) { groups.set(k, { ...it, title, start_time: start, end_time: end || "" }); continue; }
+    if (start < g.start_time) g.start_time = start;
+    if (end && (!g.end_time || end > g.end_time)) g.end_time = end;
+  }
+  return [...groups.values()];
+}
 
 
 const CORS_HEADERS = {
