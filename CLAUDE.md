@@ -226,6 +226,8 @@ keep reads proportional to traffic:
   day-by-day list still comes from digest-rules.js and is rebuilt fresh at send time. Each send is logged in
   `newsletter_sends` (Resend id + variant, no emails); `/api/resend-webhook` (Svix-signed, `RESEND_WEBHOOK_SECRET`)
   writes delivered/opened/clicked to `newsletter_events`. Judge tests on click rate, read at 80% like the app test.
+  The agent submits via the `submit_draft` tool with `tool_choice: auto` + an instruction: Sonnet 5.5 returns 400 for a forced
+  `tool_choice` (`tool`/`any`). Text parsing (`parseAgentReply`) is the fallback.
   Run `node src/newsletter-agent-eval.js` after changing the helpers.
 - **Search** (`public/index.html`): `SEARCH_ALIASES` rewrites zip codes to towns and "north boulder" to "nobo". When a
   query matches nothing at all (ignoring filters), `correctSearch` swaps each unknown word for the closest word in the

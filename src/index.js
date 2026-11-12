@@ -5291,13 +5291,16 @@ async function callNewsletterAgent(env, input) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    // Forced tool call: the API hands back the draft as parsed JSON, so a stray
-    // quote in an event title can't break it. (Nov 5 2026: a free-text reply
-    // with an unescaped quote failed JSON.parse and the week fell back to the
-    // rules-only draft.) Text parsing stays as a fallback.
+    // Tool call: the API hands back the draft as parsed JSON, so a stray quote
+    // in an event title can't break it (Nov 5 2026: a free-text reply with an
+    // unescaped quote failed JSON.parse). The tool is offered with
+    // tool_choice "auto" plus an instruction to use it: Sonnet 5.5 rejects a
+    // forced choice ({type:"tool"} / "any") with a 400, which skipped the
+    // agent for the Nov 15 issue. Text parsing stays as a fallback.
     body: JSON.stringify({
-      model: NEWSLETTER_MODEL, max_tokens: 2000, system,
-      tools: [NEWSLETTER_DRAFT_TOOL], tool_choice: { type: "tool", name: NEWSLETTER_DRAFT_TOOL.name },
+      model: NEWSLETTER_MODEL, max_tokens: 4000,
+      system: `${system}\n\nSubmit your draft by calling the ${NEWSLETTER_DRAFT_TOOL.name} tool exactly once. Do not reply with prose.`,
+      tools: [NEWSLETTER_DRAFT_TOOL], tool_choice: { type: "auto" },
       messages: [{ role: "user", content: user }]
     })
   });
