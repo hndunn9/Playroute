@@ -137,11 +137,8 @@ keep reads proportional to traffic:
   `browserRun()` spaces calls 11 s apart and retries a 429 once. Results are cached
   for 10 min so verification doesn't re-scrape.
   Each studio in `WELLNESSLIVING_STUDIOS` sets `familyOnly` (keyword filter on/off).
-  **Little Grove** (`little_grove`, Erie) uses the same path for its Sawyer (hisawyer.com) drop-in calendar: `direct: true`
-  skips the iframe lookup, `mergeDailySlots` folds same-title slots on one day into one listing, `ages` fixes 0–7.
-  Sawyer never reaches networkidle0 (open analytics/chat connections), so it renders with `gotoWait: "networkidle2"`
-  (30 s) + 6 s settle, a 40 s extraction timeout, and an 85 s `deadlineMs` that fails with the stuck step named. The admin
-  Run goes through Cloudflare's 100 s request limit; past it the browser shows "Failed to fetch" and nothing is logged.
+  Slow Browser Run sources can set `gotoWait`/`gotoTimeoutMs`/`settleMs`/`extractTimeoutMs`/`deadlineMs`: the admin Run goes
+  through Cloudflare's 100 s request limit, and past it the browser shows "Failed to fetch" with nothing logged.
   `/internal/run-source` skips verification when the run errored.
   A run that drops every event throws with the drop reasons, so it never reports "ok, 0 found".
   Flow: `/scrape` finds the widget iframe, `/markdown` renders it (networkidle0 + 5 s wait;
@@ -157,6 +154,9 @@ keep reads proportional to traffic:
   Worker fetches. Both now go through `fetchTextWithFallback(env, url, headers, label)`: browser-like headers first,
   then Browser Run `/content` on 401/403/429/451 (JSON is unwrapped from Chrome's `<pre>`). Through Browser Run JCPL
   reads at most `JCPL_MAX_PAGES_VIA_BROWSER` (8) pages, one at a time, so a blocked week covers the soonest events.
+  - **Little Grove** (`little_grove`, Erie, Nov 2026): reads littlegroveerie.com (plain HTML: open play hours + weekly programs), not
+    the Sawyer widget, which never settled in Browser Run. Claude (Cloudflare AI fallback) turns it into one weekly candidate per
+    weekday (`lgCandidates`); alternate-week programs are skipped (weekly rows can't say biweekly). Links go to Sawyer for booking.
   Warrior Playground's `/events` page 404'd; the runner now reads every page in `WARRIOR_PAGES` that loads (homepage,
   calendar, Pike13 class page) and only errors when none load or none mention the drop-ins.
 - **Subrequest budget:** `runSources` preloads seen dedup keys and a live-events index once per
