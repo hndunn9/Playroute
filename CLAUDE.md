@@ -139,7 +139,7 @@ keep reads proportional to traffic:
   Each studio in `WELLNESSLIVING_STUDIOS` sets `familyOnly` (keyword filter on/off).
   **Little Grove** (`little_grove`, Erie) reads ONLY its Sawyer drop-in calendar (owner's call: not the website text). `direct: true`
   (no iframe), phone-size `viewport` (Sawyer's date-grouped list), `useExtractedAges` (Sawyer's "0 mo – 1 yrs"), each session
-  queued as a dated item (start time only; Sawyer shows no end times).
+  queued as a dated item (start time only; Sawyer shows no end times). `horizonDays: 7`: only the next week is extracted/queued.
   Slow Browser Run sources can set `gotoWait`/`gotoTimeoutMs`/`settleMs`/`extractTimeoutMs`/`deadlineMs`: the admin Run goes
   through Cloudflare's 100 s request limit, and past it the browser shows "Failed to fetch" with nothing logged.
   `/internal/run-source` skips verification when the run errored.

@@ -2216,6 +2216,7 @@ const WELLNESSLIVING_STUDIOS = {
     settleMs: 6000,
     extractTimeoutMs: 40000,
     deadlineMs: 85000,
+    horizonDays: 7, // owner: keep it short -- next week only, which also keeps extraction fast
     linkFallback: "https://www.hisawyer.com/little-grove-1/schedules/widget_calendar?schedule_id=drop-ins"
   }
 };
@@ -2445,6 +2446,12 @@ function wlWeekPagerScript(weeks) {
 // reading a schedule; it gets today's date so it can resolve WellnessLiving's
 // year-less headings ("Mon, Sep 28").
 const WL_EXTRACT_MODEL = "claude-sonnet-5-5";
+// "YYYY-MM-DD" + n days, in plain calendar math (no time zone drift).
+function addDaysStr(ymd, n) {
+  const d = new Date(`${ymd}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
 const WL_TIME_RE = /\b\d{1,2}:\d{2}\s*[ap]\.?m\b/i;
 
 async function wlExtractWithClaude(env, cfg, markdown, today) {
@@ -2459,7 +2466,7 @@ async function wlExtractWithClaude(env, cfg, markdown, today) {
       messages: [{ role: "user", content:
 `Today is ${today} (US Mountain Time). Below is the rendered schedule for ${cfg.source} in ${cfg.city}, Colorado.
 
-List every upcoming session shown in the schedule itself (not filter lists or menus). The text may contain several \"=== WEEK n: <date range> ===\" sections, one per week of the calendar; use each section's date range to resolve that section's day headings to full dates, and list a session once even if it appears in two sections. Where a day heading omits the year, resolve it to the next occurrence on or after today. Use only times actually shown. Set last_date equal to first_date unless that specific listing explicitly says it repeats through a later date.
+List every upcoming session shown in the schedule itself (not filter lists or menus)${cfg.horizonDays ? `, dated from ${today} through ${addDaysStr(today, cfg.horizonDays - 1)} only` : ""}. The text may contain several \"=== WEEK n: <date range> ===\" sections, one per week of the calendar; use each section's date range to resolve that section's day headings to full dates, and list a session once even if it appears in two sections. Where a day heading omits the year, resolve it to the next occurrence on or after today. Use only times actually shown. Set last_date equal to first_date unless that specific listing explicitly says it repeats through a later date.
 
 Return {"events":[{"title","first_date":"YYYY-MM-DD","last_date":"YYYY-MM-DD","weekday","start_time":"HH:MM 24h","end_time":"HH:MM 24h","price","age_min","age_max","description","link"}]}. Copy titles exactly as shown. age_min/age_max are whole years from an age range shown on the session (e.g. "0 mo – 1 yrs" = 0 and 1, "1 – 7 yrs" = 1 and 7); leave them out if none is shown. Copy price text exactly (e.g. "$12/class", "Free"). Skip sessions marked Closed only if their time has already passed today. Return {"events":[]} if no sessions are shown.
 
@@ -2589,7 +2596,7 @@ async function scrapeWellnessLivingStudio(env, key, stage = {}) {
   }
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/, TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const out = [];
-  const dropped = { notFamily: 0, virtual: 0, badDate: 0, past: 0, noTime: 0 };
+  const dropped = { notFamily: 0, virtual: 0, badDate: 0, past: 0, beyondHorizon: 0, noTime: 0 };
   for (const it of items) {
     const title = String(it.title || "").trim();
     const blob = `${title} ${it.description || ""}`;
@@ -2599,6 +2606,7 @@ async function scrapeWellnessLivingStudio(env, key, stage = {}) {
     if (!DATE_RE.test(it.first_date || "")) { dropped.badDate++; continue; }
     const last = DATE_RE.test(it.last_date || "") ? it.last_date : it.first_date;
     if (last < today) { dropped.past++; continue; }
+    if (cfg.horizonDays && it.first_date > addDaysStr(today, cfg.horizonDays - 1)) { dropped.beyondHorizon++; continue; }
     const start = wlParseTime(it.start_time);
     if (!start) { dropped.noTime++; continue; } // no reliable time -> skip rather than guess
     const end = wlParseTime(it.end_time);
