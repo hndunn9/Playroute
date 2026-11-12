@@ -2189,18 +2189,34 @@ const WELLNESSLIVING_STUDIOS = {
     linkFallback: "https://raisingparentsco.com/calendar",
     pageWeeks: 5 // the widget shows one week at a time; page through ~a month
   },
-  // Sawyer (hisawyer.com) is a JS-rendered booking widget with no public API,
-  // so it goes through the same render-then-extract path. The widget URL is
-  // the page itself (no iframe lookup). Open play is sold in time slots, so
-  // slots with the same title on one day merge into one listing.
+  // Little Grove (Erie play space, opened 2026-11): only its Sawyer
+  // (hisawyer.com) drop-in calendar, not the website text (owner's call --
+  // Sawyer has the real session names, ages and prices: "Open Play — Morning"
+  // 1–7 yrs $25, "Infant Open Play — Afternoon" 0 mo–1 yrs $12, one-offs like
+  // "Free Mini Play Session"). Sawyer shows start times only. Each session is
+  // queued as a dated item; the review queue groups repeats.
+  // The widget URL is the page itself (no iframe). Rendered at phone size,
+  // where Sawyer shows its date-grouped list rather than a month grid.
+  // Sawyer keeps analytics/chat connections open, so networkidle0 never
+  // settled and the render ate its whole 60 s timeout; with extraction the
+  // admin Run passed Cloudflare's 100 s limit ("Failed to fetch", nothing
+  // logged). networkidle2 tolerates two open connections, and deadlineMs
+  // makes a slow run fail with a recorded error.
   little_grove: {
     url: "https://www.hisawyer.com/little-grove-1/schedules/widget_calendar?schedule_id=drop-ins",
     source: "Little Grove",
     city: "Erie",
     familyOnly: false,
     direct: true,
-    mergeDailySlots: true,
-    ages: [0, 7],
+    useExtractedAges: true,
+    defaultAges: [0, 7],
+    viewport: { width: 430, height: 2400, deviceScaleFactor: 1 },
+    gotoWait: "networkidle2",
+    gotoTimeoutMs: 30000,
+    settleMs: 6000,
+    extractTimeoutMs: 40000,
+    deadlineMs: 85000,
+    horizonDays: 7, // owner: keep it short -- next week only, which also keeps extraction fast
     linkFallback: "https://www.hisawyer.com/little-grove-1/schedules/widget_calendar?schedule_id=drop-ins"
   }
 };
@@ -2319,7 +2335,15 @@ const wlResultCache = new Map();
 async function runWellnessLivingStudio(env, key) {
   const hit = wlResultCache.get(key);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.events;
-  const events = await scrapeWellnessLivingStudio(env, key);
+  const cfg = WELLNESSLIVING_STUDIOS[key];
+  const stage = { name: "starting", at: Date.now() };
+  const work = scrapeWellnessLivingStudio(env, key, stage);
+  let timer;
+  const events = !cfg.deadlineMs ? await work : await Promise.race([
+    work,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(
+      `Timed out after ${Math.round(cfg.deadlineMs / 1000)} s while ${stage.name} (${Math.round((Date.now() - stage.at) / 1000)} s in that step) at ${cfg.url}`)), cfg.deadlineMs); })
+  ]).finally(() => clearTimeout(timer));
   wlResultCache.set(key, { at: Date.now(), events });
   return events;
 }
@@ -2422,11 +2446,18 @@ function wlWeekPagerScript(weeks) {
 // reading a schedule; it gets today's date so it can resolve WellnessLiving's
 // year-less headings ("Mon, Sep 28").
 const WL_EXTRACT_MODEL = "claude-sonnet-5-5";
+// "YYYY-MM-DD" + n days, in plain calendar math (no time zone drift).
+function addDaysStr(ymd, n) {
+  const d = new Date(`${ymd}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
 const WL_TIME_RE = /\b\d{1,2}:\d{2}\s*[ap]\.?m\b/i;
 
 async function wlExtractWithClaude(env, cfg, markdown, today) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
+    signal: AbortSignal.timeout(cfg.extractTimeoutMs || 90000),
     headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: WL_EXTRACT_MODEL,
@@ -2435,9 +2466,9 @@ async function wlExtractWithClaude(env, cfg, markdown, today) {
       messages: [{ role: "user", content:
 `Today is ${today} (US Mountain Time). Below is the rendered schedule for ${cfg.source} in ${cfg.city}, Colorado.
 
-List every upcoming session shown in the schedule itself (not filter lists or menus). The text may contain several \"=== WEEK n: <date range> ===\" sections, one per week of the calendar; use each section's date range to resolve that section's day headings to full dates, and list a session once even if it appears in two sections. Where a day heading omits the year, resolve it to the next occurrence on or after today. Use only times actually shown. Set last_date equal to first_date unless that specific listing explicitly says it repeats through a later date.
+List every upcoming session shown in the schedule itself (not filter lists or menus)${cfg.horizonDays ? `, dated from ${today} through ${addDaysStr(today, cfg.horizonDays - 1)} only` : ""}. The text may contain several \"=== WEEK n: <date range> ===\" sections, one per week of the calendar; use each section's date range to resolve that section's day headings to full dates, and list a session once even if it appears in two sections. Where a day heading omits the year, resolve it to the next occurrence on or after today. Use only times actually shown. Set last_date equal to first_date unless that specific listing explicitly says it repeats through a later date.
 
-Return {"events":[{"title","first_date":"YYYY-MM-DD","last_date":"YYYY-MM-DD","weekday","start_time":"HH:MM 24h","end_time":"HH:MM 24h","price","description","link"}]}. Return {"events":[]} if no sessions are shown.
+Return {"events":[{"title","first_date":"YYYY-MM-DD","last_date":"YYYY-MM-DD","weekday","start_time":"HH:MM 24h","end_time":"HH:MM 24h","price","age_min","age_max","description","link"}]}. Copy titles exactly as shown. age_min/age_max are whole years from an age range shown on the session (e.g. "0 mo – 1 yrs" = 0 and 1, "1 – 7 yrs" = 1 and 7); leave them out if none is shown. Copy price text exactly (e.g. "$12/class", "Free"). Skip sessions marked Closed only if their time has already passed today. Return {"events":[]} if no sessions are shown.
 
 ---
 ${markdown.slice(0, 120000)}` }]
@@ -2508,8 +2539,9 @@ async function wlExtractWithCloudflareAI(env, markdown, today) {
   });
 }
 
-async function scrapeWellnessLivingStudio(env, key) {
+async function scrapeWellnessLivingStudio(env, key, stage = {}) {
   const cfg = WELLNESSLIVING_STUDIOS[key];
+  const step = (name) => { stage.name = name; stage.at = Date.now(); };
   if (!env) throw new Error("env required for Browser Run");
   const { frameUrl } = cfg.direct ? { frameUrl: null } : await findWellnessLivingFrame(env, cfg.url);
   const target = cfg.frameUrl || frameUrl || cfg.url;
@@ -2519,17 +2551,20 @@ async function scrapeWellnessLivingStudio(env, key) {
   // settle and then a few seconds more before reading the page.
   const markdownBody = {
     url: target,
-    gotoOptions: { waitUntil: "networkidle0", timeout: 60000 }
+    gotoOptions: { waitUntil: cfg.gotoWait || "networkidle0", timeout: cfg.gotoTimeoutMs || 60000 }
   };
+  if (cfg.viewport) markdownBody.viewport = cfg.viewport;
   if (cfg.pageWeeks > 1) {
     // Page through the week view in-browser and capture every week in this
     // one Browser Run call (still 1 request against the 1-per-10 s limit).
     markdownBody.addScriptTag = [{ content: wlWeekPagerScript(cfg.pageWeeks) }];
     markdownBody.waitForSelector = { selector: "#pr-weeks-done", timeout: 55000 };
   } else {
-    markdownBody.waitForTimeout = 5000;
+    markdownBody.waitForTimeout = cfg.settleMs || 5000;
   }
+  step("rendering the page in Browser Run");
   const markdown = String(await browserRun(env, "markdown", markdownBody) || "");
+  step("extracting sessions");
   const pagerNote = (markdown.match(/PAGER:[^\n]*/) || [""])[0];
   // No clock times anywhere means the sessions never rendered (widget blocked
   // headless, or nothing scheduled). Fail loudly with what the browser saw
@@ -2556,13 +2591,12 @@ async function scrapeWellnessLivingStudio(env, key) {
     items = await wlExtractWithCloudflareAI(env, markdown, today);
     extractNote += ` Cloudflare AI read ${items.length} session(s).`;
   }
-  if (cfg.mergeDailySlots) items = mergeDailySlots(items);
   if (items.length === 0) {
     throw new Error(`Schedule rendered at ${target.slice(0, 120)} but no sessions were extracted. ${extractNote} ${pagerNote} Browser saw: ${wlSnippet(markdown)}`);
   }
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/, TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   const out = [];
-  const dropped = { notFamily: 0, virtual: 0, badDate: 0, past: 0, noTime: 0 };
+  const dropped = { notFamily: 0, virtual: 0, badDate: 0, past: 0, beyondHorizon: 0, noTime: 0 };
   for (const it of items) {
     const title = String(it.title || "").trim();
     const blob = `${title} ${it.description || ""}`;
@@ -2572,12 +2606,19 @@ async function scrapeWellnessLivingStudio(env, key) {
     if (!DATE_RE.test(it.first_date || "")) { dropped.badDate++; continue; }
     const last = DATE_RE.test(it.last_date || "") ? it.last_date : it.first_date;
     if (last < today) { dropped.past++; continue; }
+    if (cfg.horizonDays && it.first_date > addDaysStr(today, cfg.horizonDays - 1)) { dropped.beyondHorizon++; continue; }
     const start = wlParseTime(it.start_time);
     if (!start) { dropped.noTime++; continue; } // no reliable time -> skip rather than guess
     const end = wlParseTime(it.end_time);
     const firstDay = DAY_NAMES[new Date(`${it.first_date}T12:00:00Z`).getUTCDay()];
     const isSeries = last !== it.first_date;
-    const [ageMin, ageMax] = cfg.ages || wlAgeRange(blob);
+    let [ageMin, ageMax] = wlAgeRange(blob);
+    if (cfg.useExtractedAges) {
+      const lo = Number(it.age_min), hi = Number(it.age_max);
+      [ageMin, ageMax] = Number.isFinite(lo) && Number.isFinite(hi) && it.age_min !== "" && it.age_max !== "" && hi >= lo && hi <= 18
+        ? [Math.round(lo), Math.max(Math.round(hi), Math.round(lo))]
+        : (cfg.defaultAges || [ageMin, ageMax]);
+    }
     const price = String(it.price || "").trim();
     const isFree = /\bfree\b/i.test(price) && !/\$\s*[1-9]/.test(price);
     const note = [String(it.description || "").trim(), price].filter(Boolean).join(" ");
@@ -2614,26 +2655,6 @@ SOURCE_RUNNERS.louisville_community_yoga = async (env) => runWellnessLivingStudi
 SOURCE_RUNNERS.raising_parents = async (env) => runWellnessLivingStudio(env, "raising_parents");
 SOURCE_RUNNERS.little_grove = async (env) => runWellnessLivingStudio(env, "little_grove");
 
-// Booking widgets list open play as back-to-back slots (9:00, 10:00, ...).
-// One listing per title per day: earliest start to latest end.
-function mergeDailySlots(items) {
-  const groups = new Map();
-  for (const it of items) {
-    const title = String(it.title || "").trim();
-    const start = wlParseTime(it.start_time);
-    if (!title || !start || !it.first_date || (it.last_date && it.last_date !== it.first_date)) {
-      groups.set(Symbol(), it);
-      continue;
-    }
-    const k = `${title.toLowerCase()}|${it.first_date}`;
-    const g = groups.get(k);
-    const end = wlParseTime(it.end_time);
-    if (!g) { groups.set(k, { ...it, title, start_time: start, end_time: end || "" }); continue; }
-    if (start < g.start_time) g.start_time = start;
-    if (end && (!g.end_time || end > g.end_time)) g.end_time = end;
-  }
-  return [...groups.values()];
-}
 
 
 const CORS_HEADERS = {
@@ -7037,7 +7058,9 @@ async function handleInternalRunSource(request, env, url) {
   if (!key) return json({ error: "missing key" }, 400);
   const results = await runSources(env, { sourceKey: key });
   let verification = null;
-  if (url.searchParams.get("verify") === "1") {
+  // A failed run would just fail again inside verification (and a slow
+  // Browser Run source would double its time past the admin's 100 s limit).
+  if (url.searchParams.get("verify") === "1" && !results.some((r) => r.status === "error")) {
     verification = await runSourceVerification(env, null, key).catch((e) => ({ error: String(e) }));
   }
   return json({ source: key, results, verification });
