@@ -2188,6 +2188,35 @@ const WELLNESSLIVING_STUDIOS = {
     familyOnly: false, // everything they run is family programming
     linkFallback: "https://raisingparentsco.com/calendar",
     pageWeeks: 5 // the widget shows one week at a time; page through ~a month
+  },
+  // Little Grove (Erie play space, opened 2026-11): only its Sawyer
+  // (hisawyer.com) drop-in calendar, not the website text (owner's call --
+  // Sawyer has the real session names, ages and prices: "Open Play — Morning"
+  // 1–7 yrs $25, "Infant Open Play — Afternoon" 0 mo–1 yrs $12, one-offs like
+  // "Free Mini Play Session"). Sawyer shows start times only. Each session is
+  // queued as a dated item; the review queue groups repeats.
+  // The widget URL is the page itself (no iframe). Rendered at phone size,
+  // where Sawyer shows its date-grouped list rather than a month grid.
+  // Sawyer keeps analytics/chat connections open, so networkidle0 never
+  // settled and the render ate its whole 60 s timeout; with extraction the
+  // admin Run passed Cloudflare's 100 s limit ("Failed to fetch", nothing
+  // logged). networkidle2 tolerates two open connections, and deadlineMs
+  // makes a slow run fail with a recorded error.
+  little_grove: {
+    url: "https://www.hisawyer.com/little-grove-1/schedules/widget_calendar?schedule_id=drop-ins",
+    source: "Little Grove",
+    city: "Erie",
+    familyOnly: false,
+    direct: true,
+    useExtractedAges: true,
+    defaultAges: [0, 7],
+    viewport: { width: 430, height: 2400, deviceScaleFactor: 1 },
+    gotoWait: "networkidle2",
+    gotoTimeoutMs: 30000,
+    settleMs: 6000,
+    extractTimeoutMs: 40000,
+    deadlineMs: 85000,
+    linkFallback: "https://www.hisawyer.com/little-grove-1/schedules/widget_calendar?schedule_id=drop-ins"
   }
 };
 // Only kid/caregiver offerings belong on Playroute; this studio's list is
@@ -2432,7 +2461,7 @@ async function wlExtractWithClaude(env, cfg, markdown, today) {
 
 List every upcoming session shown in the schedule itself (not filter lists or menus). The text may contain several \"=== WEEK n: <date range> ===\" sections, one per week of the calendar; use each section's date range to resolve that section's day headings to full dates, and list a session once even if it appears in two sections. Where a day heading omits the year, resolve it to the next occurrence on or after today. Use only times actually shown. Set last_date equal to first_date unless that specific listing explicitly says it repeats through a later date.
 
-Return {"events":[{"title","first_date":"YYYY-MM-DD","last_date":"YYYY-MM-DD","weekday","start_time":"HH:MM 24h","end_time":"HH:MM 24h","price","description","link"}]}. Return {"events":[]} if no sessions are shown.
+Return {"events":[{"title","first_date":"YYYY-MM-DD","last_date":"YYYY-MM-DD","weekday","start_time":"HH:MM 24h","end_time":"HH:MM 24h","price","age_min","age_max","description","link"}]}. Copy titles exactly as shown. age_min/age_max are whole years from an age range shown on the session (e.g. "0 mo – 1 yrs" = 0 and 1, "1 – 7 yrs" = 1 and 7); leave them out if none is shown. Copy price text exactly (e.g. "$12/class", "Free"). Skip sessions marked Closed only if their time has already passed today. Return {"events":[]} if no sessions are shown.
 
 ---
 ${markdown.slice(0, 120000)}` }]
@@ -2507,7 +2536,7 @@ async function scrapeWellnessLivingStudio(env, key, stage = {}) {
   const cfg = WELLNESSLIVING_STUDIOS[key];
   const step = (name) => { stage.name = name; stage.at = Date.now(); };
   if (!env) throw new Error("env required for Browser Run");
-  const { frameUrl } = await findWellnessLivingFrame(env, cfg.url);
+  const { frameUrl } = cfg.direct ? { frameUrl: null } : await findWellnessLivingFrame(env, cfg.url);
   const target = cfg.frameUrl || frameUrl || cfg.url;
   const today = toMountainDateStr(new Date());
   // Render the widget to Markdown (deterministic, no AI). The widget fetches
@@ -2517,6 +2546,7 @@ async function scrapeWellnessLivingStudio(env, key, stage = {}) {
     url: target,
     gotoOptions: { waitUntil: cfg.gotoWait || "networkidle0", timeout: cfg.gotoTimeoutMs || 60000 }
   };
+  if (cfg.viewport) markdownBody.viewport = cfg.viewport;
   if (cfg.pageWeeks > 1) {
     // Page through the week view in-browser and capture every week in this
     // one Browser Run call (still 1 request against the 1-per-10 s limit).
@@ -2574,7 +2604,13 @@ async function scrapeWellnessLivingStudio(env, key, stage = {}) {
     const end = wlParseTime(it.end_time);
     const firstDay = DAY_NAMES[new Date(`${it.first_date}T12:00:00Z`).getUTCDay()];
     const isSeries = last !== it.first_date;
-    const [ageMin, ageMax] = wlAgeRange(blob);
+    let [ageMin, ageMax] = wlAgeRange(blob);
+    if (cfg.useExtractedAges) {
+      const lo = Number(it.age_min), hi = Number(it.age_max);
+      [ageMin, ageMax] = Number.isFinite(lo) && Number.isFinite(hi) && it.age_min !== "" && it.age_max !== "" && hi >= lo && hi <= 18
+        ? [Math.round(lo), Math.max(Math.round(hi), Math.round(lo))]
+        : (cfg.defaultAges || [ageMin, ageMax]);
+    }
     const price = String(it.price || "").trim();
     const isFree = /\bfree\b/i.test(price) && !/\$\s*[1-9]/.test(price);
     const note = [String(it.description || "").trim(), price].filter(Boolean).join(" ");
@@ -2609,160 +2645,9 @@ async function scrapeWellnessLivingStudio(env, key, stage = {}) {
 }
 SOURCE_RUNNERS.louisville_community_yoga = async (env) => runWellnessLivingStudio(env, "louisville_community_yoga");
 SOURCE_RUNNERS.raising_parents = async (env) => runWellnessLivingStudio(env, "raising_parents");
-SOURCE_RUNNERS.little_grove = async (env) => runLittleGroveSite(env);
+SOURCE_RUNNERS.little_grove = async (env) => runWellnessLivingStudio(env, "little_grove");
 
 
-
-// Little Grove (Erie play space, opened 2026-11). Its homepage lists open play
-// hours and the weekly programs as plain text ("Mon–Fri: 8:30–12:30pm &
-// 3:30–6:30pm", "Tuesdays: Tiny Makers (Ages 2–4) 10–11:30am"). The Sawyer
-// booking widget is JS-only and wouldn't settle in Browser Run, so read the
-// site instead: one plain fetch, then Claude turns the schedule into weekly
-// sessions (Cloudflare AI if Claude fails). Each weekday becomes its own
-// weekly candidate; "alternate"/"every other" programs are skipped (weekly
-// rows can't say biweekly -- add those by hand). One-off dated sessions stay
-// hand-entered.
-const LITTLE_GROVE = {
-  url: "https://littlegroveerie.com/",
-  bookUrl: "https://www.hisawyer.com/little-grove-1/schedules/widget_calendar?schedule_id=drop-ins",
-  source: "Little Grove",
-  city: "Erie"
-};
-const LG_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const LG_SCHEMA = {
-  type: "object",
-  properties: {
-    sessions: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "e.g. Open Play, Tiny Makers" },
-          days: { type: "array", items: { type: "string", description: "Full weekday name" } },
-          start_time: { type: "string", description: "24-hour HH:MM" },
-          end_time: { type: "string", description: "24-hour HH:MM, empty if not shown" },
-          age_min: { type: "number" },
-          age_max: { type: "number" },
-          every_other_week: { type: "boolean", description: "true for alternate / every-other-week programs" },
-          note: { type: "string", description: "One short sentence from the page, e.g. what it is and who it's for" }
-        },
-        required: ["title", "days", "start_time"]
-      }
-    }
-  },
-  required: ["sessions"]
-};
-function lgPrompt(text) {
-  return `Below is the homepage text of Little Grove, a play space for kids from birth to age 7 in Erie, Colorado.
-List every recurring weekly session it describes:
-1. Open play hours. Each separate time block is its own session titled "Open Play" (a weekday morning block, a weekday afternoon block, weekend hours). Skip times when it is closed.
-2. Each weekly program under its own name (e.g. "Slow Morning Open Play", "Tiny Makers").
-Expand day ranges like "Mon–Fri" into every weekday. Use only times and ages shown on the page; if a program shows no ages use 0 and 7. Mark alternate / every-other-week programs with every_other_week true. Skip parties, camps, memberships and one-time events.
-Reply with only JSON: {"sessions":[{"title","days":["Monday"],"start_time":"HH:MM","end_time":"HH:MM","age_min","age_max","every_other_week","note"}]}
-
----
-${text.slice(0, 30000)}`;
-}
-async function lgExtract(env, text) {
-  let note = "";
-  if (env.ANTHROPIC_API_KEY) {
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        signal: AbortSignal.timeout(40000),
-        headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({
-          model: WL_EXTRACT_MODEL,
-          max_tokens: 3000,
-          system: "You turn a business's posted weekly schedule into JSON. Never invent days, times or ages.",
-          messages: [{ role: "user", content: lgPrompt(text) }]
-        })
-      });
-      if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      const data = await res.json();
-      const reply = (data.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
-      const m = reply.match(/\{[\s\S]*\}/);
-      if (!m) throw new Error(`no JSON in reply: ${reply.slice(0, 150)}`);
-      const parsed = JSON.parse(m[0]);
-      return { sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [], note };
-    } catch (e) {
-      note = `Claude extraction failed (${String(e).slice(0, 160)}); used Cloudflare AI.`;
-      console.warn(`[little_grove] ${note}`);
-    }
-  }
-  if (!env.AI || typeof env.AI.run !== "function") throw new Error(`${note || "No ANTHROPIC_API_KEY."} No Workers AI binding to fall back on.`);
-  const res = await env.AI.run(WL_FALLBACK_MODEL, {
-    messages: [{ role: "system", content: "You turn a posted weekly schedule into JSON. Never invent days, times or ages." }, { role: "user", content: lgPrompt(text) }],
-    response_format: { type: "json_schema", json_schema: LG_SCHEMA },
-    max_tokens: 3000
-  });
-  let body = res && res.response;
-  if (typeof body === "string") { try { body = JSON.parse(body); } catch (e) { body = null; } }
-  return { sessions: body && Array.isArray(body.sessions) ? body.sessions : [], note };
-}
-// Pure: extracted sessions -> weekly candidates (no I/O).
-function lgCandidates(sessions) {
-  const out = [];
-  const dropped = { everyOtherWeek: 0, noTime: 0, badDay: 0 };
-  const seen = new Set();
-  for (const s of sessions) {
-    const title = String(s.title || "").trim();
-    if (!title) continue;
-    if (s.every_other_week || /\b(alternate|every other|biweekly|bi-weekly)\b/i.test(`${title} ${s.note || ""}`)) { dropped.everyOtherWeek++; continue; }
-    const start = wlParseTime(s.start_time);
-    if (!start) { dropped.noTime++; continue; }
-    const end = wlParseTime(s.end_time);
-    const ageMin = Number.isFinite(Number(s.age_min)) ? Math.max(0, Math.round(Number(s.age_min))) : 0;
-    const ageMax = Number.isFinite(Number(s.age_max)) && Number(s.age_max) > 0 ? Math.min(12, Math.round(Number(s.age_max))) : 7;
-    const isOpenPlay = /^open play$/i.test(title);
-    const note = isOpenPlay
-      ? "Drop-in indoor play space for ages 0–7; adults and caregivers free. Book a spot on Sawyer."
-      : `${String(s.note || "").trim() || title}. Free with Little Grove admission.`.replace(/\.\./g, ".");
-    for (const rawDay of Array.isArray(s.days) ? s.days : []) {
-      const day = LG_DAYS.find((d) => d.toLowerCase().startsWith(String(rawDay).trim().toLowerCase().slice(0, 3)));
-      if (!day) { dropped.badDay++; continue; }
-      const k = `${title.toLowerCase()}|${day}|${start}`;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push({
-        title,
-        source: LITTLE_GROVE.source,
-        city: LITTLE_GROVE.city,
-        category: "rec",
-        cost: "paid",
-        age_min: ageMin,
-        age_max: Math.max(ageMin, ageMax),
-        day_of_week: day,
-        start_time: start,
-        display_time: end ? `${wlFmtTime(start)} – ${wlFmtTime(end)}` : wlFmtTime(start),
-        recurrence: "weekly",
-        note: truncateAtBoundary(note, 250),
-        source_url: LITTLE_GROVE.bookUrl,
-        dedup_key: `lg:${title.toLowerCase()}:${day.toLowerCase()}:${start}`,
-        raw_excerpt: JSON.stringify(s).slice(0, 500)
-      });
-    }
-  }
-  return { out, dropped };
-}
-async function runLittleGroveSite(env) {
-  const { text: html, viaBrowser } = await fetchTextWithFallback(env, LITTLE_GROVE.url, {}, "Little Grove site");
-  let text = stripHtmlToText(html);
-  // If the site ever moves to a JS-rendered builder, the plain HTML loses the
-  // schedule; render it once in Browser Run before giving up.
-  if (!/open play/i.test(text) || !/\d{1,2}(:\d{2})?\s*(am|pm)/i.test(text)) {
-    text = String(await browserRun(env, "markdown", { url: LITTLE_GROVE.url, gotoOptions: { waitUntil: "networkidle2", timeout: 30000 } }) || "");
-    if (!/open play/i.test(text)) throw new Error(`No "open play" schedule on ${LITTLE_GROVE.url}${viaBrowser ? " (via Browser Run)" : ""}. Page text: ${wlSnippet(text)}`);
-  }
-  const { sessions, note } = await lgExtract(env, text);
-  if (!sessions.length) throw new Error(`Read ${LITTLE_GROVE.url} but extracted no sessions. ${note} Page text: ${wlSnippet(text)}`);
-  const { out, dropped } = lgCandidates(sessions);
-  if (!out.length) {
-    const why = Object.entries(dropped).filter(([, n]) => n).map(([k, n]) => `${k}: ${n}`).join(", ");
-    throw new Error(`Extracted ${sessions.length} session(s) but none were usable (${why}). ${note} First: ${JSON.stringify(sessions[0]).slice(0, 200)}`);
-  }
-  return out;
-}
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",

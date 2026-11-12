@@ -137,6 +137,9 @@ keep reads proportional to traffic:
   `browserRun()` spaces calls 11 s apart and retries a 429 once. Results are cached
   for 10 min so verification doesn't re-scrape.
   Each studio in `WELLNESSLIVING_STUDIOS` sets `familyOnly` (keyword filter on/off).
+  **Little Grove** (`little_grove`, Erie) reads ONLY its Sawyer drop-in calendar (owner's call: not the website text). `direct: true`
+  (no iframe), phone-size `viewport` (Sawyer's date-grouped list), `useExtractedAges` (Sawyer's "0 mo – 1 yrs"), each session
+  queued as a dated item (start time only; Sawyer shows no end times).
   Slow Browser Run sources can set `gotoWait`/`gotoTimeoutMs`/`settleMs`/`extractTimeoutMs`/`deadlineMs`: the admin Run goes
   through Cloudflare's 100 s request limit, and past it the browser shows "Failed to fetch" with nothing logged.
   `/internal/run-source` skips verification when the run errored.
@@ -154,9 +157,6 @@ keep reads proportional to traffic:
   Worker fetches. Both now go through `fetchTextWithFallback(env, url, headers, label)`: browser-like headers first,
   then Browser Run `/content` on 401/403/429/451 (JSON is unwrapped from Chrome's `<pre>`). Through Browser Run JCPL
   reads at most `JCPL_MAX_PAGES_VIA_BROWSER` (8) pages, one at a time, so a blocked week covers the soonest events.
-  - **Little Grove** (`little_grove`, Erie, Nov 2026): reads littlegroveerie.com (plain HTML: open play hours + weekly programs), not
-    the Sawyer widget, which never settled in Browser Run. Claude (Cloudflare AI fallback) turns it into one weekly candidate per
-    weekday (`lgCandidates`); alternate-week programs are skipped (weekly rows can't say biweekly). Links go to Sawyer for booking.
   Warrior Playground's `/events` page 404'd; the runner now reads every page in `WARRIOR_PAGES` that loads (homepage,
   calendar, Pike13 class page) and only errors when none load or none mention the drop-ins.
 - **Subrequest budget:** `runSources` preloads seen dedup keys and a live-events index once per
