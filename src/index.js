@@ -2201,6 +2201,16 @@ const WELLNESSLIVING_STUDIOS = {
     direct: true,
     mergeDailySlots: true,
     ages: [0, 7],
+    // Sawyer keeps analytics/chat connections open, so networkidle0 never
+    // settles and the render ate its whole 60 s timeout; with extraction the
+    // admin Run passed Cloudflare's 100 s limit ("Failed to fetch", nothing
+    // logged). networkidle2 tolerates two open connections; a hard deadline
+    // makes a slow run fail with a recorded error instead.
+    gotoWait: "networkidle2",
+    gotoTimeoutMs: 30000,
+    settleMs: 6000,
+    extractTimeoutMs: 40000,
+    deadlineMs: 85000,
     linkFallback: "https://www.hisawyer.com/little-grove-1/schedules/widget_calendar?schedule_id=drop-ins"
   }
 };
@@ -2319,7 +2329,15 @@ const wlResultCache = new Map();
 async function runWellnessLivingStudio(env, key) {
   const hit = wlResultCache.get(key);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.events;
-  const events = await scrapeWellnessLivingStudio(env, key);
+  const cfg = WELLNESSLIVING_STUDIOS[key];
+  const stage = { name: "starting", at: Date.now() };
+  const work = scrapeWellnessLivingStudio(env, key, stage);
+  let timer;
+  const events = !cfg.deadlineMs ? await work : await Promise.race([
+    work,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(
+      `Timed out after ${Math.round(cfg.deadlineMs / 1000)} s while ${stage.name} (${Math.round((Date.now() - stage.at) / 1000)} s in that step) at ${cfg.url}`)), cfg.deadlineMs); })
+  ]).finally(() => clearTimeout(timer));
   wlResultCache.set(key, { at: Date.now(), events });
   return events;
 }
@@ -2427,6 +2445,7 @@ const WL_TIME_RE = /\b\d{1,2}:\d{2}\s*[ap]\.?m\b/i;
 async function wlExtractWithClaude(env, cfg, markdown, today) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
+    signal: AbortSignal.timeout(cfg.extractTimeoutMs || 90000),
     headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: WL_EXTRACT_MODEL,
@@ -2508,8 +2527,9 @@ async function wlExtractWithCloudflareAI(env, markdown, today) {
   });
 }
 
-async function scrapeWellnessLivingStudio(env, key) {
+async function scrapeWellnessLivingStudio(env, key, stage = {}) {
   const cfg = WELLNESSLIVING_STUDIOS[key];
+  const step = (name) => { stage.name = name; stage.at = Date.now(); };
   if (!env) throw new Error("env required for Browser Run");
   const { frameUrl } = cfg.direct ? { frameUrl: null } : await findWellnessLivingFrame(env, cfg.url);
   const target = cfg.frameUrl || frameUrl || cfg.url;
@@ -2519,7 +2539,7 @@ async function scrapeWellnessLivingStudio(env, key) {
   // settle and then a few seconds more before reading the page.
   const markdownBody = {
     url: target,
-    gotoOptions: { waitUntil: "networkidle0", timeout: 60000 }
+    gotoOptions: { waitUntil: cfg.gotoWait || "networkidle0", timeout: cfg.gotoTimeoutMs || 60000 }
   };
   if (cfg.pageWeeks > 1) {
     // Page through the week view in-browser and capture every week in this
@@ -2527,9 +2547,11 @@ async function scrapeWellnessLivingStudio(env, key) {
     markdownBody.addScriptTag = [{ content: wlWeekPagerScript(cfg.pageWeeks) }];
     markdownBody.waitForSelector = { selector: "#pr-weeks-done", timeout: 55000 };
   } else {
-    markdownBody.waitForTimeout = 5000;
+    markdownBody.waitForTimeout = cfg.settleMs || 5000;
   }
+  step("rendering the page in Browser Run");
   const markdown = String(await browserRun(env, "markdown", markdownBody) || "");
+  step("extracting sessions");
   const pagerNote = (markdown.match(/PAGER:[^\n]*/) || [""])[0];
   // No clock times anywhere means the sessions never rendered (widget blocked
   // headless, or nothing scheduled). Fail loudly with what the browser saw
@@ -7037,7 +7059,9 @@ async function handleInternalRunSource(request, env, url) {
   if (!key) return json({ error: "missing key" }, 400);
   const results = await runSources(env, { sourceKey: key });
   let verification = null;
-  if (url.searchParams.get("verify") === "1") {
+  // A failed run would just fail again inside verification (and a slow
+  // Browser Run source would double its time past the admin's 100 s limit).
+  if (url.searchParams.get("verify") === "1" && !results.some((r) => r.status === "error")) {
     verification = await runSourceVerification(env, null, key).catch((e) => ({ error: String(e) }));
   }
   return json({ source: key, results, verification });

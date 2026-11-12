@@ -139,6 +139,10 @@ keep reads proportional to traffic:
   Each studio in `WELLNESSLIVING_STUDIOS` sets `familyOnly` (keyword filter on/off).
   **Little Grove** (`little_grove`, Erie) uses the same path for its Sawyer (hisawyer.com) drop-in calendar: `direct: true`
   skips the iframe lookup, `mergeDailySlots` folds same-title slots on one day into one listing, `ages` fixes 0–7.
+  Sawyer never reaches networkidle0 (open analytics/chat connections), so it renders with `gotoWait: "networkidle2"`
+  (30 s) + 6 s settle, a 40 s extraction timeout, and an 85 s `deadlineMs` that fails with the stuck step named. The admin
+  Run goes through Cloudflare's 100 s request limit; past it the browser shows "Failed to fetch" and nothing is logged.
+  `/internal/run-source` skips verification when the run errored.
   A run that drops every event throws with the drop reasons, so it never reports "ok, 0 found".
   Flow: `/scrape` finds the widget iframe, `/markdown` renders it (networkidle0 + 5 s wait;
   studios with `pageWeeks` instead inject `wlWeekPagerScript` to click through that many weeks
