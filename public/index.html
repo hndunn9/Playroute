@@ -118,6 +118,8 @@
   --icon-community: #85759C;
   --icon-market:    var(--ember);
   --icon-rec:       #6E8B8A;
+  /* Snowflake icon for holiday markets / winter events (Nov–Jan). */
+  --icon-winter:       #4F7FA8;
 }
 :root.season-fall{
   --fall-plate:  #211510;
@@ -166,6 +168,7 @@
     --pill-neutral-bg:   #313A34;
     --pill-neutral-text: #A7B0A4;
     --icon-sparkle: #8698D6;
+    --icon-winter:      #9CC3E4;
     --nav-border: rgba(255,255,255,0.14);
   }
 }
@@ -180,6 +183,7 @@
   --pill-neutral-bg:   #313A34;
   --pill-neutral-text: #A7B0A4;
   --icon-sparkle: #8698D6;
+  --icon-winter:      #9CC3E4;
   --nav-border: rgba(255,255,255,0.14);
 }
 .sr-only{
@@ -1360,11 +1364,15 @@ const blazes = {
   flower: `<circle cx="16" cy="11" r="3" fill="#A3852F"/><circle cx="13.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="8.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="6" cy="11" r="3" fill="#A3852F"/><circle cx="8.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="13.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="11" cy="11" r="2.8" fill="#6B5A38"/>`,
   music: `<ellipse cx="7" cy="17" rx="3" ry="2.3" fill="#8A6A9E"/><rect x="9.6" y="3" width="1.8" height="14" fill="#8A6A9E"/><polygon points="9.6,3 15,5 15,8 9.6,6" fill="#8A6A9E"/>`,
   splash: `<path d="M11 3 C8 8 4 12.5 4 16 A7 7 0 0 0 18 16 C18 12.5 14 8 11 3 Z" fill="#5B84A0"/>`,
+  winter: `<g stroke="var(--icon-winter)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none"><g><line x1="11" y1="2" x2="11" y2="19"/><polyline points="8.4,3.9 11,6.3 13.6,3.9"/><polyline points="8.4,17.1 11,14.7 13.6,17.1"/></g><g transform="rotate(60 11 10.5)"><line x1="11" y1="2" x2="11" y2="19"/><polyline points="8.4,3.9 11,6.3 13.6,3.9"/><polyline points="8.4,17.1 11,14.7 13.6,17.1"/></g><g transform="rotate(120 11 10.5)"><line x1="11" y1="2" x2="11" y2="19"/><polyline points="8.4,3.9 11,6.3 13.6,3.9"/><polyline points="8.4,17.1 11,14.7 13.6,17.1"/></g></g><circle cx="11" cy="10.5" r="1.6" fill="var(--icon-winter)"/>`,
   sparkleNight: `<polygon points="11,1.5 13.8,8.2 21,10 13.8,11.8 11,18.5 8.2,11.8 1,10 8.2,8.2" fill="var(--icon-sparkle)"/>`
 };
 // Seasonal icons only change the card art -- filtering still uses ev.category.
 // Regexes use word boundaries so "waterfall" or "switch" don't match.
 const SMART_ICON_KEYWORDS = {
+  // Holiday markets, craft fairs, winter fests (Nov–Jan only, see matchEventIcon), first
+  // so "Harvest"/"fall" never wins over a December market.
+  winter: ["holiday market","christmas market","winter market","craft market","craft fair","art market","art fair","artisan market","gift fest","holiday sale","winterfest","winter festival","market fayre","handmade","holiday on the plaza"],
   pumpkin: ["halloween","pumpkin","jack-o","trick-or-treat","trick or treat","trunk-or-treat","trunk or treat","spooky","haunted","boo bash","monster mash","day of the dead","dia de los muertos","día de los muertos","dia de muertos","día de muertos","horror","scary stor","ghost stor",/\bcostume/,/\bwitch/],
   leaf: ["autumn","harvest","fall festival","fall fest","oktoberfest","leaf","leaves",/\bfall\b/],
   flower: ["sunflower","u-pick","tulip","flower field"],
@@ -1372,9 +1380,19 @@ const SMART_ICON_KEYWORDS = {
   splash: ["splash pad","splash park","water park","waterpark","pool party"],
   sparkleNight: ["planetarium","stargaz","star party","night sky"]
 };
+// Month (1–12) of the event's date, or of today for recurring rows.
+function iconMonth(ev){
+  const d = ev.event_date || "";
+  const m = /^\d{4}-(\d{2})-/.exec(d);
+  return m ? Number(m[1]) : new Date().getMonth() + 1;
+}
 function matchEventIcon(ev){
   const title = (ev.title||"").toLowerCase();
   for(const [key, words] of Object.entries(SMART_ICON_KEYWORDS)){
+    // Seasonal art only in season: snowflake Nov–Jan, pumpkin Sep–Oct (a
+    // November "pumpkin pie" event shouldn't wear Halloween art).
+    if(key === "winter" && ![11,12,1].includes(iconMonth(ev))) continue;
+    if(key === "pumpkin" && ![9,10].includes(iconMonth(ev))) continue;
     if(words.some(w => w instanceof RegExp ? w.test(title) : title.includes(w))) return key;
   }
   return ev.category;

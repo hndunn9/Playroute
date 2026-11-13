@@ -245,6 +245,9 @@ keep reads proportional to traffic:
   with a decorative countdown chip (`#winterChip`, text only): "N sleeps till Santa" through the 23rd, "Santa comes
   tonight!" on the 24th, "Happy holidays!" on the 25th (kept religion-neutral on purpose), then "Happy holidays" and no sleigh (`season-winter-after`).
   Reduced motion hides the sleigh and freezes snow. No theme Jan–Aug. Preview `?season=fall|harvest|winter|off`.
+- **Card icons** (`blazes` + `SMART_ICON_KEYWORDS` in public/index.html): title keywords pick seasonal art; the first match wins and
+  filtering still uses `category`. `winter` (snowflake, `--icon-winter`) matches holiday markets/craft fairs/art fairs/gift
+  fests/WinterFest, only for events dated Nov–Jan (`iconMonth`). `pumpkin` only shows Sep–Oct (owner: not in November).
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
 - **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
   A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within
