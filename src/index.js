@@ -2209,6 +2209,11 @@ const WELLNESSLIVING_STUDIOS = {
     familyOnly: false,
     direct: true,
     useExtractedAges: true,
+    // Sawyer titles carry booking instructions ("Afternoon Art - MUST ALSO
+    // BOOK OPEN PLAY"). Owner: distracting in the feed. Strip them from the
+    // title and say it in the description instead.
+    titleSuffixRe: /\s*[-–—:]?\s*must also book open play\s*$/i,
+    titleSuffixNote: "Must also book open play.",
     defaultAges: [0, 7],
     viewport: { width: 430, height: 2400, deviceScaleFactor: 1 },
     gotoWait: "networkidle2",
@@ -2598,7 +2603,12 @@ async function scrapeWellnessLivingStudio(env, key, stage = {}) {
   const out = [];
   const dropped = { notFamily: 0, virtual: 0, badDate: 0, past: 0, beyondHorizon: 0, noTime: 0 };
   for (const it of items) {
-    const title = String(it.title || "").trim();
+    let title = String(it.title || "").trim();
+    let suffixNote = "";
+    if (cfg.titleSuffixRe && cfg.titleSuffixRe.test(title)) {
+      title = title.replace(cfg.titleSuffixRe, "").trim();
+      suffixNote = cfg.titleSuffixNote || "";
+    }
     const blob = `${title} ${it.description || ""}`;
     if (!title) continue;
     if (WL_SKIP_RE.test(title)) { dropped.virtual++; continue; }
@@ -2621,7 +2631,7 @@ async function scrapeWellnessLivingStudio(env, key, stage = {}) {
     }
     const price = String(it.price || "").trim();
     const isFree = /\bfree\b/i.test(price) && !/\$\s*[1-9]/.test(price);
-    const note = [String(it.description || "").trim(), price].filter(Boolean).join(" ");
+    const note = [String(it.description || "").trim(), price, suffixNote].filter(Boolean).join(" ");
     const ev = {
       title,
       source: cfg.source,
