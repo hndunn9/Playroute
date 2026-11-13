@@ -118,6 +118,11 @@
   --icon-community: #85759C;
   --icon-market:    var(--ember);
   --icon-rec:       #6E8B8A;
+  /* Winter market stall icon (holiday markets / craft fairs, Nov–Jan). */
+  --icon-stall-awning: #C0453B;
+  --icon-stall-wood:   #8A5A3C;
+  --icon-stall-snow:   #E6EFF7;
+  --icon-stall-flake:  #5C88B0;
 }
 :root.season-fall{
   --fall-plate:  #211510;
@@ -166,6 +171,8 @@
     --pill-neutral-bg:   #313A34;
     --pill-neutral-text: #A7B0A4;
     --icon-sparkle: #8698D6;
+    --icon-stall-wood:  #B98A66;
+    --icon-stall-flake: #9CC3E4;
     --nav-border: rgba(255,255,255,0.14);
   }
 }
@@ -180,6 +187,8 @@
   --pill-neutral-bg:   #313A34;
   --pill-neutral-text: #A7B0A4;
   --icon-sparkle: #8698D6;
+  --icon-stall-wood:  #B98A66;
+  --icon-stall-flake: #9CC3E4;
   --nav-border: rgba(255,255,255,0.14);
 }
 .sr-only{
@@ -1360,11 +1369,15 @@ const blazes = {
   flower: `<circle cx="16" cy="11" r="3" fill="#A3852F"/><circle cx="13.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="8.5" cy="6.7" r="3" fill="#A3852F"/><circle cx="6" cy="11" r="3" fill="#A3852F"/><circle cx="8.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="13.5" cy="15.3" r="3" fill="#A3852F"/><circle cx="11" cy="11" r="2.8" fill="#6B5A38"/>`,
   music: `<ellipse cx="7" cy="17" rx="3" ry="2.3" fill="#8A6A9E"/><rect x="9.6" y="3" width="1.8" height="14" fill="#8A6A9E"/><polygon points="9.6,3 15,5 15,8 9.6,6" fill="#8A6A9E"/>`,
   splash: `<path d="M11 3 C8 8 4 12.5 4 16 A7 7 0 0 0 18 16 C18 12.5 14 8 11 3 Z" fill="#5B84A0"/>`,
+  winterMarket: `<path d="M2.2 8.2 L4.2 4.6 L13.8 4.6 L15.8 8.2 Z" fill="var(--icon-stall-awning)"/><path d="M3.4 5.4 C3.6 3.6 5.2 3.2 6.6 3.7 C8 2.7 10 2.7 11.4 3.7 C12.8 3.2 14.4 3.6 14.6 5.4 Z" fill="var(--icon-stall-snow)"/><circle cx="3.4" cy="8.2" r="1.2" fill="var(--icon-stall-awning)"/><circle cx="6.3" cy="8.2" r="1.2" fill="var(--icon-stall-awning)"/><circle cx="9" cy="8.2" r="1.2" fill="var(--icon-stall-awning)"/><circle cx="11.7" cy="8.2" r="1.2" fill="var(--icon-stall-awning)"/><circle cx="14.6" cy="8.2" r="1.2" fill="var(--icon-stall-awning)"/><rect x="3" y="9" width="1.5" height="9.5" fill="var(--icon-stall-wood)"/><rect x="13.5" y="9" width="1.5" height="9.5" fill="var(--icon-stall-wood)"/><rect x="6.2" y="11" width="2.6" height="2.6" fill="var(--icon-stall-flake)"/><rect x="9.4" y="10.2" width="2.4" height="3.4" fill="var(--icon-stall-awning)"/><rect x="2" y="13.6" width="14" height="2.2" rx="0.4" fill="var(--icon-stall-wood)"/><g stroke="var(--icon-stall-flake)" stroke-width="1.2" stroke-linecap="round"><line x1="18.6" y1="10.4" x2="18.6" y2="17.6"/><line x1="15.5" y1="12.2" x2="21.7" y2="15.8"/><line x1="15.5" y1="15.8" x2="21.7" y2="12.2"/></g>`,
   sparkleNight: `<polygon points="11,1.5 13.8,8.2 21,10 13.8,11.8 11,18.5 8.2,11.8 1,10 8.2,8.2" fill="var(--icon-sparkle)"/>`
 };
 // Seasonal icons only change the card art -- filtering still uses ev.category.
 // Regexes use word boundaries so "waterfall" or "switch" don't match.
 const SMART_ICON_KEYWORDS = {
+  // Holiday markets and craft fairs (Nov–Jan only, see matchEventIcon), first
+  // so "Harvest"/"fall" never wins over a December market.
+  winterMarket: ["holiday market","christmas market","winter market","craft market","craft fair","art market","art fair","artisan market","gift fest","holiday sale","winterfest","winter festival","market fayre","handmade","holiday on the plaza"],
   pumpkin: ["halloween","pumpkin","jack-o","trick-or-treat","trick or treat","trunk-or-treat","trunk or treat","spooky","haunted","boo bash","monster mash","day of the dead","dia de los muertos","día de los muertos","dia de muertos","día de muertos","horror","scary stor","ghost stor",/\bcostume/,/\bwitch/],
   leaf: ["autumn","harvest","fall festival","fall fest","oktoberfest","leaf","leaves",/\bfall\b/],
   flower: ["sunflower","u-pick","tulip","flower field"],
@@ -1372,9 +1385,16 @@ const SMART_ICON_KEYWORDS = {
   splash: ["splash pad","splash park","water park","waterpark","pool party"],
   sparkleNight: ["planetarium","stargaz","star party","night sky"]
 };
+// Month (1–12) of the event's date, or of today for recurring rows.
+function iconMonth(ev){
+  const d = ev.event_date || "";
+  const m = /^\d{4}-(\d{2})-/.exec(d);
+  return m ? Number(m[1]) : new Date().getMonth() + 1;
+}
 function matchEventIcon(ev){
   const title = (ev.title||"").toLowerCase();
   for(const [key, words] of Object.entries(SMART_ICON_KEYWORDS)){
+    if(key === "winterMarket" && ![11,12,1].includes(iconMonth(ev))) continue;
     if(words.some(w => w instanceof RegExp ? w.test(title) : title.includes(w))) return key;
   }
   return ev.category;
