@@ -7197,7 +7197,7 @@ async function handleSeoDayPage(env, slug, kind) {
   const cityNav = cities.map((c) => `<a href="/${citySlug(c)}/${kind}"${c === city ? ' aria-current="page"' : ""}>${escapeHtml(c)}</a>`).join(" ");
   const jsonLd = JSON.stringify({ "@context": "https://schema.org", "@graph": shown.slice(0, 60).map((ev) => seoEventJsonLd(ev, pageUrl)) }).replace(/</g, "\\u003c");
   const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#14211D">
 <title>${escapeHtml(title)}</title>
 <meta name="description" content="${escapeHtml(desc)}">
 <link rel="canonical" href="${pageUrl}">
