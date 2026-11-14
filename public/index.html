@@ -2810,6 +2810,30 @@ function ga(name, params){
     gtag('event', name, params||{});
   }catch(e){}
 }
+// Home-screen install funnel (Nov 2026). The manifest makes Playroute
+// installable, so Android Chrome shows its own "Install Playroute" bar; the
+// owner chose to keep it and measure it. We don't preventDefault, so Chrome's
+// bar behaves exactly as before:
+//   pwa_install_prompt_shown  Chrome decided this visitor is eligible (once per session)
+//   pwa_install_prompt_choice outcome accepted|dismissed, when Chrome reports it
+//   pwa_installed             the app was installed (any route: bar, menu)
+//   pwa_launch                the site was opened from the home-screen app (once per session)
+// display_mode (standalone|browser) is a user property: compare retention of
+// installed vs browser users in GA4 Explore.
+(function trackInstallFunnel(){
+  try{
+    const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+    if(typeof gtag==='function') gtag('set','user_properties',{display_mode: standalone ? 'standalone' : 'browser'});
+    const once = (key, fn) => { try{ if(sessionStorage.getItem(key)) return; sessionStorage.setItem(key,'1'); }catch(e){} fn(); };
+    // Deferred: ga()'s first call reads experiment config declared later in this script.
+    if(standalone) setTimeout(() => once('pr-pwa-launch', () => ga('pwa_launch', {})), 0);
+    window.addEventListener('beforeinstallprompt', e => {
+      once('pr-pwa-prompt', () => ga('pwa_install_prompt_shown', {}));
+      try{ e.userChoice && e.userChoice.then(c => ga('pwa_install_prompt_choice', {outcome: c && c.outcome})).catch(()=>{}); }catch(err){}
+    });
+    window.addEventListener('appinstalled', () => ga('pwa_installed', {}));
+  }catch(e){}
+})();
 const GA_ACTION_EVENTS = {view_details:'view_event_details', add_to_calendar:'add_to_calendar', share:'share', source_click:'source_click', support_click:'support_click', affiliate_click:'affiliate_click'};
 function gaItem(meta){
   return {item_id: meta?.id!=null ? String(meta.id) : undefined, item_name: (meta?.title||'').slice(0,100), activity_category: meta?.category, activity_city: meta?.city, from_recommended: !!meta?.fromRecommended};
