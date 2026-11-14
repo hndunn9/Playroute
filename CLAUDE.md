@@ -252,6 +252,9 @@ keep reads proportional to traffic:
   ground band full-bleed, art in the 80% safe zone), `favicon.ico/-16/-32.png` (no wordmark, unreadable that small),
   `manifest.webmanifest` (`short_name` Playroute, `start_url` `/?src=homescreen`). Art: "Flatirons at dusk" + Playfair wordmark.
   Linked from index.html, partners.html and the SEO day pages. Existing home-screen bookmarks keep the old tile until re-added.
+  The manifest makes Android Chrome show its own "Install Playroute" bar; owner chose to keep it and measure it
+  (`trackInstallFunnel`): GA4 `pwa_install_prompt_shown`, `pwa_install_prompt_choice` (outcome), `pwa_installed`, `pwa_launch`,
+  and user property `display_mode` (standalone|browser). Don't `preventDefault` the prompt without asking.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
 - **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
   A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within
