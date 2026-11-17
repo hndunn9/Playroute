@@ -509,6 +509,12 @@
     <button class="secondary" onclick="loadFirstSeenStats()">Load visitor counts</button>
     <div id="firstSeenOutput" style="margin-top:12px;"></div>
   </div>
+  <div class="card">
+    <h2>➕ Playroute+ paid pilot</h2>
+    <p>New visitors only (first seen on/after <code>PLUS_LAUNCH_DATE</code>). <strong>Plus</strong> sees events past next week blurred with a $20/year unlock; <strong>control</strong> sees everything. Each browser counts once per step. <strong>Key metric: paid conversion</strong> = purchased ÷ saw the unlock card. Guardrail: share of each group that came back on 2+ days. Previews (<code>?ff_plus=blur</code>) are never counted.</p>
+    <button class="secondary" onclick="loadPlusExperiment()">Load pilot results</button>
+    <div id="plusExpOutput" style="margin-top:12px;"></div>
+  </div>
     </div>
   </section>
 
@@ -1489,6 +1495,52 @@ async function loadFirstSeenStats(){
         ${rows}
       </table>
       <p style="font-size:11px;color:#7A6650;margin:8px 0 0;">${d.startedAt ? `Tracking since ${escapeHtml(d.startedAt)}. ` : ''}When "Returning tagged" per day drops close to zero, most regulars have been caught and the warm-up is done. A regular on a new device or with cleared cookies will still look new.</p>`;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function loadPlusExperiment(){
+  const out = document.getElementById('plusExpOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/plus-experiment');
+    const d = await res.json();
+    if(d.notReady){ out.innerHTML = `<div class="result show err">${escapeHtml(d.error)}</div>`; return; }
+    const p = d.byArm.plus || {}, c = d.byArm.control || {};
+    const g = d.guardrail || {};
+    const pct = (a, b) => b ? (Math.round(1000 * a / b) / 10) + '%' : '—';
+    const live = (d.members || []).find(m => m.livemode === 1) || {};
+    const test = (d.members || []).find(m => m.livemode === 0) || {};
+    const tile = (label, val, sub) => `<div style="background:var(--surface-2, #f6f5f1);border-radius:10px;padding:10px 12px;">
+        <div style="font-size:11px;color:#7A6650;">${label}</div>
+        <div style="font-size:22px;font-weight:600;">${val}</div>
+        <div style="font-size:11px;color:#7A6650;">${sub}</div></div>`;
+    const steps = [['assigned','In the plus group'],['exposed','Saw the unlock card'],['unlock_tap','Tapped unlock'],['checkout_start','Opened checkout'],['purchased','Paid'],['signin_request','Asked for a sign-in link']];
+    const funnel = steps.map(([k, label], i) => {
+      const n = p[k] || 0, prev = i > 0 && i < 5 ? (p[steps[i-1][0]] || 0) : null;
+      return `<tr><td>${label}</td><td style="text-align:right;">${n}</td><td style="text-align:right;color:#7A6650;">${prev !== null ? pct(n, prev) : ''}</td></tr>`;
+    }).join('');
+    const ret = (arm) => g[arm] ? `${pct(g[arm].returned, g[arm].assigned)} <span style="font-size:11px;color:#7A6650;">(${g[arm].returned} of ${g[arm].assigned})</span>` : '—';
+    const answers = (step, title) => {
+      const rows = (d.answers || []).filter(a => a.step === step);
+      return rows.length ? `<p style="margin:10px 0 4px;font-weight:600;">${title}</p>` + rows.map(a => `<div style="font-size:13px;">${escapeHtml(a.detail)} · ${a.n}</div>`).join('') : '';
+    };
+    out.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px;">
+        ${tile('Paid conversion', pct(p.purchased || 0, p.exposed || 0), `${p.purchased || 0} paid of ${p.exposed || 0} who saw it`)}
+        ${tile('Live members', live.active || 0, `${live.cancelling || 0} set to cancel`)}
+        ${tile('Revenue (net, est.)', '$' + Math.round((live.n || 0) * 18.98), 'about $18.98 per $20 sale')}
+      </div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr style="color:#7A6650;font-size:11px;"><td>Plus funnel</td><td style="text-align:right;">Browsers</td><td style="text-align:right;">Step rate</td></tr>
+        ${funnel}
+      </table>
+      <p style="margin:10px 0 4px;font-weight:600;">Guardrail: came back on 2+ days</p>
+      <div style="font-size:13px;">Plus: ${ret('plus')} · Control: ${ret('control')} (${c.assigned || 0} in control)</div>
+      ${answers('why_subscribe', 'Why they subscribed')}
+      ${answers('not_now', '“Not now” reasons')}
+      <p style="font-size:11px;color:#7A6650;margin:8px 0 0;">${d.startedAt ? `Running since ${escapeHtml(d.startedAt.slice(0, 10))}. ` : 'Not running yet (no one assigned). '}${test.n ? `${test.n} test-mode purchase${test.n === 1 ? '' : 's'} excluded from revenue. ` : ''}Stop and rethink if Plus's return rate falls more than ~10% below Control's.</p>`;
   }catch(err){
     out.innerHTML = `<div class="result show err">Error: ${escapeHtml(err.message)}</div>`;
   }
