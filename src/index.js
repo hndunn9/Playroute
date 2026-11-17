@@ -2795,6 +2795,58 @@ async function hashVisitor(request) {
   return { visitorHash: toHex(weekBuf), visitorHashMonth: toHex(monthBuf) };
 }
 
+// ── First-seen cookie (2026-11) ──
+// One first-party cookie, pr_fs = "<random id>.<first-seen MT date>.<prior>",
+// set by the Worker on the pageview beacon. Server-set (not document.cookie)
+// so Safari doesn't cap it at 7 days; NOT HttpOnly so the app can read it
+// (Playroute+ eligibility is decided in the browser). <prior> is 1 when the
+// browser already had Playroute data in localStorage the first time the
+// cookie was set, i.e. a returning visitor from before the cookie existed.
+// Holds no personal data. Re-sent on every pageview to roll the expiry.
+// D1: visitor_first_seen (migrations/2026-11-17-visitor-first-seen.sql).
+const FS_COOKIE = "pr_fs";
+const FS_MAX_AGE = 400 * 24 * 60 * 60; // Chrome's cap
+function readCookie(request, name) {
+  const header = request.headers.get("Cookie") || "";
+  for (const part of header.split(/;\s*/)) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i) === name) {
+      try { return decodeURIComponent(part.slice(i + 1)); } catch { return null; }
+    }
+  }
+  return null;
+}
+function parseFirstSeen(v) {
+  const m = /^([a-f0-9]{32})\.(\d{4}-\d{2}-\d{2})\.([01])$/.exec(v || "");
+  return m ? { id: m[1], first: m[2], prior: Number(m[3]) } : null;
+}
+function randomHex(bytes = 16) {
+  return [...crypto.getRandomValues(new Uint8Array(bytes))].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+function firstSeenCookieHeader(fs) {
+  return `${FS_COOKIE}=${fs.id}.${fs.first}.${fs.prior}; Max-Age=${FS_MAX_AGE}; Path=/; Secure; SameSite=Lax`;
+}
+// Returns the visitor's first-seen record, creating one when the cookie is
+// missing, and logs today's visit. Never throws (a missing table must not
+// break pageviews).
+async function touchFirstSeen(request, env, hadLocal) {
+  const today = todayMT();
+  let fs = parseFirstSeen(readCookie(request, FS_COOKIE));
+  if (!fs) fs = { id: randomHex(16), first: today, prior: hadLocal ? 1 : 0 };
+  try {
+    // SQLite evaluates every SET expression against the OLD row, so
+    // visit_days compares the previous last_seen before it's overwritten.
+    await env.DB.prepare(
+      `INSERT INTO visitor_first_seen (fs_id, first_seen, prior_local, last_seen, visit_days)
+       VALUES (?, ?, ?, ?, 1)
+       ON CONFLICT(fs_id) DO UPDATE SET
+         visit_days = visit_days + (last_seen <> excluded.last_seen),
+         last_seen = excluded.last_seen`
+    ).bind(fs.id, fs.first, fs.prior, today).run();
+  } catch (e) { console.warn("first-seen write skipped:", e && e.message); }
+  return fs;
+}
+
 async function handlePageView(request, env) {
   const { visitorHash, visitorHashMonth } = await hashVisitor(request);
   const cf = request.cf || {};
@@ -2804,8 +2856,10 @@ async function handlePageView(request, env) {
   let sawRecommended = 0;
   let experimentArm = null, experimentSessionId = null;
   let cardExp = null;
+  let hadLocal = false;
   try {
     const body = await request.json();
+    if (body && body.hadLocal) hadLocal = true;
     if (body && body.source) source = String(body.source).slice(0, 50);
     // Adoption tracking for the "Recommended for you" feature -- fed by
     // whether renderFeed() actually rendered the section this load (see
@@ -2846,7 +2900,38 @@ async function handlePageView(request, env) {
       `INSERT INTO card_experiment_sessions (session_id, arm) VALUES (?, ?) ON CONFLICT(session_id) DO NOTHING`,
       [cardExp.sid, cardExp.arm]);
   }
-  return json({ ok: true });
+  const fs = await touchFirstSeen(request, env, hadLocal);
+  return Response.json({ ok: true }, {
+    headers: { ...CORS_HEADERS, "Set-Cookie": firstSeenCookieHeader(fs) },
+  });
+}
+
+// Admin > Tests: how many visitors are brand new each day vs. already known,
+// and how often recent visitors come back. Sizes the Playroute+ test and
+// shows whether the warm-up has tagged the regulars. Edge-cached 5 min.
+async function handleFirstSeenStats(env) {
+  const since = addDays(todayMT(), -13);
+  try {
+    const [daily, returns, totals] = await Promise.all([
+      env.DB.prepare(
+        `SELECT first_seen AS day,
+                SUM(prior_local = 0) AS new_visitors,
+                SUM(prior_local = 1) AS returning_tagged
+           FROM visitor_first_seen WHERE first_seen >= ?
+          GROUP BY first_seen ORDER BY first_seen`
+      ).bind(since).all(),
+      env.DB.prepare(
+        `SELECT CASE WHEN visit_days >= 5 THEN '5+' ELSE CAST(visit_days AS TEXT) END AS days,
+                COUNT(*) AS n
+           FROM visitor_first_seen WHERE last_seen >= ?
+          GROUP BY 1 ORDER BY 1`
+      ).bind(since).all(),
+      env.DB.prepare(`SELECT COUNT(*) AS n, MIN(first_seen) AS started FROM visitor_first_seen`).first(),
+    ]);
+    return json({ since, daily: daily.results || [], visitDays: returns.results || [], total: totals?.n || 0, startedAt: totals?.started || null });
+  } catch (e) {
+    return json({ notReady: true, error: "visitor_first_seen table is missing — run migrations/2026-11-17-visitor-first-seen.sql" });
+  }
 }
 
 // ── Time-led event card A/B test (2026-10) ──
@@ -7261,6 +7346,7 @@ ${cities.map((c) => `- [${c} today](${SEO_SITE}/${citySlug(c)}/today): also /${c
 
 const EDGE_CACHE_TTLS = {
   "/api/events": 180,
+  "/api/first-seen-stats": 300,
   "/api/stats": 300,
   "/api/source-freshness": 300,
   "/api/check-pending-duplicates": 120,
@@ -7418,6 +7504,7 @@ const worker = {
       if (url.pathname === "/api/recommended-adoption") return await handleRecommendedAdoption(env);
       if (url.pathname === "/api/recommended-experiment") return await handleRecommendedExperiment(env);
       if (url.pathname === "/api/card-experiment") return await handleCardExperiment(env);
+      if (url.pathname === "/api/first-seen-stats") return await handleFirstSeenStats(env);
       if (url.pathname === "/api/experiment-exposure" && request.method === "POST") return await handleExperimentExposure(request, env);
       if (url.pathname === "/api/recommended-feedback" && request.method === "POST") return await handleRecommendedFeedback(request, env);
       if (url.pathname === "/api/referrals-trend") {

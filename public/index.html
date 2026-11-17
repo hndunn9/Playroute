@@ -16,6 +16,14 @@
   gtag('config', 'G-V212HC6MVZ');
 </script>
 <script>
+  // Returning-visitor snapshot for the first-seen cookie (pr_fs): taken
+  // here, before the app writes anything to localStorage, so a first visit
+  // isn't mistaken for a return. Sent once with the pageview beacon.
+  try {
+    window.__prHadLocal = Object.keys(localStorage).some(function (k) {
+      return k === 'pr_visitCount' || k === 'pr_lastVisitDate' || k.indexOf('playroute') === 0;
+    });
+  } catch (e) { window.__prHadLocal = false; }
   try {
     var t = localStorage.getItem('playroute-theme');
     if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
@@ -1486,7 +1494,7 @@ async function loadData(){
   // is set inside renderFeed() itself, right where the section is built.
   const _srcParam = new URLSearchParams(location.search).get("src");
   const _newsletterSrc = ["newsletter", "today-page"].includes(_srcParam) ? _srcParam : null;
-  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, ...expPayload(), ...cardExpPayload()})}).catch(()=>{});
+  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, hadLocal:!!window.__prHadLocal, ...expPayload(), ...cardExpPayload()})}).catch(()=>{});
 }
 
 let activeCities = new Set(), activeAges = new Set(), activeCats = new Set();

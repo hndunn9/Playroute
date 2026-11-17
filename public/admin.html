@@ -503,6 +503,12 @@
     <button class="secondary" onclick="loadCardExperiment()">Load A/B results</button>
     <div id="cardExpOutput" style="margin-top:12px;"></div>
   </div>
+  <div class="card">
+    <h2>👋 New vs. returning visitors</h2>
+    <p>Each browser gets a first-seen date the first time it loads Playroute (cookie <code>pr_fs</code>). Browsers that already had Playroute data on that first load are tagged <strong>returning</strong>. This is the warm-up for the Playroute+ test: only visitors first seen on or after its launch date can be offered the paywall, so regulars tagged here never see it. Last 14 days.</p>
+    <button class="secondary" onclick="loadFirstSeenStats()">Load visitor counts</button>
+    <div id="firstSeenOutput" style="margin-top:12px;"></div>
+  </div>
     </div>
   </section>
 
@@ -1451,6 +1457,40 @@ async function loadRecExperiment(){
       </p>`;
   }catch(err){
     out.innerHTML = `<div class="result show err">Error: ${err.message}</div>`;
+  }
+}
+
+async function loadFirstSeenStats(){
+  const out = document.getElementById('firstSeenOutput');
+  out.innerHTML = '<div class="result show loading">Loading…</div>';
+  try{
+    const res = await fetch('/api/first-seen-stats');
+    const d = await res.json();
+    if(d.notReady){ out.innerHTML = `<div class="result show err">${escapeHtml(d.error)}</div>`; return; }
+    if(!d.total){ out.innerHTML = '<div class="pending-empty">No visitors logged yet — counts appear once the update is live and people visit.</div>'; return; }
+    const newTotal = d.daily.reduce((a,r)=>a+(r.new_visitors||0),0);
+    const retTotal = d.daily.reduce((a,r)=>a+(r.returning_tagged||0),0);
+    const days = Math.max(1, d.daily.length);
+    const visitTotal = d.visitDays.reduce((a,r)=>a+r.n,0);
+    const repeat = d.visitDays.filter(r=>r.days!=='1').reduce((a,r)=>a+r.n,0);
+    const tile = (label, val, sub) => `<div style="background:var(--surface-2, #f6f5f1);border-radius:10px;padding:10px 12px;">
+        <div style="font-size:11px;color:#7A6650;">${label}</div>
+        <div style="font-size:22px;font-weight:600;">${val}</div>
+        <div style="font-size:11px;color:#7A6650;">${sub}</div></div>`;
+    const rows = d.daily.slice().reverse().map(r => `<tr><td>${escapeHtml(r.day)}</td><td style="text-align:right;">${r.new_visitors||0}</td><td style="text-align:right;">${r.returning_tagged||0}</td></tr>`).join('');
+    out.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px;">
+        ${tile('New per day', Math.round(newTotal/days), `${newTotal} in ${days} day${days===1?'':'s'}`)}
+        ${tile('Returning tagged', retTotal, 'regulars caught so far')}
+        ${tile('Came back 2+ days', visitTotal ? Math.round(100*repeat/visitTotal)+'%' : '—', `${repeat} of ${visitTotal} recent`)}
+      </div>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr style="color:#7A6650;font-size:11px;"><td>First seen</td><td style="text-align:right;">New</td><td style="text-align:right;">Returning</td></tr>
+        ${rows}
+      </table>
+      <p style="font-size:11px;color:#7A6650;margin:8px 0 0;">${d.startedAt ? `Tracking since ${escapeHtml(d.startedAt)}. ` : ''}When "Returning tagged" per day drops close to zero, most regulars have been caught and the warm-up is done. A regular on a new device or with cleared cookies will still look new.</p>`;
+  }catch(err){
+    out.innerHTML = `<div class="result show err">Error: ${escapeHtml(err.message)}</div>`;
   }
 }
 
