@@ -6,6 +6,7 @@ import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SO
 // without this re-export, would be invisible to the platform.
 export { EventDiscoveryWorkflow } from "./discovery-workflow.js";
 import { cleanSourceForDisplay, selectDigestDays } from "./digest-rules.js";
+import { handlePlusRoute, handlePlusExperiment } from "./plus.js";
 import { nextSendDate, mtDateStr, isThursdayMT, variantFor, summarizeResults, validateAgentDraft, buildAgentPrompt, parseAgentReply, verifyResendWebhook, RESEND_EVENT_TYPES } from "./newsletter-agent.js";
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
@@ -7347,6 +7348,7 @@ ${cities.map((c) => `- [${c} today](${SEO_SITE}/${citySlug(c)}/today): also /${c
 const EDGE_CACHE_TTLS = {
   "/api/events": 180,
   "/api/first-seen-stats": 300,
+  "/api/plus-experiment": 300,
   "/api/stats": 300,
   "/api/source-freshness": 300,
   "/api/check-pending-duplicates": 120,
@@ -7505,6 +7507,11 @@ const worker = {
       if (url.pathname === "/api/recommended-experiment") return await handleRecommendedExperiment(env);
       if (url.pathname === "/api/card-experiment") return await handleCardExperiment(env);
       if (url.pathname === "/api/first-seen-stats") return await handleFirstSeenStats(env);
+      if (url.pathname === "/api/plus-experiment") return await handlePlusExperiment(env);
+      if (url.pathname.startsWith("/api/plus/") || url.pathname.startsWith("/plus/") || url.pathname === "/api/stripe-webhook") {
+        const plusRes = await handlePlusRoute(request, env, url);
+        if (plusRes) return plusRes;
+      }
       if (url.pathname === "/api/experiment-exposure" && request.method === "POST") return await handleExperimentExposure(request, env);
       if (url.pathname === "/api/recommended-feedback" && request.method === "POST") return await handleRecommendedFeedback(request, env);
       if (url.pathname === "/api/referrals-trend") {

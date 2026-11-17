@@ -253,6 +253,27 @@ keep reads proportional to traffic:
   `manifest.webmanifest` (`short_name` Playroute, `start_url` `/?src=homescreen`). Art: "Flatirons at dusk" + Playfair wordmark.
   Linked from index.html, partners.html and the SEO day pages. Existing home-screen bookmarks keep the old tile until re-added.
 - The owner's goal metric is daily active users; Google Analytics is the source of truth.
+- **First-seen cookie** (Nov 2026): the pageview beacon sets `pr_fs` = `<32-hex id>.<first-seen MT date>.<prior 0|1>`
+  (server-set so Safari keeps it; not HttpOnly so the app can read it). `prior=1` means the browser already had
+  Playroute localStorage on its first cookie visit (a returning visitor from before the cookie). The head script
+  snapshots that into `window.__prHadLocal` before the app writes anything. D1 `visitor_first_seen`; admin > Tests
+  "New vs. returning visitors" (`/api/first-seen-stats`).
+- **Playroute+ paid pilot** (Nov 2026, `src/plus.js` + `public/index.html`): $20/year unlocks events more than 7 days
+  out; locked cards are blurred (`lockPlusCard`) with one `.sp-card` unlock card before the first locked day, or a
+  "N more events after next week" teaser at the end of the default 7-day feed. Flags in index.html:
+  `FEATURE_PLUS_ENABLED`, `PLUS_LAUNCH_DATE` (only browsers first seen on/after it, not tagged returning, are eligible),
+  `PLUS_RAMP_PCT` (% of eligible browsers put in `plus`; a browser keeps its group in localStorage
+  `playroute-exp-plus`, so raising it only affects new arrivals). Kept OUT of the `EXPERIMENTS` registry on purpose:
+  `runningExperiments()` would assign every visitor. Preview `?ff_plus=blur` (never logged; checkout tagged
+  `preview=1`). Not a hard gate: `/api/events` still returns all dates; enforce server-side before relying on it.
+  Payments: Stripe Checkout (subscription, `STRIPE_PRICE_ID` var, `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET`
+  secrets), webhook `/api/stripe-webhook` (checkout.session.completed, customer.subscription.updated/deleted,
+  charge.refunded) keeps D1 `plus_subscribers` in sync. Identity is email only: `/plus/success` and emailed one-time
+  links (`/api/plus/signin` → `/plus/login`, Resend, 30 min, SHA-256 stored) set `pr_plus` (HttpOnly, HMAC with
+  `PLUS_COOKIE_SECRET`) + readable `pr_plus_hint`; the app only calls `/api/plus/me` when the hint exists. Access =
+  status active/trialing/past_due with a 3-day grace past period end. Funnel `plus_funnel` (one row per browser per
+  step); admin > Tests "Playroute+ paid pilot" (`/api/plus-experiment`). Run `node evals/plus-eval.js` after touching
+  plus.js.
 - **Playroute's Picks** (paid partner placements) live in D1 `partner_previews`, managed in admin > Partners.
   A Pick runs only when approved by the partner (`/partners/preview/<token>`), marked paid, and within
   `go_live_date`..`ends_on`. It is **feature-flagged off**: `PICKS_PUBLIC` (src/index.js, app API + newsletter)

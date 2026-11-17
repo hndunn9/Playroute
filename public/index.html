@@ -299,6 +299,29 @@ a.sp-item,.sp-item[role="link"]{cursor:pointer;}
   font-size:12px;font-weight:600;text-decoration:none;
 }
 .sp-btn:active{transform:scale(0.97);}
+button.sp-btn{font-family:inherit;cursor:pointer;}
+/* ── PLAYROUTE+ (paid pilot) ── blurred events past next week + one unlock
+   card in the .sp-card pattern. Only shows with FEATURE_PLUS_ENABLED or
+   ?ff_plus=blur. */
+.event-card.plus-locked{position:relative;cursor:default;}
+.event-card.plus-locked > *{filter:blur(5px);opacity:.75;pointer-events:none;user-select:none;-webkit-user-select:none;}
+.plus-card .sp-btn{margin-right:8px;}
+.plus-links{margin-top:8px;font-size:12px;color:var(--ink-soft);}
+.plus-links a{color:var(--ink-soft);text-decoration:underline;cursor:pointer;}
+.plus-form{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+.plus-form[hidden],.plus-why[hidden]{display:none;}
+.plus-form input{flex:1;min-width:180px;padding:7px 10px;border-radius:100px;border:1px solid var(--fog);background:transparent;color:var(--ink);font:inherit;font-size:13px;}
+.plus-msg{margin-top:6px;font-size:12px;color:var(--ink-soft);}
+.plus-msg:empty{display:none;}
+.plus-why{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;}
+.plus-chip{padding:5px 11px;border-radius:100px;border:1px solid var(--fog);background:transparent;color:var(--ink);font:inherit;font-size:12px;cursor:pointer;}
+.plus-chip:active{transform:scale(0.97);}
+.plus-mini{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;font-size:12.5px;color:var(--ink-soft);}
+.plus-mini .sp-btn{margin-top:0;}
+.plus-notice{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;}
+.plus-notice-close{background:transparent;border:0;color:var(--ink-soft);font-size:16px;cursor:pointer;padding:0 2px;}
+.plus-footer{margin-top:6px;font-size:11px;letter-spacing:.02em;}
+.plus-footer a{color:inherit;text-decoration:underline;cursor:pointer;}
 /* About drawer (Oct 2026 refresh): stat chip, short story, two big tap targets
    (Ko-fi filled, feedback outline), affiliate as the standard .sp-card. */
 .about-body{display:flex;flex-direction:column;gap:14px;padding-bottom:8px;}
@@ -1469,6 +1492,7 @@ const ICONS = {
 
 async function loadData(){
   const picksLoad = loadPicks();
+  const plusLoad = loadPlusStatus();
   try{
     const [eventsRes, pgRes, hikesRes] = await Promise.all([
       fetch(`${API_BASE}/api/events`),
@@ -1485,7 +1509,9 @@ async function loadData(){
     dataLoadFailed = true;
   }
   await picksLoad;
+  await plusLoad;
   renderAll();
+  renderPlusFooter();
   handleEventDeepLink();
   // Pageview beacon moved here (was fired eagerly at bootstrap, before
   // any data had loaded) so it can report saw_recommended accurately --
@@ -1494,7 +1520,8 @@ async function loadData(){
   // is set inside renderFeed() itself, right where the section is built.
   const _srcParam = new URLSearchParams(location.search).get("src");
   const _newsletterSrc = ["newsletter", "today-page"].includes(_srcParam) ? _srcParam : null;
-  fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, hadLocal:!!window.__prHadLocal, ...expPayload(), ...cardExpPayload()})}).catch(()=>{});
+  window.__prPageview = fetch(`${API_BASE}/api/pageview`, {method:"POST", keepalive:true, headers:{"Content-Type":"application/json"}, body:JSON.stringify({source:_newsletterSrc, sawRecommended:lastSawRecommended, hadLocal:!!window.__prHadLocal, ...expPayload(), ...cardExpPayload()})}).catch(()=>{});
+  plusInitTracking();
 }
 
 let activeCities = new Set(), activeAges = new Set(), activeCats = new Set();
@@ -2214,8 +2241,9 @@ function renderFeed(){
   // showDate:true on each card since these are pulled out of their normal
   // day-heading grouping -- without it the date context that grouping
   // would have provided for free is just gone.
+  if(plusNotice) feed.appendChild(buildPlusNotice());
   if(!activeSearch && !picksLower){ const picksEl = buildPicksSection(); if(picksEl) feed.appendChild(picksEl); }
-  const recommended = getRecommendedEvents(upcoming);
+  const recommended = getRecommendedEvents(upcoming.filter(ev=>!isPlusLocked(ev)));
   lastSawRecommended = recommended.length > 0;
   if(recommended.length) sendExpExposureOnce(); // strip can first appear mid-visit, after the pageview beacon
   if(recommended.length){
@@ -2239,8 +2267,12 @@ function renderFeed(){
   const placePicks=()=>{ const el=buildPicksSection(); if(el) feed.appendChild(el); picksPlaced=true; };
   const dayCounts={};
   upcoming.forEach(ev=>{ dayCounts[ev.occurrence_label]=(dayCounts[ev.occurrence_label]||0)+1; });
+  let plusCardPlaced = false;
   upcoming.forEach(ev=>{
     const heading = ev.occurrence_label;
+    // Playroute+: one unlock card right before the first blurred day.
+    const locked = isPlusLocked(ev);
+    if(locked && !plusCardPlaced){ feed.appendChild(buildPlusCard(0)); plusCardPlaced = true; }
     if(heading!==lastHeading){
       // Affiliate day-closer: appears once, after the first day group
       // finishes and before the next day heading starts. Not repeated
@@ -2264,9 +2296,15 @@ function renderFeed(){
     shown++;
     const card=buildEventCard(ev);
     feed.appendChild(card);
-    wireInlineCalendar(ev, card);
+    if(locked) lockPlusCard(card); else wireInlineCalendar(ev, card);
   });
   if(!picksPlaced && shown>0) placePicks(); // fewer than 3 days showing: end of the list
+  // Playroute+: the default "Next 7 days" view has no blurred days on screen,
+  // so close the feed with a teaser counting what's past next week.
+  if(plusGated() && !plusCardPlaced && shown>0){
+    const lockedCount = events.filter(passesFilters).filter(ev=>ev.occurrence && isPlusLocked(ev)).length;
+    if(lockedCount) feed.appendChild(buildPlusCard(lockedCount));
+  }
   document.getElementById("resultCount").textContent = activeSearch ? `${shown} upcoming · all dates${searchCorrection ? ` · showing results for “${searchCorrection.to}”` : ""}` : `${shown} upcoming`;
   lastShownCount = shown;
   if(shown===0){
@@ -2528,6 +2566,244 @@ function recordAffinity(meta){
 // the newsletter. ?ff_picks=<preview token> shows only that partner's Pick
 // to whoever opens the link (used to show partners before launch). With
 // the flag off and no param, nothing is fetched at all.
+// ── PLAYROUTE+ (paid pilot, 2026-11) ──
+// $20/year unlocks events more than 7 days out. Server side: src/plus.js.
+//   FEATURE_PLUS_ENABLED  master switch. Off = nobody is assigned or blurred.
+//   PLUS_LAUNCH_DATE      "YYYY-MM-DD". Only browsers FIRST SEEN on/after this
+//                         date (pr_fs cookie, not tagged returning) are eligible,
+//                         so regulars never see the paywall.
+//   PLUS_RAMP_PCT         % of eligible browsers put in "plus" (the rest are
+//                         "control" and see everything). A browser keeps its
+//                         group, so raising this only affects new arrivals.
+// Preview anytime with ?ff_plus=blur (never logged; checkout is tagged preview).
+// Not a hard gate yet: /api/events still returns every date.
+const FEATURE_PLUS_ENABLED = false;
+const PLUS_LAUNCH_DATE = null;
+const PLUS_RAMP_PCT = 0;
+const PLUS_PRICE_LABEL = "$20/year";
+const PLUS_ARM_KEY = "playroute-exp-plus";
+let plusStatus = null;        // /api/plus/me result for members
+let plusNotice = null;        // one-time message from ?plus=…
+let _plusArm, _plusLogged = {};
+function plusPreview(){ try{ return new URLSearchParams(location.search).get('ff_plus')==='blur'; }catch(e){ return false; } }
+function readCookieValue(name){
+  const m = document.cookie.split(/;\s*/).find(c=>c.indexOf(name+'=')===0);
+  if(!m) return null;
+  try{ return decodeURIComponent(m.slice(name.length+1)); }catch(e){ return null; }
+}
+function plusFirstSeen(){
+  const m = /^[a-f0-9]{32}\.(\d{4}-\d{2}-\d{2})\.([01])$/.exec(readCookieValue('pr_fs')||'');
+  return m ? {first:m[1], prior:m[2]==='1'} : null;
+}
+function localYmd(d){ d=d||new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function isPlusEligible(){
+  if(!FEATURE_PLUS_ENABLED || !PLUS_LAUNCH_DATE) return false;
+  const fs = plusFirstSeen();
+  if(fs) return !fs.prior && fs.first >= PLUS_LAUNCH_DATE;
+  // No cookie yet = first visit ever (this visit's pageview sets it), unless
+  // the browser already had Playroute data from before the cookie existed.
+  return !window.__prHadLocal && localYmd() >= PLUS_LAUNCH_DATE;
+}
+// "plus" | "control" | null (not in the test). Previews count as "plus".
+function plusArm(){
+  if(_plusArm !== undefined) return _plusArm;
+  if(plusPreview()) return (_plusArm = 'plus');
+  if(!isPlusEligible()) return (_plusArm = null);
+  let arm = null;
+  try{ arm = localStorage.getItem(PLUS_ARM_KEY); }catch(e){}
+  if(arm!=='plus' && arm!=='control'){
+    arm = Math.random()*100 < PLUS_RAMP_PCT ? 'plus' : 'control';
+    try{ localStorage.setItem(PLUS_ARM_KEY, arm); }catch(e){}
+  }
+  return (_plusArm = arm);
+}
+function isPlusMember(){ return !!(plusStatus && plusStatus.member); }
+function plusGated(){ return plusArm()==='plus' && !isPlusMember(); }
+// Locked = more than 7 days out (matches the "Next 7 days" filter's edge).
+function isPlusLocked(ev){
+  if(!plusGated() || !ev.occurrence) return false;
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  return Math.floor((new Date(ev.occurrence)-startOfToday)/86400000) > 7;
+}
+// Funnel log: first time per browser per step (server dedupes; this avoids
+// repeat requests within a visit). Waits for the pageview so the pr_fs cookie
+// exists on a first visit. Previews and non-test visitors are never logged.
+function plusLog(step, detail){
+  const arm = plusArm();
+  if(!arm || plusPreview()) return;
+  const k = step + (detail ? ':'+detail : '');
+  if(_plusLogged[k]) return;
+  _plusLogged[k] = 1;
+  ga('plus_funnel', {step, plus_arm: arm});
+  Promise.resolve(window.__prPageview).catch(()=>{}).then(()=>
+    fetch(`${API_BASE}/api/plus/event`,{method:"POST",keepalive:true,headers:{"Content-Type":"application/json"},body:JSON.stringify({arm, step, detail:detail||null})})
+  ).catch(()=>{});
+}
+async function loadPlusStatus(){
+  // Only members carry the hint cookie, so everyone else skips this request.
+  if(!readCookieValue('pr_plus_hint')) return;
+  try{
+    const r = await fetch(`${API_BASE}/api/plus/me`, {cache:'no-store'});
+    if(r.ok) plusStatus = await r.json();
+  }catch(e){}
+}
+function readPlusQueryNotice(){
+  let q = null;
+  try{ q = new URLSearchParams(location.search).get('plus'); }catch(e){}
+  if(!q) return;
+  const msgs = {
+    welcome: {title:'Welcome to Playroute+!', text:'Everything coming up is unlocked. Thank you for keeping Playroute going.', survey:true},
+    'signed-in': {title:'Signed in', text:'Playroute+ is on for this device.'},
+    cancelled: {title:'No charge made', text:'Checkout was cancelled. You can unlock any time.'},
+    pending: {title:'Almost there', text:'Your payment is still processing. Refresh in a minute; if it doesn’t unlock, sign in with your email.'},
+    'link-expired': {title:'That link expired', text:'Sign-in links work once, for 30 minutes. Request a new one from the Playroute+ card.'},
+  };
+  plusNotice = msgs[q] || null;
+  try{
+    const u = new URL(location.href); u.searchParams.delete('plus');
+    history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+  }catch(e){}
+}
+readPlusQueryNotice();
+function buildPlusNotice(){
+  const n = plusNotice;
+  const el = document.createElement('div');
+  el.className = 'sp-card sp-solo sp-item plus-notice';
+  const chips = ['Planning ahead','Holiday & seasonal events','Supporting Playroute','Something else']
+    .map(c=>`<button type="button" class="plus-chip" onclick="plusAnswerWhy(this, '${c}')">${c}</button>`).join('');
+  el.innerHTML = `<div class="sp-body">
+      <div class="sp-label">Playroute+</div>
+      <div class="sp-text"><b>${n.title}</b> ${n.text}</div>
+      ${n.survey ? `<div class="plus-msg" style="margin-top:8px;">One quick question: what made you subscribe?</div><div class="plus-why">${chips}</div>` : ''}
+    </div>
+    <button type="button" class="plus-notice-close" aria-label="Dismiss" onclick="plusNotice=null;this.closest('.plus-notice').remove();">×</button>`;
+  return el;
+}
+function plusAnswerWhy(btn, answer){
+  // The buyer's own browser may not be in the test (e.g. a preview), so this
+  // logs only when an arm exists; the answer still shows as thanks.
+  plusLog('why_subscribe', answer);
+  const box = btn.closest('.plus-why');
+  if(box) box.outerHTML = '<div class="plus-msg">Thanks — that helps a lot.</div>';
+  plusNotice = null;
+}
+function plusCollapsed(){ try{ return sessionStorage.getItem('playroute-plus-notnow')==='1'; }catch(e){ return false; } }
+// The unlock card. lockedCount > 0 adds "N more events after next week" (used
+// at the end of a feed whose blurred days aren't on screen).
+function buildPlusCard(lockedCount){
+  const el = document.createElement('div');
+  el.className = 'sp-card sp-solo plus-card';
+  if(plusCollapsed()){
+    el.innerHTML = `<div class="plus-mini"><span>Events past next week are part of Playroute+.</span><button type="button" class="sp-btn" onclick="plusCheckout(this)">Unlock</button></div>`;
+  } else {
+    const more = lockedCount ? `<b>${lockedCount} more event${lockedCount===1?'':'s'}</b> after next week. ` : '';
+    el.innerHTML = `<div class="sp-item"><div class="sp-body">
+      <div class="sp-label">Playroute+ · ${PLUS_PRICE_LABEL}</div>
+      <div class="sp-text">${more}<b>See everything coming up</b>, not just the next 7 days — plan holidays, camps and weekends ahead, and keep a one-person local project going.</div>
+      <button type="button" class="sp-btn" onclick="plusCheckout(this)">Unlock for ${PLUS_PRICE_LABEL}</button>
+      <div class="plus-links"><a onclick="plusToggleSignin(this)">Already a member? Sign in</a> · <a onclick="plusNotNow(this)">Not now</a></div>
+      <form class="plus-form" hidden onsubmit="event.preventDefault();plusSignin(this)">
+        <input type="email" name="email" required autocomplete="email" placeholder="Email you subscribed with" aria-label="Email you subscribed with">
+        <button type="submit" class="sp-btn" style="margin-top:0;">Email me a link</button>
+      </form>
+      <div class="plus-why" hidden></div>
+      <div class="plus-msg" role="status"></div>
+    </div></div>`;
+  }
+  // Exposure = the card was actually on screen (≥50%), not just assigned.
+  if('IntersectionObserver' in window){
+    const io = new IntersectionObserver(entries=>{
+      if(entries.some(e=>e.isIntersecting)){ plusLog('exposed'); io.disconnect(); }
+    }, {threshold:0.5});
+    io.observe(el);
+  } else plusLog('exposed');
+  return el;
+}
+function plusMsg(fromEl, text){ const m = fromEl.closest('.plus-card').querySelector('.plus-msg'); if(m) m.textContent = text; }
+async function plusCheckout(btn){
+  plusLog('unlock_tap');
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Opening checkout…';
+  try{
+    const r = await fetch(`${API_BASE}/api/plus/checkout`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({arm:plusArm(), preview:plusPreview()})});
+    const d = await r.json();
+    if(!r.ok || !d.url) throw new Error(d.error || 'Checkout unavailable');
+    location.href = d.url;
+  }catch(e){
+    btn.disabled = false; btn.textContent = label;
+    const card = btn.closest('.plus-card');
+    const m = card && card.querySelector('.plus-msg');
+    if(m) m.textContent = 'Checkout didn’t open. Please try again in a moment.';
+  }
+}
+function plusToggleSignin(a){
+  const f = a.closest('.plus-card').querySelector('.plus-form');
+  f.hidden = !f.hidden;
+  if(!f.hidden) f.querySelector('input').focus();
+}
+async function plusSignin(form){
+  const email = form.email.value.trim();
+  const btn = form.querySelector('button');
+  btn.disabled = true;
+  plusLog('signin_request');
+  try{
+    const r = await fetch(`${API_BASE}/api/plus/signin`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email, arm:plusArm(), preview:plusPreview()})});
+    const d = await r.json();
+    plusMsg(form, d.message || d.error || 'Check your email.');
+  }catch(e){ plusMsg(form, 'Couldn’t send the link. Please try again.'); }
+  btn.disabled = false;
+}
+function plusNotNow(a){
+  const box = a.closest('.plus-card').querySelector('.plus-why');
+  const reasons = ['Too pricey','I don’t plan that far ahead','Not sure what I’d get','Just browsing'];
+  box.innerHTML = `<span class="plus-msg" style="width:100%;margin:0;">No problem — mind saying why?</span>` +
+    reasons.map(r=>`<button type="button" class="plus-chip" onclick="plusNotNowReason('${r.replace(/'/g,"\\'")}')">${r}</button>`).join('') +
+    `<button type="button" class="plus-chip" onclick="plusNotNowReason(null)">Skip</button>`;
+  box.hidden = false;
+}
+function plusNotNowReason(reason){
+  plusLog('not_now', reason || 'skipped');
+  try{ sessionStorage.setItem('playroute-plus-notnow','1'); }catch(e){}
+  renderFeed();
+}
+async function plusManage(){
+  try{
+    const r = await fetch(`${API_BASE}/api/plus/portal`,{method:"POST"});
+    const d = await r.json();
+    if(d.url) location.href = d.url;
+  }catch(e){}
+}
+async function plusSignOut(){
+  try{ await fetch(`${API_BASE}/api/plus/signout`,{method:"POST"}); }catch(e){}
+  plusStatus = null; renderPlusFooter(); renderFeed();
+}
+function renderPlusFooter(){
+  const f = document.querySelector('footer');
+  if(!f) return;
+  let line = document.getElementById('plusFooter');
+  if(!isPlusMember()){ if(line) line.remove(); return; }
+  if(!line){ line = document.createElement('div'); line.id = 'plusFooter'; line.className = 'plus-footer'; f.appendChild(line); }
+  const renew = plusStatus.renewsOn ? new Date(plusStatus.renewsOn).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}) : null;
+  const when = renew ? (plusStatus.cancelAtPeriodEnd ? ` · ends ${renew}` : ` · renews ${renew}`) : '';
+  line.innerHTML = `PLAYROUTE+ MEMBER${plusStatus.testMode ? ' (TEST MODE)' : ''}${when} · <a onclick="plusManage()">Manage</a> · <a onclick="plusSignOut()">Sign out</a>`;
+}
+// Blur a card past the free window: unclickable, links stripped, hidden from
+// screen readers (the unlock card explains it). Day headings stay readable.
+function lockPlusCard(card){
+  card.classList.add('plus-locked');
+  card.setAttribute('aria-hidden','true');
+  card.inert = true;
+  card.onclick = null;
+  card.querySelectorAll('a[href]').forEach(a=>a.removeAttribute('href'));
+}
+function plusInitTracking(){
+  const arm = plusArm();
+  if(!arm || plusPreview()) return;
+  try{ gtag('set','user_properties',{plus_arm: arm}); }catch(e){}
+  plusLog('assigned');
+}
+
 const FEATURE_PICKS_ENABLED = false;
 let picks = [];
 function picksPreviewToken(){
