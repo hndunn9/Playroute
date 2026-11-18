@@ -43,6 +43,9 @@ keep reads proportional to traffic:
 
 ## Before delivering code
 - `node --check src/index.js` (and the other `src/*.js` you touched).
+- `npm test` (unit tests in `tests/`).
+- Decode fetched feeds with `responseText(res)` / `fetchTextWithFallback`, not `res.text()`:
+  `res.text()` turns non-UTF-8 bytes into U+FFFD (Boulder's Communico export has some).
 - For `public/*.html`: run a real HTML tag-matching parser (htmlparser2), a real
   CSS parser, and a syntax check on the inline `<script>`. Brace-counting isn't enough.
 - **No bare hex colors in `public/index.html` CSS.** Use the Granite & Glacier tokens on `:root`

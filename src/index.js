@@ -6,6 +6,7 @@ import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SO
 // without this re-export, would be invisible to the platform.
 export { EventDiscoveryWorkflow } from "./discovery-workflow.js";
 import { cleanSourceForDisplay, selectDigestDays } from "./digest-rules.js";
+import { responseText, repairReplacementChars } from "./text-decode.js";
 import { nextSendDate, mtDateStr, isThursdayMT, variantFor, summarizeResults, validateAgentDraft, buildAgentPrompt, parseAgentReply, verifyResendWebhook, RESEND_EVENT_TYPES } from "./newsletter-agent.js";
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
@@ -1990,7 +1991,8 @@ const BLOCK_STATUSES = new Set([401, 403, 429, 451]);
 const BROWSERLIKE_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 async function fetchTextWithFallback(env, url, headers = {}, label = "feed") {
   const res = await fetch(url, { headers: { "User-Agent": BROWSERLIKE_UA, ...headers }, signal: AbortSignal.timeout(20000) });
-  if (res.ok) return { text: await res.text(), viaBrowser: false };
+  // Not res.text(): that turns any non-UTF-8 byte into U+FFFD (see text-decode.js).
+  if (res.ok) return { text: await responseText(res), viaBrowser: false };
   if (!BLOCK_STATUSES.has(res.status)) throw new Error(`${label} returned ${res.status}`);
   let html;
   try {
@@ -4120,7 +4122,14 @@ async function fetchBoulderCommunico(env) {
       const tagRe = /<(\w+)>([\s\S]*?)<\/\1>/g;
       let t;
       while ((t = tagRe.exec(m[1])) !== null) fields[t[1]] = t[2];
-      const field = (tag) => fields[tag] ? decodeHtmlEntities(fields[tag].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/, "$1")).trim() : "";
+      const field = (tag) => {
+        if (!fields[tag]) return "";
+        const v = decodeHtmlEntities(fields[tag].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/, "$1")).trim();
+        if (!v.includes("\uFFFD")) return v;
+        // The bytes decoded cleanly but the export itself sent U+FFFD.
+        console.warn(`[boulder] U+FFFD in ${tag} from the export; repaired: "${v.slice(0, 80)}"`);
+        return repairReplacementChars(v);
+      };
       const location = field("Location");
       if (!location || /virtual|online/i.test(location)) continue; // a place families can go
       const ages = parseBoulderAges(field("Ages"));
