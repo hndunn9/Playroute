@@ -7,6 +7,7 @@ import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SO
 export { EventDiscoveryWorkflow } from "./discovery-workflow.js";
 import { cleanSourceForDisplay, selectDigestDays } from "./digest-rules.js";
 import { responseText, repairReplacementChars } from "./text-decode.js";
+import { wlListPagerScript, wlSections } from "./wl-pager.js";
 import { nextSendDate, mtDateStr, isThursdayMT, variantFor, summarizeResults, validateAgentDraft, buildAgentPrompt, parseAgentReply, verifyResendWebhook, RESEND_EVENT_TYPES } from "./newsletter-agent.js";
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
@@ -2185,7 +2186,11 @@ const WELLNESSLIVING_STUDIOS = {
     source: "Louisville Community Yoga",
     city: "Louisville",
     familyOnly: true, // mostly adult workshops -- keep only kid/caregiver ones
-    linkFallback: "https://louisvillecommunityyoga.com/workshops/"
+    linkFallback: "https://louisvillecommunityyoga.com/workshops/",
+    // The workshops widget is a list of 5 cards per page with numbered
+    // pagination (7 pages on 2026-11-21). Reading only page 1 missed most
+    // upcoming family classes, so click through up to this many pages.
+    pageList: 12
   },
   raising_parents: {
     url: "https://raisingparentsco.com/calendar",
@@ -2472,12 +2477,12 @@ async function wlExtractWithClaude(env, cfg, markdown, today) {
     headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: WL_EXTRACT_MODEL,
-      max_tokens: 4096,
+      max_tokens: cfg.pageList > 1 ? 12000 : 4096, // a 7-page list holds ~35 cards
       system: "You extract class and event sessions from a booking widget's rendered text. Reply with only a JSON object, no prose.",
       messages: [{ role: "user", content:
 `Today is ${today} (US Mountain Time). Below is the rendered schedule for ${cfg.source} in ${cfg.city}, Colorado.
 
-List every upcoming session shown in the schedule itself (not filter lists or menus)${cfg.horizonDays ? `, dated from ${today} through ${addDaysStr(today, cfg.horizonDays - 1)} only` : ""}. The text may contain several \"=== WEEK n: <date range> ===\" sections, one per week of the calendar; use each section's date range to resolve that section's day headings to full dates, and list a session once even if it appears in two sections. Where a day heading omits the year, resolve it to the next occurrence on or after today. Use only times actually shown. Set last_date equal to first_date unless that specific listing explicitly says it repeats through a later date.
+List every upcoming session shown in the schedule itself (not filter lists or menus)${cfg.horizonDays ? `, dated from ${today} through ${addDaysStr(today, cfg.horizonDays - 1)} only` : ""}. The text may contain several \"=== WEEK n: <date range> ===\" sections, one per week of the calendar; use each section's date range to resolve that section's day headings to full dates, and list a session once even if it appears in two sections. It may instead contain \"=== PAGE n of m ===\" sections, one per page of an event list; read every page, and use the dates printed on each card. Where a day heading omits the year, resolve it to the next occurrence on or after today. Use only times actually shown. Set last_date equal to first_date unless that specific listing explicitly says it repeats through a later date.
 
 Return {"events":[{"title","first_date":"YYYY-MM-DD","last_date":"YYYY-MM-DD","weekday","start_time":"HH:MM 24h","end_time":"HH:MM 24h","price","age_min","age_max","description","link"}]}. Copy titles exactly as shown. age_min/age_max are whole years from an age range shown on the session (e.g. "0 mo – 1 yrs" = 0 and 1, "1 – 7 yrs" = 1 and 7); leave them out if none is shown. Copy price text exactly (e.g. "$12/class", "Free"). Skip sessions marked Closed only if their time has already passed today. Return {"events":[]} if no sessions are shown.
 
@@ -2504,19 +2509,12 @@ function wlSnippet(markdown) {
 // week at a time: smaller input, one date range per call. Uses the Workers AI
 // binding when present (no Browser Run rate limit); otherwise /json per week.
 const WL_FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-function wlWeekSections(markdown) {
-  const parts = String(markdown).split(/(?==== WEEK \d+:)/).filter((p) => /=== WEEK \d+:/.test(p));
-  if (parts.length) return parts.slice(0, 6);
-  const out = [];
-  for (let i = 0; i < markdown.length && out.length < 6; i += 12000) out.push(markdown.slice(i, i + 12000));
-  return out;
-}
 async function wlExtractWithCloudflareAI(env, markdown, today) {
-  const prompt = (section) => `Today is ${today}. Below is ONE week of a family studio's class schedule (US Mountain Time). ` +
+  const prompt = (section) => `Today is ${today}. Below is ONE week or page of a family studio's class schedule (US Mountain Time). ` +
     `List every session in the schedule itself, ignoring filter lists and menus. Each session shows a start and end time next to its name: copy them as 24-hour HH:MM. ` +
     `Use the week's date range to turn each day heading into a full YYYY-MM-DD date. Set last_date equal to first_date.\n\n${section.slice(0, 14000)}`;
   const all = [];
-  for (const section of wlWeekSections(markdown)) {
+  for (const section of wlSections(markdown)) {
     let events = [];
     if (env.AI && typeof env.AI.run === "function") {
       const res = await env.AI.run(WL_FALLBACK_MODEL, {
@@ -2565,10 +2563,12 @@ async function scrapeWellnessLivingStudio(env, key, stage = {}) {
     gotoOptions: { waitUntil: cfg.gotoWait || "networkidle0", timeout: cfg.gotoTimeoutMs || 60000 }
   };
   if (cfg.viewport) markdownBody.viewport = cfg.viewport;
-  if (cfg.pageWeeks > 1) {
-    // Page through the week view in-browser and capture every week in this
-    // one Browser Run call (still 1 request against the 1-per-10 s limit).
-    markdownBody.addScriptTag = [{ content: wlWeekPagerScript(cfg.pageWeeks) }];
+  if (cfg.pageWeeks > 1 || cfg.pageList > 1) {
+    // Page through the widget in-browser (week view or numbered list pages)
+    // and capture every page in this one Browser Run call (still 1 request
+    // against the 1-per-10 s limit).
+    const script = cfg.pageList > 1 ? wlListPagerScript(cfg.pageList) : wlWeekPagerScript(cfg.pageWeeks);
+    markdownBody.addScriptTag = [{ content: script }];
     markdownBody.waitForSelector = { selector: "#pr-weeks-done", timeout: 55000 };
   } else {
     markdownBody.waitForTimeout = cfg.settleMs || 5000;
