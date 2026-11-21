@@ -180,6 +180,17 @@ async function checkDuplicateRisk(env, ev, sourceRow = null) {
     if (anySource) return { isDuplicate: true };
   }
 
+  // Fifth gap found 2026-11-21: the same session at the same place, date and
+  // time under a reworded or date-suffixed title ("Boulder Phil Storytime" vs
+  // "Boulder Phil Story Time- Special Nutcracker Storytime...", "Bilingual
+  // Storytime (11/23/2026)") was approved twice.
+  if (isDated) {
+    const { results: slotRows } = await env.DB.prepare(
+      `SELECT title, source, source_id FROM events WHERE city = ? AND event_date = ? AND start_time = ?`
+    ).bind(ev.city, ev.event_date, ev.start_time).all();
+    if (sameSlotDuplicate(slotRows, ev)) return { isDuplicate: true };
+  }
+
   // Recurring coverage with loose titles (see coveredByRecurring).
   if (isDated) {
     const { results: recurringRows } = await env.DB.prepare(
@@ -258,7 +269,7 @@ async function preloadIngestIndex(env, sourceRow, candidates) {
        FROM events WHERE city IN (${cities.map(() => "?").join(",")})
         AND (recurrence = 'weekly' OR event_date IS NULL OR event_date >= date('now', '-1 day'))`
   ).bind(...cities).all();
-  const live = { exact: new Set(), datedAny: new Set(), weekly: new Map(), sameDay: new Map(), recurring: new Map() };
+  const live = { exact: new Set(), datedAny: new Set(), datedSlot: new Map(), weekly: new Map(), sameDay: new Map(), recurring: new Map() };
   for (const e of rows || []) {
     if (e.recurrence === "weekly" || String(e.recurrence || "").startsWith("monthly-")) {
       const rk = [e.city, e.start_time].join("|");
@@ -269,6 +280,9 @@ async function preloadIngestIndex(env, sourceRow, candidates) {
     live.exact.add([e.title, e.city, e.start_time, e.recurrence === "dated" ? e.event_date : e.day_of_week, e.source].join("|"));
     if (e.event_date) {
       live.datedAny.add([lt, e.city, e.event_date, e.start_time].join("|"));
+      const sk = [e.city, e.event_date, e.start_time].join("|");
+      if (!live.datedSlot.has(sk)) live.datedSlot.set(sk, []);
+      live.datedSlot.get(sk).push(e);
       const dk = [e.title, e.city, e.event_date].join("|");
       if (!live.sameDay.has(dk)) live.sameDay.set(dk, e.start_time);
     }
@@ -345,12 +359,26 @@ function coveredByRecurring(rows, ev, sourceRow) {
   return (rows || []).some((r) => looseTitleMatch(r.title, ev.title) && sameSource(r, ev, sourceRow) && recurringCoversDate(r, ev.event_date));
 }
 
+// A live dated row already holds this session: same city, date and start time
+// (the caller's query/index), the same location string, and loosely the same
+// title. Location is the full source string, not source_id: one library
+// source covers several branches, and "Storytime" at Meadows and at NoBo at
+// the same hour are two events.
+function sameLocation(a, b) {
+  const norm = (x) => String(x || "").toLowerCase().replace(/\s+/g, " ").trim();
+  return !!norm(a) && norm(a) === norm(b);
+}
+function sameSlotDuplicate(rows, ev) {
+  return (rows || []).some((r) => sameLocation(r.source, ev.source) && sameSlotTitle(r.title, ev.title));
+}
+
 // Same rules as checkDuplicateRisk, answered from the preloaded index.
 function checkDuplicateRiskIndexed(live, ev, sourceRow = null) {
   const isDated = ev.recurrence === "dated" && ev.event_date;
   const slot = isDated ? ev.event_date : ev.day_of_week;
   if (ev.source && live.exact.has([ev.title, ev.city, ev.start_time, slot, ev.source].join("|"))) return { isDuplicate: true };
   if (isDated && live.datedAny.has([String(ev.title || "").toLowerCase(), ev.city, ev.event_date, ev.start_time].join("|"))) return { isDuplicate: true };
+  if (isDated && sameSlotDuplicate((live.datedSlot && live.datedSlot.get([ev.city, ev.event_date, ev.start_time].join("|"))) || [], ev)) return { isDuplicate: true };
   if (isDated && coveredByRecurring(live.recurring.get([ev.city, ev.start_time].join("|")), ev, sourceRow)) return { isDuplicate: true };
   if (isDated && ev.day_of_week) {
     const weekly = live.weekly.get([ev.title, ev.city, ev.day_of_week, ev.start_time].join("|")) || [];
@@ -499,6 +527,45 @@ const PLACEHOLDER_TITLE_RE = /\b(draft|tbd|tba|test event)\b|(^|[\s:])\?+\s*$|^[
 // Not open to the public, or not for kids even with a kid word in the title
 // (school outreach visits, class visits, prenatal programs for parents).
 const NOT_PUBLIC_KIDS_RE = /\b(outreach|school visit|class visit|kinder class|prenatal)\b/i;
+// 2026-11-21: library staff mark cancellations in the title in more ways than
+// a leading "Canceled:" ("Closed cancelled Storytime at Meadows"), so match
+// the word anywhere, plus a leading "Closed".
+const CANCELLED_TITLE_RE = /\b(cancel+ed|cancell?ation|postponed)\b|^\s*closed\b/i;
+
+// Description wording that means this session won't happen. Kept narrow on
+// purpose: "may be cancelled for weather" is not a cancellation.
+const CANCELLED_DESC_RE = /\b(this (event|program|class|session|storytime) (has been|is|was) cancel+ed|has been cancel+ed|is cancel+ed|no (additional|further|more) sessions will)\b/i;
+
+// True when a candidate's own fields say it's cancelled. `values` is every
+// other field the source gave (a status field like <Status>Canceled</Status>
+// counts when its whole value is the word).
+function looksCancelled(title, description = "", values = []) {
+  if (CANCELLED_TITLE_RE.test(String(title || ""))) return true;
+  if (CANCELLED_DESC_RE.test(String(description || ""))) return true;
+  return (values || []).some((v) => /^\s*(cancel+ed|postponed)\s*$/i.test(String(v || "")));
+}
+
+// Some calendars (Longmont's search results) append the date and sometimes
+// the time to the title: "Bilingual Storytime (11/23/2026)", "All Ages Stay &
+// Play Monday (11/23/2026 10:30 am)". Each variant got its own dedup_key and
+// slipped past the exact-title live check, so the same session was approved
+// two or three times.
+function stripDateSuffix(title) {
+  return String(title || "").replace(/\s*\(\s*\d{1,2}\/\d{1,2}\/\d{2,4}(?:\s+\d{1,2}(?::\d{2})?\s*[ap]\.?m\.?)?\s*\)\s*$/i, "").trim();
+}
+
+// Title key for "is this the same session in the same slot": date suffix off,
+// "story time" == "storytime", punctuation ignored.
+function slotTitleKey(title) {
+  return stripDateSuffix(title).toLowerCase().replace(/\bstory\s+time\b/g, "storytime").replace(/[^a-z0-9]+/g, " ").trim();
+}
+function sameSlotTitle(a, b) {
+  const na = slotTitleKey(a), nb = slotTitleKey(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const [short, long] = na.length <= nb.length ? [na, nb] : [nb, na];
+  return short.length >= 6 && (` ${long} `).includes(` ${short} `);
+}
 const REGISTRATION_SERIES_RE = /\bbuddies\b.*\bregister\b|[-–—:]\s*register\s*$/i;
 const ADULT_TOPIC_RE = /\b(tech tuesday|orientation|book group|board meeting|genealogy|virtual training|book club|brew(ing|ery)|pints?|wine|beer|cocktails?|an evening with|lecture|ballots?|voters?|elections?|seed swap|tea of the month|grow your business|small business|resumes?|job search|medicare|retirement|estate planning|taxes)\b/i;
 
@@ -525,6 +592,7 @@ function decodeEntities(str) {
 function contentFilter(ev) {
   const title = String(ev.title || "");
   if (PLACEHOLDER_TITLE_RE.test(title)) return "placeholder-title";
+  if (looksCancelled(title, ev.note)) return "cancelled";
   if (title.length > MAX_TITLE_LENGTH || GARBLED_TITLE_RE.test(title)) return "garbled-title";
   // Next year's template copied onto this year's date ("Yoga en español 2027"
   // on an Oct 2026 event, "2027 Crafternoon: ?").
@@ -690,4 +758,4 @@ async function runSources(env, { cadence = null, sourceKey = null } = {}) {
   return summary;
 }
 
-export { REJECT_REASONS, looseTitleMatch, recurringCoversDate, coveredByRecurring, preloadIngestIndex, checkDuplicateRiskIndexed, titleKey, contentFilter, decodeEntities, loadReviewContext, applyReviewHistory, validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };
+export { REJECT_REASONS, looseTitleMatch, looksCancelled, stripDateSuffix, sameSlotTitle, sameSlotDuplicate, recurringCoversDate, coveredByRecurring, preloadIngestIndex, checkDuplicateRiskIndexed, titleKey, contentFilter, decodeEntities, loadReviewContext, applyReviewHistory, validateCandidate, buildStableDedupKey, checkDuplicateRisk, ingestCandidate, runSources, SOURCE_RUNNERS, VALID_CATEGORIES, VALID_COSTS };

@@ -1,4 +1,4 @@
-import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SOURCE_RUNNERS, REJECT_REASONS, titleKey } from "./pipeline.js";
+import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SOURCE_RUNNERS, REJECT_REASONS, titleKey, looksCancelled, stripDateSuffix } from "./pipeline.js";
 // Re-exported (not just defined in its own file) because wrangler.jsonc's
 // workflows binding points at class_name "EventDiscoveryWorkflow", and
 // Cloudflare resolves that against whatever this file (the `main` entry
@@ -845,7 +845,7 @@ function parseLibraryMarketBlock(blockText, href) {
     ageGroup: ageGroupMatch ? ageGroupMatch[1].trim() : null,
     details: detailsMatch ? truncateAtBoundary(decodeHtmlEntities(detailsMatch[1]).trim(), 400) : null,
     notSponsored: LYONS_NOT_SPONSORED_RE.test(blockText),
-    cancelled: /^CANCELL?ED\b/i.test(title),
+    cancelled: looksCancelled(title, detailsMatch ? detailsMatch[1] : ""),
     href
   };
 }
@@ -1283,6 +1283,10 @@ function scanLongmontListHtml(html, opts, seen, out, maxDate = null) {
     const knownTitle = titles.get(longmontPath(hrefPositions[i].href));
     const parsed = parseLongmontEventChunk(noScript.slice(start, end), hrefPositions[i].href, hrefPositions[i].eventDate, { ...opts, knownTitle });
     if (!parsed) continue;
+    // Search results append "(11/23/2026)" or "(11/23/2026 10:30 am)" to the
+    // title, which made each variant a new candidate and duplicate.
+    parsed.title = stripDateSuffix(parsed.title);
+    if (!parsed.title) continue;
     const dedupSig = `${parsed.title}|${parsed.event_date}|${parsed.start_time}`;
     if (seen.has(dedupSig)) continue;
     seen.add(dedupSig);
@@ -4141,7 +4145,11 @@ async function fetchBoulderCommunico(env) {
       const endLabel = field("EndTime");
       const startTime = to24HourAnythink(startLabel);
       if (!title || !monthDay || !weekday || !startTime) continue;
-      if (/^cancel/i.test(title) || BOULDER_SKIP_TITLE_RE.test(title)) continue;
+      // The calendar shows a "Canceled" badge while the title stays the same
+      // (Craft Storytime, Nov 2026), so check the description and every other
+      // field too, not just a leading "Cancel" in the title. Dropping it here
+      // also lets the weekly verification flag the live copy for removal.
+      if (looksCancelled(title, field("ShortDescription"), Object.keys(fields).filter((k) => k !== "Title").map(field)) || BOULDER_SKIP_TITLE_RE.test(title)) continue;
       if (ages.allAgesOnly && !BOULDER_KID_TITLE_RE.test(title)) continue;
       const resolved = communicoEventDate(field, now);
       if (!resolved) continue;
