@@ -10,6 +10,7 @@ import { responseText, repairReplacementChars } from "./text-decode.js";
 import { wlListPagerScript, wlSections } from "./wl-pager.js";
 import { cleanEventDescription, mentionsFee, jrCleanTitle } from "./event-text.js";
 import { museumKeep, museumNote, tribeTiming, mapBcParksEvent, BC_PARKS_API } from "./tribe-sources.js";
+import { isMeadEvent, mapMeadEvent, libcalClock } from "./hpld-sources.js";
 import { nextSendDate, mtDateStr, isThursdayMT, variantFor, summarizeResults, validateAgentDraft, buildAgentPrompt, parseAgentReply, verifyResendWebhook, RESEND_EVENT_TYPES } from "./newsletter-agent.js";
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
@@ -4230,31 +4231,6 @@ SOURCE_RUNNERS.erie_ical = async () => {
 // page, keep campus "Mead Public Library".
 const MEAD_LIBCAL_LIST = "https://highplains.libcal.com/ajax/calendar/list?c=8181&date=0000-00-00&perpage=100&audience=&cats=&camps=&inc=0";
 const MEAD_HORIZON_DAYS = 45;
-const HPLD_AUDIENCE_AGES = {
-  "baby/toddler": [0, 3], "preschool": [3, 5], "elementary school": [5, 11],
-  "family": [0, 12], "all ages": [0, 12]
-};
-
-function hpldAges(audiences) {
-  let min = null, max = null;
-  for (const a of audiences || []) {
-    const r = HPLD_AUDIENCE_AGES[String(a.name || "").toLowerCase()];
-    if (!r) continue;
-    if (min === null || r[0] < min) min = r[0];
-    if (max === null || r[1] > max) max = r[1];
-  }
-  return min === null ? null : { age_min: min, age_max: max };
-}
-
-function libcalClock(dt) {
-  const m = /\s(\d{2}):(\d{2})/.exec(dt || "");
-  if (!m) return null;
-  let h = +m[1];
-  const ap = h >= 12 ? "pm" : "am";
-  h = h % 12 || 12;
-  return { hhmm: `${m[1]}:${m[2]}`, label: `${h}:${m[2]}${ap}` };
-}
-
 async function fetchMeadLibrary() {
   const today = toMountainDateStr(new Date());
   const horizon = toMountainDateStr(new Date(Date.now() + MEAD_HORIZON_DAYS * 864e5));
@@ -4269,38 +4245,16 @@ async function fetchMeadLibrary() {
     const items = data.results || [];
     if (page === 1) sample = JSON.stringify(items.slice(0, 2)).slice(0, 900);
     for (const ev of items) {
-      if (ev.campus !== "Mead Public Library") continue;
+      if (!isMeadEvent(ev)) continue;
       seenMead++;
-      const date = String(ev.startdt || "").slice(0, 10);
-      if (!date || date < today || date > horizon) continue;
-      if (ev.all_day || /cancel/i.test(ev.title || "")) continue;
-      const ages = hpldAges(ev.audiences);
-      if (!ages) continue; // adults / teens only
-      const start = libcalClock(ev.startdt), end = libcalClock(ev.enddt);
-      if (!start) continue;
-      const desc = decodeHtmlEntities(stripTags(ev.shortdesc || ev.description || "")).replace(/\s+/g, " ").trim();
-      out.push({
-        title: decodeHtmlEntities(ev.title).trim(),
-        source: `Mead Public Library${ev.location ? " — " + decodeHtmlEntities(ev.location) : ""}`,
-        city: "Mead",
-        category: "library",
-        cost: "free",
-        age_min: ages.age_min,
-        age_max: ages.age_max,
-        day_of_week: dayOfWeekFor(date),
-        start_time: start.hhmm,
-        display_time: end ? `${start.label} – ${end.label}` : start.label,
-        recurrence: "dated",
-        event_date: date,
-        note: desc ? truncateAtBoundary(desc, 300) : null,
-        source_url: ev.url || "https://highplains.libcal.com/calendar?cid=8181"
-      });
+      const row = mapMeadEvent(ev, { today, horizon });
+      if (row) out.push(row);
     }
     if (items.length < 100) break; // last page
   }
   // No Mead events at all (any audience) means the feed or campus name
   // changed; Mead events that are all adult-only just means a quiet week.
-  if (seenMead === 0) throw zeroFoundError("Mead library (no events with campus \"Mead Public Library\")", sample);
+  if (seenMead === 0) throw zeroFoundError("Mead library (no events with a Mead campus)", sample);
   return out;
 }
 SOURCE_RUNNERS.mead_library = async () => fetchMeadLibrary();
