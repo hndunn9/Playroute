@@ -8,6 +8,8 @@ export { EventDiscoveryWorkflow } from "./discovery-workflow.js";
 import { cleanSourceForDisplay, selectDigestDays } from "./digest-rules.js";
 import { responseText, repairReplacementChars } from "./text-decode.js";
 import { wlListPagerScript, wlSections } from "./wl-pager.js";
+import { cleanEventDescription, mentionsFee, jrCleanTitle } from "./event-text.js";
+import { museumKeep, museumNote, tribeTiming, mapBcParksEvent, BC_PARKS_API } from "./tribe-sources.js";
 import { nextSendDate, mtDateStr, isThursdayMT, variantFor, summarizeResults, validateAgentDraft, buildAgentPrompt, parseAgentReply, verifyResendWebhook, RESEND_EVENT_TYPES } from "./newsletter-agent.js";
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
@@ -1350,7 +1352,8 @@ SOURCE_RUNNERS.longmont_museum = async () => fetchAndScanLongmontLibrary({
 // Confirmed 2026-10-01: /wp-json/tribe/events/v1/events returns clean JSON
 // with start/end times, permalinks and category names. Keep "For Kids and
 // Families" / "Children's Program" listings; drop "Member Exclusive" ones
-// (members-only, same rule as membership programming at businesses).
+// (members-only, same rule as membership programming at businesses) unless
+// the text says the public can drop in -- see museumKeep in tribe-sources.js.
 const MUSEUM_OF_BOULDER_API = "https://museumofboulder.org/wp-json/tribe/events/v1/events";
 async function fetchMuseumOfBoulder() {
   const today = toMountainDateStr(new Date());
@@ -1363,8 +1366,7 @@ async function fetchMuseumOfBoulder() {
     const data = await res.json();
     for (const e of data.events || []) {
       const cats = (e.categories || []).map((c) => String(c.name || ""));
-      if (!cats.some((c) => /kids|famil|children/i.test(c))) continue;
-      if (cats.some((c) => /member exclusive/i.test(c))) continue;
+      if (!museumKeep(e)) continue;
       if (e.all_day) continue; // no real time to show
       const title = decodeHtmlEntities(String(e.title || "")).trim();
       const [date, startClock] = String(e.start_date || "").split(" ");
@@ -1374,7 +1376,7 @@ async function fetchMuseumOfBoulder() {
       const fmt = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
       const ages = ageFromLongmontTitle(title);
       const free = cats.some((c) => /free/i.test(c)) || /\bfree\b/i.test(String(e.cost || ""));
-      const desc = decodeHtmlEntities(stripTags(String(e.excerpt || e.description || ""))).replace(/\s+/g, " ").trim();
+      const desc = museumNote(e);
       out.push({
         title,
         source: "Museum of Boulder",
@@ -1397,6 +1399,36 @@ async function fetchMuseumOfBoulder() {
   return out;
 }
 SOURCE_RUNNERS.museum_of_boulder = async () => fetchMuseumOfBoulder();
+
+// --- Boulder County Parks & Open Space (bouldercounty.gov, same tribe API) --
+// Replaces the manual Discover/Offero source (id 27): the county site lists
+// the same programs with clean JSON. Filtering and row shape live in
+// tribe-sources.js (mapBcParksEvent) so they are unit-tested.
+async function fetchBoulderCountyParks() {
+  const today = toMountainDateStr(new Date());
+  const end = toMountainDateStr(new Date(Date.now() + 60 * 864e5));
+  const out = [];
+  let seen = 0;
+  // Build each page URL ourselves: the API's next_rest_url drops the
+  // categories filter (seen 2026-11-22), which would page through every
+  // county event instead of the parks ones.
+  const base = `${BC_PARKS_API}?per_page=50&categories=parks-open-space&start_date=${today}&end_date=${end}`;
+  let totalPages = 1;
+  for (let page = 1; page <= totalPages && page <= 6; page++) {
+    const res = await fetch(`${base}&page=${page}`, { headers: { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)", "Accept": "application/json" } });
+    if (!res.ok) throw new Error(`Boulder County events API returned ${res.status}`);
+    const data = await res.json();
+    totalPages = Number(data.total_pages) || 1;
+    for (const e of data.events || []) {
+      seen++;
+      const row = mapBcParksEvent(e);
+      if (row) out.push({ ...row, note: truncateAtBoundary(row.note, 280) });
+    }
+  }
+  if (!seen) throw zeroFoundError("Boulder County Parks & Open Space", "no events in the parks category");
+  return out;
+}
+SOURCE_RUNNERS.bouldercounty_parks = async () => fetchBoulderCountyParks();
 
 // --- Ned to Go (Nederland community calendar, WordPress + WP Event Manager)
 // Confirmed 2026-10-17: /wp-json/wp/v2/event_listing lists events (title,
@@ -1556,12 +1588,6 @@ function jrYears(iso) {
   const m = String(iso || "").match(/P(\d+)Y(\d+)M/);
   return m ? Math.round((Number(m[1]) + Number(m[2]) / 12) * 10) / 10 : null;
 }
-function jrCleanTitle(name) {
-  return String(name || "")
-    .replace(/\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+\d{1,2}(:\d{2})?\s*[ap]\.?m\.?/ig, "")
-    .replace(/\((erie|louisville|lafayette|boulder|broomfield)\)/ig, "")
-    .replace(/\s{2,}/g, " ").trim();
-}
 async function fetchJackrabbitStudio(key) {
   const cfg = JACKRABBIT_STUDIOS[key];
   const res = await fetch(`https://app.jackrabbitclass.com/jr3.0/Openings/OpeningsJson?OrgID=${cfg.orgId}`, {
@@ -1583,14 +1609,19 @@ async function fetchJackrabbitStudio(key) {
     const city = cfg.cities[r.location_name] || cfg.cities[Object.keys(cfg.cities)[0]];
     const title = jrCleanTitle(r.name);
     const ageMin = jrYears(r.min_age), ageMax = jrYears(r.max_age);
+    // $0 tuition can still carry a fee in the class text ("$50 membership
+    // fee per semester"), so the text decides free vs paid too.
+    const desc = cleanEventDescription(r.description, { title: r.name });
+    const paid = fee !== 0 || mentionsFee(desc);
+    const note = desc ? truncateAtBoundary(desc, 250) : "";
     for (const [k, on] of Object.entries(r.meeting_days || {})) {
       if (!on || !JR_DAYS[k]) continue;
       out.push({
         title,
-        source: `${cfg.source} (${r.location_name || city})`,
+        source: `${cfg.source} ${r.location_name || city}`, // matches the manual rows ("Mountain Kids Erie")
         city,
         category: "rec",
-        cost: fee === 0 ? "free" : "paid",
+        cost: paid ? "paid" : "free",
         age_min: ageMin ?? 0,
         age_max: ageMax ?? 5,
         day_of_week: JR_DAYS[k],
@@ -1599,7 +1630,7 @@ async function fetchJackrabbitStudio(key) {
         recurrence: "weekly",
         season_start: r.start_date ? r.start_date.slice(5) : null,
         season_end: r.end_date ? r.end_date.slice(5) : null,
-        note: fee === 0 ? "Free drop-in." : null,
+        note: note || (paid ? null : "Free drop-in."),
         source_url: cfg.url
       });
     }
