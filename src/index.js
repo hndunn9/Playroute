@@ -5,6 +5,7 @@ import { validateCandidate, buildStableDedupKey, ingestCandidate, runSources, SO
 // point) exports -- a class sitting in discovery-workflow.js alone,
 // without this re-export, would be invisible to the platform.
 export { EventDiscoveryWorkflow } from "./discovery-workflow.js";
+import { SCRAPE_HORIZON_DAYS, scrapeWindow, inScrapeWindow } from "./scrape-horizon.js";
 import { cleanSourceForDisplay, selectDigestDays } from "./digest-rules.js";
 import { responseText, repairReplacementChars } from "./text-decode.js";
 import { wlListPagerScript, wlSections } from "./wl-pager.js";
@@ -1020,7 +1021,7 @@ function ageFromJcplAudiences(audienceTags) {
 // babies/toddlers/preschoolers in the next 30 days.
 const JCPL_GATEWAY = "https://gateway.bibliocommons.com/v2/libraries/jeffcolibrary/events?locale=en-US&limit=100";
 const JCPL_BRANCH = "ARBA";
-const JCPL_HORIZON_DAYS = 30;
+const JCPL_HORIZON_DAYS = SCRAPE_HORIZON_DAYS;
 const JCPL_MAX_PAGES = 80;
 
 // Through Browser Run each page costs ~11 s (1 request / 10 s), so a blocked run
@@ -1259,7 +1260,7 @@ const LONGMONT_SEARCH_BUDGET_MS = 45000;
 // come into range, so only queue the next 30 days. Results are in date
 // order, so once a page is all past the window, paging stops (it adds
 // nothing new), which keeps the run short.
-const LONGMONT_SEARCH_HORIZON_DAYS = 30;
+const LONGMONT_SEARCH_HORIZON_DAYS = SCRAPE_HORIZON_DAYS;
 
 function longmontSearchUrl(term, page) {
   const q = `?tribe-bar-search=${encodeURIComponent(term)}&tribe_eventcategory%5B0%5D=${LONGMONT_LIBRARY_CATEGORY_ID}`;
@@ -1790,6 +1791,9 @@ async function fetchAndScanAnythinkThornton() {
   if (!res.ok) throw new Error(`Anythink Thornton feed returned ${res.status}`);
   const xml = await res.text();
   const now = new Date();
+  // The export runs months ahead (it queued events through March 2027), so
+  // keep only the shared one-month window, like JCPL and Longmont.
+  const win = scrapeWindow(now);
 
   const candidates = [];
   const eventBlockRe = /<event>([\s\S]*?)<\/event>/g;
@@ -1824,6 +1828,7 @@ async function fetchAndScanAnythinkThornton() {
     const resolved = communicoEventDate(field, now);
     if (!resolved) continue;
     const eventDate = resolved.date;
+    if (!inScrapeWindow(eventDate, win)) continue; // past, or more than a month out
 
     const dedupSig = `${title}|${eventDate}|${startTime}|${location}`;
     if (seen.has(dedupSig)) continue;
