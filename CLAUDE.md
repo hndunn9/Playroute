@@ -149,7 +149,10 @@ keep reads proportional to traffic:
   A run that drops every event throws with the drop reasons, so it never reports "ok, 0 found".
   Flow: `/scrape` finds the widget iframe, `/markdown` renders it (networkidle0 + 5 s wait;
   studios with `pageWeeks` instead inject `wlWeekPagerScript` to click through that many weeks
-  in the same call and capture each, reporting problems on a `PAGER:` line),
+  in the same call and capture each, reporting problems on a `PAGER:` line; list widgets with numbered
+  pages set `pageList` (max pages) and inject `wlListPagerScript` from `src/wl-pager.js`. Louisville
+  Community Yoga's workshops list is 5 cards a page, 7 pages on 2026-11-21; reading only page 1 missed
+  most of it and made live series look cancelled),
   then Claude (`WL_EXTRACT_MODEL`, needs `ANTHROPIC_API_KEY`) extracts sessions with today's
   date, because the widget's week headings omit the year. If the key is missing or the Claude
   call fails (e.g. low credit balance), it falls back to Cloudflare's model
