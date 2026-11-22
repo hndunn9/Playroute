@@ -9,6 +9,7 @@ import { cleanSourceForDisplay, selectDigestDays } from "./digest-rules.js";
 import { responseText, repairReplacementChars } from "./text-decode.js";
 import { wlListPagerScript, wlSections } from "./wl-pager.js";
 import { cleanEventDescription, mentionsFee, jrCleanTitle } from "./event-text.js";
+import { parseSessionSlots, expandToSessions, isWideWindow, wideListingCoversSession } from "./session-slots.js";
 import { museumKeep, museumNote, tribeTiming, mapBcParksEvent, BC_PARKS_API } from "./tribe-sources.js";
 import { nextSendDate, mtDateStr, isThursdayMT, variantFor, summarizeResults, validateAgentDraft, buildAgentPrompt, parseAgentReply, verifyResendWebhook, RESEND_EVENT_TYPES } from "./newsletter-agent.js";
 
@@ -1341,12 +1342,40 @@ async function fetchAndScanLongmontLibrary(opts = {}) {
 }
 
 SOURCE_RUNNERS.longmont_library = async () => fetchAndScanLongmontLibrary({ searchTerms: LONGMONT_LIBRARY_KID_SEARCHES });
-SOURCE_RUNNERS.longmont_museum = async () => fetchAndScanLongmontLibrary({
+// Discovery Days list as one wide window ("8 am - 5 pm") but run as
+// several sessions, listed lower on each event page ("9:15 am, 10:45 am,
+// 1 pm; 1 hour 15 minutes per session"). Read one page per series and
+// split each wide listing into its sessions (2026-11-22) -- the wide
+// window kept getting flagged as a time change against the published
+// per-session rows. If a page can't be read, the listing stays as it was
+// and verification's wideListingCoversSession guard keeps it from
+// flagging.
+async function splitLongmontSessions(candidates) {
+  const headers = { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)" };
+  const slotsBySeries = new Map();
+  const seriesOf = (c) => (String(c.source_url || "").match(/\/event\/([\w-]+)\//) || [])[1] || null;
+  for (const c of candidates) {
+    const series = seriesOf(c);
+    if (!series || slotsBySeries.has(series) || !isWideWindow(c)) continue;
+    let slots = null;
+    try {
+      const res = await fetch(c.source_url, { headers, signal: AbortSignal.timeout(LONGMONT_SEARCH_PAGE_TIMEOUT_MS) });
+      if (res.ok) {
+        const html = (await res.text()).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ");
+        slots = parseSessionSlots(decodeHtmlEntities(stripTags(html.replace(/>/g, "> "))));
+      }
+    } catch (e) { slots = null; }
+    slotsBySeries.set(series, slots);
+  }
+  return candidates.flatMap((c) => isWideWindow(c) ? expandToSessions(c, slotsBySeries.get(seriesOf(c)) || null) : [c]);
+}
+
+SOURCE_RUNNERS.longmont_museum = async () => splitLongmontSessions(await fetchAndScanLongmontLibrary({
   listUrl: "https://longmontcolorado.gov/events/category/museum/",
   category: "museum",
   defaultSource: "Longmont Museum",
   kidOnly: true
-});
+}));
 
 // --- Museum of Boulder (WordPress The Events Calendar REST API) ---------
 // Confirmed 2026-10-01: /wp-json/tribe/events/v1/events returns clean JSON
@@ -5138,6 +5167,14 @@ async function runSourceVerification(env, cadence = null, sourceKey = null) {
       );
       const match = sameSlot.find((c) => c.start_time === existing.start_time) || (sameSlot.length === 1 ? sameSlot[0] : null);
       if (!match && sameSlot.length > 1) continue;
+      // One wide listing ("8 am - 5 pm") for a program that runs as several
+      // sessions that day is the same program, not a time change
+      // (Longmont Discovery Days, 2026-11-22).
+      if (match && match.start_time !== existing.start_time) {
+        const liveSessionsThatDay = toCheck.filter((e) => sameEventTitle(e.title, existing.title) &&
+          (existing.recurrence === "dated" ? e.event_date === existing.event_date : e.day_of_week === existing.day_of_week)).length;
+        if (wideListingCoversSession(match, existing, liveSessionsThatDay)) continue;
+      }
 
       if (!match) {
         // Skip if there's already an unresolved flag for this exact event
