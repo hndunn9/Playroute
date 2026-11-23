@@ -5,14 +5,14 @@
 -- flipped from manual.
 
 UPDATE scrape_sources
-SET mode = 'auto', method = 'tribe_rest', adapter_type = 'api', cadence = 'weekly-a',
+SET mode = 'auto', method = 'tribe_rest', adapter_type = 'scraper', cadence = 'weekly-a',
     confidence = 'review', auto_publish = 0, source_key = 'museum_of_boulder',
     platform = 'Museum of Boulder (Events Calendar API)',
     notes = 'museumofboulder.org/wp-json/tribe/events/v1/events, 6 weeks ahead. For Kids and Families only; Member Exclusive dropped unless the text says drop-in / free with admission. Schedule lines and partner bios stripped from the note.'
 WHERE id = 21;
 
 UPDATE scrape_sources
-SET mode = 'auto', method = 'jackrabbit_json', adapter_type = 'api', cadence = 'weekly-a',
+SET mode = 'auto', method = 'jackrabbit_json', adapter_type = 'scraper', cadence = 'weekly-a',
     confidence = 'review', auto_publish = 0, source_key = 'mountain_kids',
     platform = 'Mountain Kids (Jackrabbit, Louisville + Erie)',
     notes = 'app.jackrabbitclass.com/jr3.0/Openings/OpeningsJson?OrgID=135459. Free or drop-in classes only (e.g. Twinkle Stars); paid if the class text names a fee. Camps and parties are not in this feed and still need adding by hand.'
@@ -21,7 +21,7 @@ WHERE id = 64;
 -- Boulder County Parks & Open Space: replaces the JS-only Discover/Offero
 -- calendar with the county site's Events Calendar API.
 UPDATE scrape_sources
-SET mode = 'auto', method = 'tribe_rest', adapter_type = 'api', cadence = 'weekly-a',
+SET mode = 'auto', method = 'tribe_rest', adapter_type = 'scraper', cadence = 'weekly-a',
     confidence = 'review', auto_publish = 0, source_key = 'bouldercounty_parks',
     base_url = 'https://bouldercounty.gov/events/',
     platform = 'Boulder County Parks & Open Space (Events Calendar API)',
