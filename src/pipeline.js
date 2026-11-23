@@ -695,7 +695,7 @@ const SOURCE_RUNNERS = {};
 // does). Every result funnels through ingestCandidate; nothing here ever
 // writes to `events` directly. Stamps last_run_at/last_status/last_error/
 // last_found on scrape_sources for each source it touches.
-const QUIET_OK_SOURCES = new Set(["nedtogo"]);
+const QUIET_OK_SOURCES = new Set(["nedtogo", "downtown_longmont"]);
 
 async function runSources(env, { cadence = null, sourceKey = null } = {}) {
   // sourceKey: run exactly one source -- used by the per-source fan-out
