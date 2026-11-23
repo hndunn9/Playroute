@@ -130,6 +130,13 @@ keep reads proportional to traffic:
     only listings with a kid/family signal get their event page fetched for the "Oct-31-2026 (Sat) @ 10:00 AM"
     line. It's in `QUIET_OK_SOURCES` (pipeline.js): weeks with no kids' events are normal, so two zero runs
     don't error; it throws when the API is empty or no fetched page has a readable date.
+  - Downtown Longmont (`downtown_longmont`, added 2026-11-23, `src/downtown-longmont.js`): server-rendered
+    `/events/calendar?d=next30` (about 3 weeks shown), one `/do/<slug>` card per occurrence. Cards with a kid/family/holiday
+    title word (bars and adult nights dropped, Longmont Museum/Library skipped as covered by their own runners) get their
+    event page read once per title, two at a time (the site rate-limits bursts). Kept only when the Details text or title
+    names kids/families/all ages/an age range and nothing says 21+ or 16+. In `QUIET_OK_SOURCES`.
+  - A Montessori Nest (Squarespace) was checked 2026-11-23 and not automated: no events collection, program dates sit in
+    prose with no year, and robots.txt blocks `?format=json`.
   - Parsers throw `zeroFoundError` (with page text) when they parse nothing. `runSources` also marks any auto
     source that finds 0 two runs in a row as an error.
 - **JS-rendered platforms** (WellnessLiving, Arketa, iClassPro) can't be read with

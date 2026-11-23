@@ -13,6 +13,7 @@ import { cleanEventDescription, mentionsFee, jrCleanTitle } from "./event-text.j
 import { parseSessionSlots, expandToSessions, isWideWindow, wideListingCoversSession } from "./session-slots.js";
 import { museumKeep, museumNote, tribeTiming, mapBcParksEvent, BC_PARKS_API } from "./tribe-sources.js";
 import { isMeadEvent, mapMeadEvent, libcalClock } from "./hpld-sources.js";
+import { DL_CALENDAR_URL, parseDlCards, dlCandidate, dlCleanTitle, parseDlDetail, mapDlEvent } from "./downtown-longmont.js";
 import { nextSendDate, mtDateStr, isThursdayMT, variantFor, summarizeResults, validateAgentDraft, buildAgentPrompt, parseAgentReply, verifyResendWebhook, RESEND_EVENT_TYPES } from "./newsletter-agent.js";
 
 const DAY_INDEX = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
@@ -1460,6 +1461,56 @@ async function fetchBoulderCountyParks() {
   return out;
 }
 SOURCE_RUNNERS.bouldercounty_parks = async () => fetchBoulderCountyParks();
+
+// --- Downtown Longmont (LDDA calendar) --------------------------------------
+// See src/downtown-longmont.js for the page shapes and filters. Family
+// candidates are picked from the calendar cards, then each distinct title's
+// event page is read once (Details text = description, ages, cost). The site
+// rate-limits bursts, so pages are fetched two at a time.
+const DL_HEADERS = { "User-Agent": "PlayrouteBot/1.0 (+https://playroute.co)", "Accept": "text/html" };
+const DL_MAX_DETAILS = 30; // well inside the 50-subrequest Free-plan budget
+async function fetchDowntownLongmont() {
+  const today = toMountainDateStr(new Date());
+  const res = await fetch(DL_CALENDAR_URL, { headers: DL_HEADERS, signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`Downtown Longmont calendar returned ${res.status}`);
+  const html = await res.text();
+  const cards = parseDlCards(html, today).filter((c) => c.date >= today);
+  if (cards.length === 0) throw zeroFoundError("Downtown Longmont calendar", stripTags(html).replace(/\s+/g, " ").slice(0, 900));
+  const candidates = cards.filter(dlCandidate);
+  // One page per distinct title: repeats ("Aladdin Jr." x5) share a Details text.
+  const byTitle = new Map();
+  for (const c of candidates) {
+    const k = dlCleanTitle(c.title, c.venue).toLowerCase();
+    if (!byTitle.has(k) && byTitle.size < DL_MAX_DETAILS) byTitle.set(k, c.url);
+  }
+  const details = new Map();
+  const entries = [...byTitle.entries()];
+  let failed = 0;
+  for (let i = 0; i < entries.length; i += 2) {
+    await Promise.all(entries.slice(i, i + 2).map(async ([k, url]) => {
+      try {
+        const r = await fetch(url, { headers: DL_HEADERS, signal: AbortSignal.timeout(10000) });
+        if (!r.ok) { failed++; return; }
+        details.set(k, parseDlDetail(await r.text()));
+      } catch (e) { failed++; }
+    }));
+  }
+  if (entries.length > 0 && failed === entries.length) {
+    throw new Error(`Downtown Longmont: ${entries.length} family candidates found but none of their event pages loaded.`);
+  }
+  const out = [];
+  const drops = {};
+  for (const c of candidates) {
+    const d = details.get(dlCleanTitle(c.title, c.venue).toLowerCase());
+    const row = mapDlEvent(c, d);
+    if (row.drop) { drops[row.drop] = (drops[row.drop] || 0) + 1; continue; }
+    row.note = truncateAtBoundary(row.note, 280);
+    out.push(row);
+  }
+  console.log(`downtown_longmont: ${cards.length} cards, ${candidates.length} candidates, ${byTitle.size} pages, kept ${out.length}, dropped ${JSON.stringify(drops)}`);
+  return out;
+}
+SOURCE_RUNNERS.downtown_longmont = async () => fetchDowntownLongmont();
 
 // --- Ned to Go (Nederland community calendar, WordPress + WP Event Manager)
 // Confirmed 2026-10-17: /wp-json/wp/v2/event_listing lists events (title,
