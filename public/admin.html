@@ -558,6 +558,9 @@
       <p>Emails every active subscriber right away instead of waiting for Sunday. Only works once the draft is approved.</p>
       <button style="background:#7a2a2a;" onclick="sendRealDigest()">Send approved draft now</button>
       <div class="result" id="realDigestResult"></div>
+      <p style="margin-top:14px;">If some sends failed, this re-sends the last issue only to the addresses that missed it.</p>
+      <button style="background:#7a2a2a;" onclick="resendFailedDigest()">Resend to failed recipients</button>
+      <div class="result" id="resendFailedResult"></div>
     </div>
   </div>
     </div>
@@ -740,6 +743,17 @@ function sendTestDigest(){
   runAction(`/api/digest-now?email=${encodeURIComponent(email)}`, 'digestResult');
 }
 
+async function resendFailedDigest(){
+  if(!confirm('Re-send the last issue to the recipients that failed?')) return;
+  const el = document.getElementById('resendFailedResult');
+  el.className = 'result show loading'; el.textContent = 'Sending…';
+  try{
+    const res = await fetch('/api/admin/newsletter/action', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'resend_failed'})});
+    const data = await res.json();
+    el.className = 'result show ' + (res.ok ? 'ok' : 'err');
+    el.textContent = JSON.stringify(data, null, 2);
+  }catch(err){ el.className = 'result show err'; el.textContent = 'Error: ' + err.message; }
+}
 function sendRealDigest(){
   const typed = prompt('This emails the approved draft to EVERY active subscriber right now. Type SEND to confirm.');
   if((typed||'').trim().toUpperCase() !== 'SEND') return;

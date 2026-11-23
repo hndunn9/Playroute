@@ -4971,21 +4971,29 @@ async function sendDigestEmail(env, toEmail, html, text, subject = "This week on
   if (!env.RESEND_API_KEY || !env.DIGEST_FROM) {
     throw new Error("RESEND_API_KEY / DIGEST_FROM not configured \u2014 see README");
   }
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.RESEND_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from: env.DIGEST_FROM,
-      to: [toEmail],
-      subject,
-      html,
-      text,
-      ...(replyTo ? { reply_to: replyTo } : {})
-    })
-  });
+  // Resend allows 10 requests/second; a 429 is retried (honoring Retry-After) so a
+  // burst can't silently drop subscribers (13 of 43 missed the 2026-11-22 issue).
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: env.DIGEST_FROM,
+        to: [toEmail],
+        subject,
+        html,
+        text,
+        ...(replyTo ? { reply_to: replyTo } : {})
+      })
+    });
+    if (res.status !== 429 || attempt >= 4) break;
+    const wait = Number(res.headers.get("retry-after")) * 1000 || 500 * (attempt + 1);
+    await new Promise((r) => setTimeout(r, Math.min(wait, 3000)));
+  }
   if (!res.ok) {
     throw new Error(`Resend send failed for ${toEmail}: ${res.status} ${await res.text()}`);
   }
@@ -5557,6 +5565,58 @@ async function renderNewsletterDraft(env, draft, variant = "A", { asOf, unsubscr
   };
 }
 
+// Sends one rendered issue to each address, ~7/s (Resend's cap is 10/s) with
+// sendDigestEmail retrying 429s. Returns who failed so they can be retried.
+async function deliverNewsletter(env, draft, rendered, emails) {
+  const sendRows = [], errors = [], failed = [];
+  const counts = { A: 0, B: 0 };
+  for (const email of emails) {
+    const variant = draft.test_plan ? variantFor(email, draft.id) : "A";
+    const r = rendered[variant] || rendered.A;
+    const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}`;
+    try {
+      const id = await sendDigestEmail(env, email, r.html.split("__UNSUB__").join(unsubscribeUrl), r.text, r.subject);
+      counts[variant]++;
+      if (id) sendRows.push([id, draft.id, variant]);
+    } catch (err) {
+      failed.push(email);
+      errors.push(String(err.message || err).slice(0, 200));
+    }
+    await new Promise((res) => setTimeout(res, 140));
+  }
+  // One D1 batch per 50 rows instead of a write per subscriber.
+  for (let i = 0; i < sendRows.length; i += 50) {
+    await env.DB.batch(sendRows.slice(i, i + 50).map(([id, draftId, variant]) =>
+      env.DB.prepare(`INSERT OR IGNORE INTO newsletter_sends (resend_id, draft_id, variant) VALUES (?, ?, ?)`).bind(id, draftId, variant)
+    ));
+  }
+  return { counts, errors, failed };
+}
+
+// Re-sends a sent issue to the addresses recorded in send_summary.failed
+// (still active subscribers only), then updates the summary.
+async function resendFailedNewsletter(env, row) {
+  const prev = (() => { try { return JSON.parse(row.send_summary || "{}"); } catch (e) { return {}; } })();
+  const wanted = Array.isArray(prev.failed) ? prev.failed : [];
+  if (!wanted.length) return { sent: false, reason: "No failed recipients are recorded for this issue." };
+  const { results: active } = await env.DB.prepare("SELECT email FROM subscribers WHERE active = 1").all();
+  const activeSet = new Set(active.map((s) => s.email.toLowerCase()));
+  const emails = wanted.filter((e) => activeSet.has(String(e).toLowerCase()));
+  const draft = decodeNewsletterDraft(row);
+  const now = new Date();
+  const rendered = {
+    A: await renderNewsletterDraft(env, draft, "A", { asOf: now, unsubscribeUrl: "__UNSUB__" }),
+    B: draft.test_plan ? await renderNewsletterDraft(env, draft, "B", { asOf: now, unsubscribeUrl: "__UNSUB__" }) : null
+  };
+  const out = await deliverNewsletter(env, draft, rendered, emails);
+  const summary = {
+    ...prev, A: (prev.A || 0) + out.counts.A, B: (prev.B || 0) + out.counts.B,
+    errors: out.failed.length, errors_sample: out.errors.slice(0, 5), failed: out.failed
+  };
+  await env.DB.prepare(`UPDATE newsletter_drafts SET send_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(JSON.stringify(summary), row.id).run();
+  return { sent: true, retried: emails.length, delivered: out.counts.A + out.counts.B, still_failed: out.failed.length };
+}
+
 // Sunday send. Only an approved draft goes out; otherwise the week is
 // skipped (owner's call, 2026-10). manual = the admin "Send approved draft
 // now" button, which never skips anything.
@@ -5602,29 +5662,8 @@ async function sendApprovedNewsletter(env, { sendDate = mtDateStr(), manual = fa
     A: await renderNewsletterDraft(env, draft, "A", { asOf: now, unsubscribeUrl: "__UNSUB__" }),
     B: draft.test_plan ? await renderNewsletterDraft(env, draft, "B", { asOf: now, unsubscribeUrl: "__UNSUB__" }) : null
   };
-  const sendRows = [];
-  const counts = { A: 0, B: 0, errors: 0 };
-  const errors = [];
-  for (const { email } of subs) {
-    const variant = draft.test_plan ? variantFor(email, draft.id) : "A";
-    const r = rendered[variant] || rendered.A;
-    const unsubscribeUrl = `${DIGEST_SITE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}`;
-    try {
-      const id = await sendDigestEmail(env, email, r.html.split("__UNSUB__").join(unsubscribeUrl), r.text, r.subject);
-      counts[variant]++;
-      if (id) sendRows.push([id, draft.id, variant]);
-    } catch (err) {
-      counts.errors++;
-      errors.push(String(err.message || err).slice(0, 200));
-    }
-  }
-  // One D1 batch per 50 rows instead of a write per subscriber.
-  for (let i = 0; i < sendRows.length; i += 50) {
-    await env.DB.batch(sendRows.slice(i, i + 50).map(([id, draftId, variant]) =>
-      env.DB.prepare(`INSERT OR IGNORE INTO newsletter_sends (resend_id, draft_id, variant) VALUES (?, ?, ?)`).bind(id, draftId, variant)
-    ));
-  }
-  const summary = { ...counts, subscribers: subs.length, errors_sample: errors.slice(0, 5) };
+  const out = await deliverNewsletter(env, draft, rendered, subs.map((s) => s.email));
+  const summary = { A: out.counts.A, B: out.counts.B, errors: out.failed.length, subscribers: subs.length, errors_sample: out.errors.slice(0, 5), failed: out.failed };
   await env.DB.prepare(
     `UPDATE newsletter_drafts SET status = 'sent', sent_at = CURRENT_TIMESTAMP, send_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
   ).bind(JSON.stringify(summary), draft.id).run();
@@ -5749,6 +5788,13 @@ async function handleAdminNewsletterAction(request, env) {
   const action = body.action;
   if (action === "generate") {
     return json(await generateNewsletterDraft(env, { force: false, notify: false }));
+  }
+  if (action === "resend_failed") {
+    // No id = the most recent sent issue.
+    const sent = await env.DB.prepare(`SELECT * FROM newsletter_drafts WHERE status = 'sent' AND (? = 0 OR id = ?) ORDER BY send_date DESC LIMIT 1`)
+      .bind(Number(body.id) || 0, Number(body.id) || 0).first();
+    if (!sent) return json({ error: "No sent issue found" }, 404);
+    return json(await resendFailedNewsletter(env, sent));
   }
   const row = await env.DB.prepare(`SELECT * FROM newsletter_drafts WHERE id = ?`).bind(Number(body.id)).first();
   if (!row) return json({ error: "No such draft" }, 404);
