@@ -606,6 +606,26 @@ main{
 }
 .event-card:active{box-shadow:0 1px 3px rgba(20,24,22,0.08);}
 
+/* Winter cards (the ones that get the snowflake icon): two soft snow layers drifting behind the text.
+   CSS only, no JS. Content sits above the layers so text stays readable. */
+.event-card.has-snow::before,.event-card.has-snow::after{
+  content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    radial-gradient(2.2px 2.2px at 12% 8%,var(--icon-winter) 50%,transparent 52%),
+    radial-gradient(1.6px 1.6px at 28% 40%,var(--icon-winter) 50%,transparent 52%),
+    radial-gradient(2.6px 2.6px at 47% 18%,var(--icon-winter) 50%,transparent 52%),
+    radial-gradient(1.8px 1.8px at 63% 55%,var(--icon-winter) 50%,transparent 52%),
+    radial-gradient(2.4px 2.4px at 78% 12%,var(--icon-winter) 50%,transparent 52%),
+    radial-gradient(1.6px 1.6px at 90% 45%,var(--icon-winter) 50%,transparent 52%),
+    radial-gradient(2px 2px at 35% 80%,var(--icon-winter) 50%,transparent 52%),
+    radial-gradient(2.2px 2.2px at 70% 85%,var(--icon-winter) 50%,transparent 52%);
+  background-size:100% 120px;opacity:.85;animation:cardSnowFall 7s linear infinite;
+}
+.event-card.has-snow::after{background-size:100% 170px;animation-duration:11s;opacity:.5;transform:scaleX(-1);}
+.event-card.has-snow>*{position:relative;z-index:1;}
+@keyframes cardSnowFall{from{background-position:0 -120px}to{background-position:18px 0}}
+@media (prefers-reduced-motion:reduce){.event-card.has-snow::before,.event-card.has-snow::after{animation:none;}}
+
 /* Level 1 — scannable summary */
 .card-summary{padding:13px 14px;display:flex;gap:11px;align-items:flex-start;}
 .blaze{width:22px;height:22px;flex-shrink:0;margin-top:2px;transition:transform .35s cubic-bezier(.34,1.4,.64,1);}
@@ -2149,6 +2169,7 @@ function buildEventCard(ev, opts){
   const card=document.createElement("div");
   const timeled = isTimeledCards();
   card.className = timeled ? "event-card timeled" : "event-card";
+  if (matchEventIcon(ev) === "winter") card.classList.add("has-snow");
   card.dataset.eventId=ev.id;
   card.onclick=function(){ toggleCard(this, ev, fromRecommended); };
   card.innerHTML=`

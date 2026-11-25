@@ -261,6 +261,8 @@ keep reads proportional to traffic:
 - **Card icons** (`blazes` + `SMART_ICON_KEYWORDS` in public/index.html): title keywords pick seasonal art; the first match wins and
   filtering still uses `category`. `winter` (snowflake, `--icon-winter`) matches holiday markets/craft fairs/art fairs/gift
   fests/WinterFest, only for events dated Nov–Jan (`iconMonth`). `pumpkin` only shows Sep–Oct (owner: not in November).
+  Cards whose icon is `winter` also get `.has-snow` (two CSS-only snow layers drifting behind the text, `cardSnowFall`;
+  off under reduced motion). Owner picked this over a frosted-edge option (Nov 2026).
 - **Home-screen icons** (Nov 2026): `public/apple-touch-icon.png` (180), `icon-192/512.png`, `icon-maskable-512.png` (Android masks;
   ground band full-bleed, art in the 80% safe zone), `favicon.ico/-16/-32.png` (no wordmark, unreadable that small),
   `manifest.webmanifest` (`short_name` Playroute, `start_url` `/?src=homescreen`). Art: "Flatirons at dusk" + Playfair wordmark.
