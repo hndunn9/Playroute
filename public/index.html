@@ -1425,7 +1425,7 @@ function iconMonth(ev){
 }
 // Titles that get the drifting-snow card effect even though their icon isn't the snowflake
 // (Santa/Saint Nick visits, Nutcracker storytimes, snowflake trains). Nov-Jan events only.
-const SNOW_TITLE_RE = /nutcracker|\bsanta\b(?! fe)|\bst\.? ?nick|saint nick|snowflake|sleigh/i;
+const SNOW_TITLE_RE = /holiday|christmas|xmas|winter|snow|nutcracker|\bsanta\b(?! fe)|\bst\.? ?nick|saint nick|sleigh|polar express|gingerbread|frost|solstice|noon year|ornament|cocoa|tree lighting|parade of lights|latkes|hanukkah|menorah|kwanzaa|ugly sweater|festive|jingle|reindeer|\belf\b|\belves\b|grinch|mistletoe|wreath|carol/i;
 function wantsSnow(ev){
   if (matchEventIcon(ev) === "winter") return true;
   return [11,12,1].includes(iconMonth(ev)) && SNOW_TITLE_RE.test(ev.title || "");

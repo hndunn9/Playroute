@@ -263,7 +263,7 @@ keep reads proportional to traffic:
   fests/WinterFest, only for events dated Nov–Jan (`iconMonth`). `pumpkin` only shows Sep–Oct (owner: not in November).
   Cards whose icon is `winter` also get `.has-snow` (two CSS-only snow layers drifting behind the text, `cardSnowFall`;
   off under reduced motion). Owner picked this over a frosted-edge option (Nov 2026). `wantsSnow(ev)` also gives it to
-  Nov–Jan titles matching `SNOW_TITLE_RE` (nutcracker, Santa, St./Saint Nick, snowflake, sleigh) without changing their icon.
+  Nov–Jan titles matching `SNOW_TITLE_RE` (holiday, Christmas, winter, snow, Santa, nutcracker, St./Saint Nick, sleigh, Polar Express, gingerbread, frost, solstice, Noon Year, ornament, cocoa, tree lighting, parade of lights, latkes, ugly sweater…; widened 2026-11-25 after a full title scan) without changing their icon.
 - **Home-screen icons** (Nov 2026): `public/apple-touch-icon.png` (180), `icon-192/512.png`, `icon-maskable-512.png` (Android masks;
   ground band full-bleed, art in the 80% safe zone), `favicon.ico/-16/-32.png` (no wordmark, unreadable that small),
   `manifest.webmanifest` (`short_name` Playroute, `start_url` `/?src=homescreen`). Art: "Flatirons at dusk" + Playfair wordmark.
