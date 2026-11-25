@@ -1423,6 +1423,13 @@ function iconMonth(ev){
   const m = /^\d{4}-(\d{2})-/.exec(d);
   return m ? Number(m[1]) : new Date().getMonth() + 1;
 }
+// Titles that get the drifting-snow card effect even though their icon isn't the snowflake
+// (Santa/Saint Nick visits, Nutcracker storytimes, snowflake trains). Nov-Jan events only.
+const SNOW_TITLE_RE = /nutcracker|\bsanta\b(?! fe)|\bst\.? ?nick|saint nick|snowflake|sleigh/i;
+function wantsSnow(ev){
+  if (matchEventIcon(ev) === "winter") return true;
+  return [11,12,1].includes(iconMonth(ev)) && SNOW_TITLE_RE.test(ev.title || "");
+}
 function matchEventIcon(ev){
   const title = (ev.title||"").toLowerCase();
   for(const [key, words] of Object.entries(SMART_ICON_KEYWORDS)){
@@ -2169,7 +2176,7 @@ function buildEventCard(ev, opts){
   const card=document.createElement("div");
   const timeled = isTimeledCards();
   card.className = timeled ? "event-card timeled" : "event-card";
-  if (matchEventIcon(ev) === "winter") card.classList.add("has-snow");
+  if (wantsSnow(ev)) card.classList.add("has-snow");
   card.dataset.eventId=ev.id;
   card.onclick=function(){ toggleCard(this, ev, fromRecommended); };
   card.innerHTML=`
